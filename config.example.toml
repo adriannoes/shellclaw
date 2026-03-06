@@ -1,0 +1,73 @@
+# ShellClaw Configuration
+# Copy to ~/.shellclaw/config.toml and edit
+
+[agent]
+model = "anthropic/claude-sonnet-4-20250514"
+max_tokens = 4096
+temperature = 0.7
+max_tool_iterations = 20
+
+[agent.identity]
+soul = "~/.shellclaw/SOUL.md"
+identity = "~/.shellclaw/IDENTITY.md"
+user = "~/.shellclaw/USER.md"
+
+[providers.anthropic]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[providers.openai]
+api_key_env = "OPENAI_API_KEY"
+# api_base = "https://api.openai.com/v1/chat/completions"
+
+[providers.openrouter]
+api_key_env = "OPENROUTER_API_KEY"
+
+[providers.local]
+# llama.cpp server endpoint (started separately)
+endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+model = "tinyllama-1.1b-q4"
+
+[channels.telegram]
+enabled = true
+token_env = "TELEGRAM_BOT_TOKEN"
+allowed_users = []  # empty = deny all; add your Telegram user ID
+
+[channels.discord]
+enabled = false
+token_env = "DISCORD_BOT_TOKEN"
+allowed_users = []
+
+[gateway]
+host = "127.0.0.1"
+port = 18789
+require_pairing = true
+
+[memory]
+backend = "sqlite"
+db_path = "~/.shellclaw/memory.db"
+
+[sandbox]
+enabled = true
+memory_limit_mb = 64
+cpu_limit_percent = 50
+network = false
+workspace_only = true
+
+[heartbeat]
+enabled = true
+interval_minutes = 30
+
+[skills]
+dir = "~/.shellclaw/skills"
+hot_reload = true
+
+[asap]
+enabled = false
+agent_urn = "urn:asap:agent:shellclaw-home-01"
+agent_name = "ShellClaw Home Agent"
+registry_url = "https://raw.githubusercontent.com/adriannoes/asap-protocol/main/registry.json"
+
+[hardware]
+gpio_enabled = false
+i2c_enabled = false
+camera_enabled = false

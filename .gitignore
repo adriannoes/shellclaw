@@ -1,0 +1,43 @@
+# Build artifacts
+build/
+*.o
+*.d
+*.a
+*.so
+*.dylib
+shellclaw
+test_runner
+
+# Generated files
+src/gateway/ui_assets.h
+
+# Dependencies (vendored sources are tracked)
+# System libraries are not tracked
+
+# Environment and secrets
+.env
+.env.local
+*.pem
+auth_tokens.json
+
+# IDE and OS
+.idea/
+.vscode/
+.cursor/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs and cache
+*.log
+.cache/
+
+# Raspberry Pi specific
+*.img
+*.img.gz
+
+# SQLite databases (runtime data)
+*.db
+*.db-wal
+*.db-shm
