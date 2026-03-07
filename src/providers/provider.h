@@ -1,9 +1,6 @@
 /**
  * @file provider.h
- * @brief LLM provider vtable and shared types (message, response, tool_def).
- *
- * All providers (Anthropic, OpenAI) implement the same interface so the agent
- * is provider-agnostic. API keys are read from environment via config; never logged.
+ * @brief Provider vtable and shared types. Keys from env via config; never logged.
  */
 
 #ifndef SHELLCLAW_PROVIDER_H
