@@ -27,7 +27,7 @@ typedef struct {
 static char *g_api_key;
 static const config_t *g_cfg;
 
-static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
+static size_t write_cb(const char *ptr, size_t size, size_t nmemb, void *userdata)
 {
 	curl_buf_t *b = (curl_buf_t *)userdata;
 	if (!b || !b->buf) return 0;
