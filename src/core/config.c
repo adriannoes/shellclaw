@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -73,7 +74,7 @@ static char *expand_tilde(const char *path)
 		char *out = malloc(hlen + plen + 1);
 		if (!out) return NULL;
 		memcpy(out, home, hlen + 1);
-		if (path[1] == '/') strcpy(out + hlen, path + 1);
+		if (path[1] == '/') memcpy(out + hlen, path + 1, plen);
 		return out;
 	}
 	return strdup(path);
@@ -132,7 +133,7 @@ static int parse_providers(const toml_table_t *root, config_t *cfg)
 	return 0;
 }
 
-static int parse_telegram(const toml_table_t *root, config_t *cfg)
+static int parse_telegram(const toml_table_t *root, config_t *cfg, char *errbuf, size_t errbufsz)
 {
 	toml_table_t *ch = toml_table_in(root, "channels");
 	if (!ch) return 0;
@@ -146,6 +147,10 @@ static int parse_telegram(const toml_table_t *root, config_t *cfg)
 	if (arr) {
 		int n = toml_array_nelem(arr);
 		char **users = n > 0 ? malloc((size_t)n * sizeof(char *)) : NULL;
+		if (n > 0 && !users) {
+			ERRBUF_COPY(errbuf, errbufsz, "out of memory allocating telegram allowed_users");
+			return -1;
+		}
 		if (users) {
 			for (int i = 0; i < n; i++) {
 				toml_datum_t s = toml_string_at(arr, i);
@@ -178,19 +183,39 @@ static int parse_memory_skills_sandbox(const toml_table_t *root, config_t *cfg)
 	return 0;
 }
 
+static int parse_int_env(const char *v, int *out, int min_val, int max_val)
+{
+	if (!v || !out) return 0;
+	char *end = NULL;
+	long val = strtol(v, &end, 10);
+	if (*end != '\0' || val < min_val || val > max_val) return 0;
+	*out = (int)val;
+	return 1;
+}
+
+static int parse_double_env(const char *v, double *out, double min_val, double max_val)
+{
+	if (!v || !out) return 0;
+	char *end = NULL;
+	double val = strtod(v, &end);
+	if (*end != '\0' || val < min_val || val > max_val) return 0;
+	*out = val;
+	return 1;
+}
+
 static void apply_env_overrides(config_t *cfg)
 {
 	const char *v;
 	v = getenv(ENV_AGENT_MODEL);
 	if (v) set_string(&cfg->agent_model, v);
 	v = getenv(ENV_AGENT_MAX_TOKENS);
-	if (v) cfg->agent_max_tokens = atoi(v);
+	if (v) parse_int_env(v, &cfg->agent_max_tokens, 1, INT_MAX);
 	v = getenv(ENV_AGENT_TEMPERATURE);
-	if (v) cfg->agent_temperature = atof(v);
+	if (v) parse_double_env(v, &cfg->agent_temperature, 0.0, 2.0);
 	v = getenv(ENV_AGENT_MAX_TOOL_ITER);
-	if (v) cfg->agent_max_tool_iterations = atoi(v);
+	if (v) parse_int_env(v, &cfg->agent_max_tool_iterations, 1, 1000);
 	v = getenv(ENV_AGENT_MAX_CTX_MSG);
-	if (v) cfg->agent_max_context_messages = atoi(v);
+	if (v) parse_int_env(v, &cfg->agent_max_context_messages, 1, 1000);
 	v = getenv(ENV_MEMORY_DB_PATH);
 	if (v) set_string(&cfg->memory_db_path, v);
 	v = getenv(ENV_SKILLS_DIR);
@@ -249,7 +274,13 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	FILE *fp = fopen(resolved, "r");
 	free(resolved);
 	if (!fp) {
-		if (errbuf && errbufsz > 0) snprintf(errbuf, errbufsz, "cannot open config file: %s", path);
+		if (errbuf && errbufsz > 0) {
+			int n = snprintf(errbuf, errbufsz, "cannot open config file: %s", path);
+			if (n >= (int)errbufsz && errbufsz > 4) {
+				memcpy(errbuf + errbufsz - 4, "...", 3);
+				errbuf[errbufsz - 1] = '\0';
+			}
+		}
 		return -1;
 	}
 	char errbuf_toml[256];
@@ -279,7 +310,8 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	int err = parse_agent(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
 	parse_providers(tab, cfg);
-	parse_telegram(tab, cfg);
+	err = parse_telegram(tab, cfg, errbuf, errbufsz);
+	if (err) goto fail;
 	parse_memory_skills_sandbox(tab, cfg);
 	toml_free(tab);
 	tab = NULL;
