@@ -2,31 +2,23 @@
 
 **The first physical AI agent that participates in a global agent ecosystem.**
 
-A lightweight AI assistant written in C, designed to run on a Raspberry Pi
-Zero 2 W (~$15) and communicate with other agents through the
-[ASAP Protocol](https://github.com/adriannoes/asap-protocol) and the
-[agentic marketplace](https://asap-protocol.vercel.app/).
-
-**Status:** Planning phase.
+A lightweight AI assistant written in C, designed to run on a Raspberry Pi Zero 2 W and communicate with other agents through the [ASAP Protocol](https://github.com/adriannoes/asap-protocol) and the [agentic marketplace](https://asap-protocol.vercel.app/).
 
 **Roadmap (high level):**
 
 | Phase | Version | Focus |
 |-------|---------|--------|
-| 1 — Foundation | v0.1.0 | Core agent loop, CLI + Telegram, Anthropic/OpenAI, shell/search/file tools, SQLite memory & sessions, skill loading |
-| 2 — Gateway | v0.2.0 | HTTP server, embedded Web UI, WebSocket chat, cron scheduler, pairing auth, ASAP manifest, skill hot-reload |
-| 3 — Protocol | v0.3.0 | ASAP client/server, registry, `asap_invoke` tool, process sandbox (namespaces + cgroups), Tavily search |
-| 4 — Autonomy | v0.4.0 | Local inference (llama.cpp), provider fallback, Discord channel, systemd service, OTA updates |
-| 5 — Hardware & Release | v1.0.0 | GPIO, I2C sensors, camera, Ed25519 signing, ASAP marketplace registration, security audit, full docs |
+| 1: Foundation | v0.1.0 | Core agent loop, CLI + Telegram, Anthropic/OpenAI, shell/search/file tools, SQLite memory & sessions, skill loading |
+| 2: Gateway | v0.2.0 | HTTP server, embedded Web UI, WebSocket chat, cron scheduler, pairing auth, ASAP manifest, skill hot-reload |
+| 3: Protocol | v0.3.0 | ASAP client/server, registry, `asap_invoke` tool, process sandbox (namespaces + cgroups), Tavily search |
+| 4: Autonomy | v0.4.0 | Local inference (llama.cpp), provider fallback, Discord channel, systemd service, OTA updates |
+| 5: Hardware & Release | v1.0.0 | GPIO, I2C sensors, camera, Ed25519 signing, ASAP marketplace registration, security audit, full docs |
 
 Details: [PLAN.md](.cursor/strategy/PLAN.md) (architecture), [PRDs](.cursor/product-specs/prd/) (per-phase requirements).
 
 ## What makes ShellClaw different
 
-ShellClaw is not another OpenClaw clone in a different language. It is a
-**hardware-native agent** that interacts with the physical world (GPIO, I2C
-sensors, camera) while collaborating with cloud-based agents through a
-standardized protocol.
+ShellClaw is not another OpenClaw clone in a different language. It is a **hardware-native agent** that interacts with the physical world (GPIO, I2C sensors, camera) while collaborating with cloud-based agents through a standardized protocol.
 
 | Feature | ShellClaw |
 |---|---|
