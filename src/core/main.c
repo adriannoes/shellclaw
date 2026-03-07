@@ -1,11 +1,12 @@
 /**
  * @file main.c
- * @brief Entry point: CLI args, config load, init order, signal handlers, main loop.
+ * @brief Entry point: CLI, config, init order, signals, main loop.
  */
 
 #include "core/config.h"
 #include "core/memory.h"
 #include "core/skill.h"
+#include <curl/curl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,8 @@
 
 #define VERSION "0.1.0"
 #define DEFAULT_CONFIG_PATH "~/.shellclaw/config.toml"
+#define SKILLS_BUF_SIZE (256 * 1024)
+#define SYSTEM_PROMPT_BUF_SIZE (256 * 1024)
 
 static int g_verbose;
 static volatile sig_atomic_t g_shutdown;
@@ -24,16 +27,23 @@ static int memory_init_from_config(const config_t *cfg)
 	const char *path = config_memory_db_path(cfg);
 	return path ? memory_init(path) : -1;
 }
-#define SKILLS_BUF_SIZE (256 * 1024)
-#define SYSTEM_PROMPT_BUF_SIZE (256 * 1024)
-static char g_skills_buf[SKILLS_BUF_SIZE];
-static char g_system_prompt_base[SYSTEM_PROMPT_BUF_SIZE];
 
 static int skills_init(const config_t *cfg)
 {
 	if (!cfg) return -1;
-	if (skill_load_all(cfg, g_skills_buf, sizeof(g_skills_buf)) != 0) return -1;
-	return skill_build_system_prompt_base(cfg, g_skills_buf, g_system_prompt_base, sizeof(g_system_prompt_base));
+	char *skills_buf = malloc(SKILLS_BUF_SIZE);
+	char *system_buf = malloc(SYSTEM_PROMPT_BUF_SIZE);
+	if (!skills_buf || !system_buf) {
+		free(skills_buf);
+		free(system_buf);
+		return -1;
+	}
+	int ret = skill_load_all(cfg, skills_buf, SKILLS_BUF_SIZE);
+	if (ret == 0)
+		ret = skill_build_system_prompt_base(cfg, skills_buf, system_buf, SYSTEM_PROMPT_BUF_SIZE);
+	free(skills_buf);
+	free(system_buf);
+	return ret;
 }
 static void skills_cleanup(void) { (void)0; }
 static int providers_init(const config_t *cfg) { (void)cfg; return 0; }
@@ -51,10 +61,14 @@ static void on_signal(int sig)
 
 static void setup_signals(void)
 {
-	if (signal(SIGINT, on_signal) == SIG_ERR)
-		fprintf(stderr, "warning: signal(SIGINT) failed\n");
-	if (signal(SIGTERM, on_signal) == SIG_ERR)
-		fprintf(stderr, "warning: signal(SIGTERM) failed\n");
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_signal;
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(SIGINT, &sa, NULL) != 0)
+		fprintf(stderr, "warning: sigaction(SIGINT) failed\n");
+	if (sigaction(SIGTERM, &sa, NULL) != 0)
+		fprintf(stderr, "warning: sigaction(SIGTERM) failed\n");
 }
 
 static int init_subsystems(const config_t *cfg)
@@ -127,7 +141,7 @@ int main(int argc, char **argv)
 	const char *config_path;
 	if (parse_args(argc, argv, &config_path) != 0) return 1;
 	config_t *cfg = NULL;
-	char errbuf[256];
+	char errbuf[256] = {0};
 	if (config_load(config_path, &cfg, errbuf, sizeof(errbuf)) != 0) {
 		fprintf(stderr, "Error: %s\n", errbuf[0] ? errbuf : "failed to load config");
 		return 1;
@@ -135,13 +149,20 @@ int main(int argc, char **argv)
 	(void)g_verbose;
 	g_shutdown = 0;
 	setup_signals();
+	if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+		fprintf(stderr, "Error: curl_global_init failed\n");
+		config_free(cfg);
+		return 1;
+	}
 	if (init_subsystems(cfg) != 0) {
 		fprintf(stderr, "Error: subsystem init failed\n");
+		curl_global_cleanup();
 		config_free(cfg);
 		return 1;
 	}
 	main_loop();
 	cleanup_subsystems();
+	curl_global_cleanup();
 	config_free(cfg);
 	return 0;
 }
