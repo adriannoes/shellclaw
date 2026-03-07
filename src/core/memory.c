@@ -118,7 +118,7 @@ int memory_init(const char *path)
 		}
 		recreated = 1;
 	}
-	/* FTS5 integrity-check; step result ignored (e.g. empty FTS). */
+	/* FTS5 integrity-check; step result ignored. */
 	sqlite3_stmt *stmt = NULL;
 	if (sqlite3_prepare_v2(g_db, "INSERT INTO memories_fts(memories_fts) VALUES('integrity-check')", -1, &stmt, NULL) == SQLITE_OK) {
 		(void)sqlite3_step(stmt);
@@ -159,13 +159,13 @@ int memory_recall(const char *query, char *results, size_t max_len, int limit)
 	while (sqlite3_step(stmt) == SQLITE_ROW && len < max_len - 1) {
 		const char *content = (const char *)sqlite3_column_text(stmt, 0);
 		if (content) {
-			size_t n = strlen(content);
 			if (len > 0) {
 				if (len + 2 >= max_len) break;
 				results[len++] = '\n';
 				results[len++] = '\n';
 			}
 			{
+				size_t n = strlen(content);
 				size_t remain = max_len - len - 1;
 				if (n > remain) n = remain;
 				memcpy(results + len, content, n);
