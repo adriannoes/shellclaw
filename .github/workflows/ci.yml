@@ -1,4 +1,4 @@
-# Minimal CI: build and test. Required for branch protection status check.
+# CI: static analysis, tests, release build. Required for branch protection.
 name: CI
 on:
   push:
@@ -7,16 +7,36 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
-    name: build and test
+  ci:
+    name: static, test, release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libcurl4-openssl-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libcurl4-openssl-dev cppcheck lcov
+
+      - name: Static analysis (cppcheck)
+        run: make static
 
       - name: Build and test
         run: make clean && make test
         env:
           CI: true
+
+      - name: Release build
+        run: make clean && make release
+
+      - name: Coverage (core modules >= 80%)
+        run: make coverage
+
+      - name: Binary size check (< 2 MB)
+        run: |
+          size=$(stat -c%s build/shellclaw)
+          if [ "$size" -gt 2097152 ]; then
+            echo "Binary size $size bytes exceeds 2 MB limit"
+            exit 1
+          fi
+          echo "Binary size: $size bytes (OK)"
