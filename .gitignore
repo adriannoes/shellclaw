@@ -35,6 +35,9 @@ auth_tokens.json
 *.log
 .cache/
 
+# Debug artifacts
+test_file_debug.txt
+
 # Raspberry Pi specific
 *.img
 *.img.gz
