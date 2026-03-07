@@ -1,5 +1,7 @@
 # Build artifacts
 build/
+tests-dSYM/
+*.dSYM
 *.o
 *.d
 *.a

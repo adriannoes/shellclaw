@@ -1,0 +1,22 @@
+# Minimal CI: build and test. Required for branch protection status check.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libcurl4-openssl-dev
+
+      - name: Build and test
+        run: make clean && make test
+        env:
+          CI: true

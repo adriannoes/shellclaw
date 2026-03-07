@@ -1,0 +1,54 @@
+/**
+ * @file skill.h
+ * @brief Skill loader: scan skills directory for .md files and concatenate for system prompt.
+ *
+ * Skills are loaded once at startup (no hot-reload in Phase 1). Used by the agent
+ * to build the system prompt after SOUL.md and IDENTITY.md.
+ */
+
+#ifndef SHELLCLAW_SKILL_H
+#define SHELLCLAW_SKILL_H
+
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct config;
+typedef struct config config_t;
+
+/**
+ * Load all .md skill files from the configured skills directory and concatenate
+ * their contents into out_buf, separated by "\n\n---\n\n".
+ *
+ * If the skills directory does not exist or is empty, writes an empty string
+ * and returns 0 (success). Caller should treat empty output as "no skills".
+ * If out_buf is too small, output is truncated and null-terminated; still returns 0.
+ *
+ * @param cfg       Configuration (must not be NULL; uses config_skills_dir(cfg)).
+ * @param out_buf   Buffer to receive concatenated skill content (null-terminated).
+ * @param out_size  Size of out_buf (must be > 0).
+ * @return 0 on success, -1 on error (e.g. cfg NULL or out_buf NULL or out_size 0).
+ */
+int skill_load_all(const config_t *cfg, char *out_buf, size_t out_size);
+
+/**
+ * Build the system prompt base: SOUL content + IDENTITY content + skills content,
+ * in that order. Used by the agent to assemble the full system prompt.
+ * Missing SOUL/IDENTITY files are skipped with a warning (graceful degradation).
+ *
+ * @param cfg             Configuration (soul_path, identity_path from config).
+ * @param skills_content  Pre-loaded skills string (from skill_load_all); may be NULL or empty.
+ * @param out_buf         Buffer to receive the concatenated content (null-terminated).
+ * @param out_size        Size of out_buf (must be > 0).
+ * @return 0 on success, -1 on error (e.g. cfg NULL, out_buf NULL, out_size 0).
+ */
+int skill_build_system_prompt_base(const config_t *cfg, const char *skills_content,
+                                  char *out_buf, size_t out_size);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* SHELLCLAW_SKILL_H */
