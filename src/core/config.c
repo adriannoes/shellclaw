@@ -25,6 +25,7 @@
 #define DEFAULT_MAX_CONTEXT_MESSAGES 40
 #define DEFAULT_MAX_TOKENS 4096
 #define DEFAULT_TEMPERATURE 0.7
+#define DEFAULT_SHELL_TIMEOUT_SEC 60
 
 #define ENV_AGENT_MODEL          "SHELLCLAW_AGENT_MODEL"
 #define ENV_AGENT_MAX_TOKENS     "SHELLCLAW_AGENT_MAX_TOKENS"
@@ -56,6 +57,8 @@ struct config {
 	char *memory_db_path;
 	char *skills_dir;
 	int workspace_only;
+	char *workspace_path;
+	int shell_timeout_sec;
 };
 
 static void set_string(char **dst, const char *src)
@@ -83,7 +86,7 @@ static char *expand_tilde(const char *path)
 
 static int parse_agent(const toml_table_t *root, config_t *cfg, char *errbuf, size_t errbufsz)
 {
-	toml_table_t *agent = toml_table_in(root, "agent");
+	const toml_table_t *agent = toml_table_in(root, "agent");
 	if (!agent) {
 		ERRBUF_COPY(errbuf, errbufsz, "missing [agent] section");
 		return -1;
@@ -101,7 +104,7 @@ static int parse_agent(const toml_table_t *root, config_t *cfg, char *errbuf, si
 	if (d.ok) cfg->agent_max_tool_iterations = (int)d.u.i;
 	d = toml_int_in(agent, "max_context_messages");
 	if (d.ok) cfg->agent_max_context_messages = (int)d.u.i;
-	toml_table_t *identity = toml_table_in(agent, "identity");
+	const toml_table_t *identity = toml_table_in(agent, "identity");
 	if (identity) {
 		d = toml_string_in(identity, "soul");
 		if (d.ok) { set_string(&cfg->agent_soul_path, d.u.s); free(d.u.s); }
@@ -115,36 +118,36 @@ static int parse_agent(const toml_table_t *root, config_t *cfg, char *errbuf, si
 
 static int parse_providers(const toml_table_t *root, config_t *cfg)
 {
-	toml_table_t *providers = toml_table_in(root, "providers");
+	const toml_table_t *providers = toml_table_in(root, "providers");
 	if (!providers) return 0;
-	toml_datum_t d = toml_string_in(providers, "default");
-	if (d.ok) { set_string(&cfg->provider_default, d.u.s); free(d.u.s); }
-	toml_table_t *anth = toml_table_in(providers, "anthropic");
+	toml_datum_t d_def = toml_string_in(providers, "default");
+	if (d_def.ok) { set_string(&cfg->provider_default, d_def.u.s); free(d_def.u.s); }
+	const toml_table_t *anth = toml_table_in(providers, "anthropic");
 	if (anth) {
-		d = toml_string_in(anth, "api_key_env");
-		if (d.ok) { set_string(&cfg->provider_anthropic_api_key_env, d.u.s); free(d.u.s); }
+		toml_datum_t d_anth = toml_string_in(anth, "api_key_env");
+		if (d_anth.ok) { set_string(&cfg->provider_anthropic_api_key_env, d_anth.u.s); free(d_anth.u.s); }
 	}
-	toml_table_t *openai = toml_table_in(providers, "openai");
+	const toml_table_t *openai = toml_table_in(providers, "openai");
 	if (openai) {
-		d = toml_string_in(openai, "api_key_env");
-		if (d.ok) { set_string(&cfg->provider_openai_api_key_env, d.u.s); free(d.u.s); }
-		d = toml_string_in(openai, "endpoint");
-		if (d.ok) { set_string(&cfg->provider_openai_endpoint, d.u.s); free(d.u.s); }
+		toml_datum_t d_oe = toml_string_in(openai, "api_key_env");
+		if (d_oe.ok) { set_string(&cfg->provider_openai_api_key_env, d_oe.u.s); free(d_oe.u.s); }
+		toml_datum_t d_ep = toml_string_in(openai, "endpoint");
+		if (d_ep.ok) { set_string(&cfg->provider_openai_endpoint, d_ep.u.s); free(d_ep.u.s); }
 	}
 	return 0;
 }
 
 static int parse_telegram(const toml_table_t *root, config_t *cfg, char *errbuf, size_t errbufsz)
 {
-	toml_table_t *ch = toml_table_in(root, "channels");
+	const toml_table_t *ch = toml_table_in(root, "channels");
 	if (!ch) return 0;
-	toml_table_t *tg = toml_table_in(ch, "telegram");
+	const toml_table_t *tg = toml_table_in(ch, "telegram");
 	if (!tg) return 0;
 	toml_datum_t d = toml_bool_in(tg, "enabled");
 	if (d.ok) cfg->telegram_enabled = d.u.b;
 	d = toml_string_in(tg, "token_env");
 	if (d.ok) { set_string(&cfg->telegram_token_env, d.u.s); free(d.u.s); }
-	toml_array_t *arr = toml_array_in(tg, "allowed_users");
+	const toml_array_t *arr = toml_array_in(tg, "allowed_users");
 	if (arr) {
 		int n = toml_array_nelem(arr);
 		char **users = n > 0 ? malloc((size_t)n * sizeof(char *)) : NULL;
@@ -166,20 +169,24 @@ static int parse_telegram(const toml_table_t *root, config_t *cfg, char *errbuf,
 
 static int parse_memory_skills_sandbox(const toml_table_t *root, config_t *cfg)
 {
-	toml_table_t *mem = toml_table_in(root, "memory");
+	const toml_table_t *mem = toml_table_in(root, "memory");
 	if (mem) {
 		toml_datum_t d = toml_string_in(mem, "db_path");
 		if (d.ok) { set_string(&cfg->memory_db_path, d.u.s); free(d.u.s); }
 	}
-	toml_table_t *skills = toml_table_in(root, "skills");
+	const toml_table_t *skills = toml_table_in(root, "skills");
 	if (skills) {
 		toml_datum_t d = toml_string_in(skills, "dir");
 		if (d.ok) { set_string(&cfg->skills_dir, d.u.s); free(d.u.s); }
 	}
-	toml_table_t *sandbox = toml_table_in(root, "sandbox");
+	const toml_table_t *sandbox = toml_table_in(root, "sandbox");
 	if (sandbox) {
 		toml_datum_t d = toml_bool_in(sandbox, "workspace_only");
 		if (d.ok) cfg->workspace_only = d.u.b;
+		d = toml_string_in(sandbox, "workspace_path");
+		if (d.ok) { set_string(&cfg->workspace_path, d.u.s); free(d.u.s); }
+		d = toml_int_in(sandbox, "shell_timeout_sec");
+		if (d.ok) cfg->shell_timeout_sec = (int)d.u.i;
 	}
 	return 0;
 }
@@ -250,6 +257,10 @@ static void expand_paths(config_t *cfg)
 		s = expand_tilde(cfg->skills_dir);
 		if (s) { set_string(&cfg->skills_dir, s); free(s); }
 	}
+	if (cfg->workspace_path && cfg->workspace_path[0] == '~') {
+		s = expand_tilde(cfg->workspace_path);
+		if (s) { set_string(&cfg->workspace_path, s); free(s); }
+	}
 }
 
 static int validate_required(const config_t *cfg, char *errbuf, size_t errbufsz)
@@ -308,6 +319,8 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	set_string(&cfg->memory_db_path, "~/.shellclaw/memory.db");
 	set_string(&cfg->skills_dir, "~/.shellclaw/skills");
 	cfg->workspace_only = 1;
+	set_string(&cfg->workspace_path, "~/.shellclaw");
+	cfg->shell_timeout_sec = DEFAULT_SHELL_TIMEOUT_SEC;
 	int err = parse_agent(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
 	parse_providers(tab, cfg);
@@ -349,6 +362,7 @@ void config_free(config_t *cfg)
 	}
 	set_string(&cfg->memory_db_path, NULL);
 	set_string(&cfg->skills_dir, NULL);
+	set_string(&cfg->workspace_path, NULL);
 	free(cfg);
 }
 
@@ -374,3 +388,5 @@ const char *config_telegram_allowed_user(const config_t *c, int index) {
 const char *config_memory_db_path(const config_t *c) { return c ? c->memory_db_path : NULL; }
 const char *config_skills_dir(const config_t *c) { return c ? c->skills_dir : NULL; }
 int config_workspace_only(const config_t *c) { return c ? c->workspace_only : 0; }
+const char *config_workspace_path(const config_t *c) { return c ? c->workspace_path : NULL; }
+int config_shell_timeout_sec(const config_t *c) { return c && c->shell_timeout_sec > 0 ? c->shell_timeout_sec : DEFAULT_SHELL_TIMEOUT_SEC; }

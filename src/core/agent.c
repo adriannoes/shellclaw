@@ -40,18 +40,17 @@ static int compact_session_via_llm(const char *session_id, char *session_buf, si
 		return -1;
 	}
 	int to_summarize_n = msg_count - max_ctx;
-	if (to_summarize_n <= 0) { cJSON_Delete(root); return 0; }
 	char *source_buf = malloc(SUMMARY_SOURCE_MAX);
 	if (!source_buf) { cJSON_Delete(root); return -1; }
 	source_buf[0] = '\0';
 	size_t used = 0;
 	for (int i = 0; i < to_summarize_n && used < SUMMARY_SOURCE_MAX - 1; i++) {
-		cJSON *item = cJSON_GetArrayItem(root, i);
+		const cJSON *item = cJSON_GetArrayItem(root, i);
 		if (!item || !cJSON_IsObject(item)) continue;
 		const char *role = "user";
 		const char *content = "";
-		cJSON *r = cJSON_GetObjectItem(item, "role");
-		cJSON *c = cJSON_GetObjectItem(item, "content");
+		const cJSON *r = cJSON_GetObjectItem(item, "role");
+		const cJSON *c = cJSON_GetObjectItem(item, "content");
 		if (cJSON_IsString(r)) role = r->valuestring;
 		if (cJSON_IsString(c)) content = c->valuestring;
 		int n = snprintf(source_buf + used, SUMMARY_SOURCE_MAX - used, "%s: %s\n", role, content ? content : "");
@@ -87,7 +86,7 @@ static int compact_session_via_llm(const char *session_id, char *session_buf, si
 	int start = msg_count - keep;
 	if (start < 0) start = 0;
 	for (int i = start; i < msg_count; i++) {
-		cJSON *item = cJSON_GetArrayItem(root, i);
+		const cJSON *item = cJSON_GetArrayItem(root, i);
 		if (item) {
 			cJSON *dup = cJSON_Duplicate(item, 1);
 			if (dup) cJSON_AddItemToArray(new_arr, dup);
@@ -131,10 +130,11 @@ static size_t append_memories_to_system(char *system_buf, size_t buf_size, const
 	if (len + prefix_len + recall_len + 1 > buf_size)
 		recall_len = buf_size > len + prefix_len ? (buf_size - len - prefix_len - 1) : 0;
 	if (prefix_len + recall_len == 0) return len;
-	memcpy(system_buf + len, prefix, prefix_len + 1);
+	memcpy(system_buf + len, prefix, prefix_len);
 	len += prefix_len;
-	memcpy(system_buf + len, recall_buf, recall_len + 1);
+	memcpy(system_buf + len, recall_buf, recall_len);
 	len += recall_len;
+	system_buf[len] = '\0';
 	return len;
 }
 
@@ -296,6 +296,7 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 	recall_buf = malloc(RECALL_BUF_SIZE);
 	history_content = malloc(HISTORY_CONTENT_MAX);
 	if (!system_buf || !skills_buf || !session_buf || !recall_buf || !history_content) {
+		/* cppcheck-suppress knownConditionTrueFalse */
 		if (response_buf && response_size > 0) {
 			strncpy(response_buf, "agent_run: out of memory", response_size - 1);
 			response_buf[response_size - 1] = '\0';
@@ -306,6 +307,7 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 	history_roles_buf = malloc(MAX_HISTORY_MESSAGES * ROLE_LEN);
 	tool_result_bufs = malloc((size_t)MAX_TOOL_CALLS * TOOL_RESULT_SIZE);
 	if (!history_msgs || !history_roles_buf || !tool_result_bufs) {
+		/* cppcheck-suppress knownConditionTrueFalse */
 		if (response_buf && response_size > 0) {
 			strncpy(response_buf, "agent_run: out of memory", response_size - 1);
 			response_buf[response_size - 1] = '\0';

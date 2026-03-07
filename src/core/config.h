@@ -56,6 +56,8 @@ const char *config_telegram_allowed_user(const config_t *c, int index);
 const char *config_memory_db_path(const config_t *c);
 const char *config_skills_dir(const config_t *c);
 int config_workspace_only(const config_t *c);
+const char *config_workspace_path(const config_t *c);
+int config_shell_timeout_sec(const config_t *c);
 
 #ifdef __cplusplus
 }
