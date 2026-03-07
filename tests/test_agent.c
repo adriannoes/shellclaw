@@ -20,9 +20,16 @@
 #define SPY_SLOTS 8
 static size_t spy_message_count;
 static char spy_content[SPY_SLOTS][SPY_CONTENT_SIZE];
-static const char *spy_roles[SPY_SLOTS];
+static char *spy_roles[SPY_SLOTS];
 
 static int spy_init(const config_t *cfg) { (void)cfg; return 0; }
+static void spy_roles_clear(void)
+{
+	for (size_t i = 0; i < SPY_SLOTS; i++) {
+		free(spy_roles[i]);
+		spy_roles[i] = NULL;
+	}
+}
 static int spy_chat(const provider_message_t *messages, size_t message_count,
 	const provider_tool_def_t *tools, size_t tool_count, provider_response_t *response)
 {
@@ -32,9 +39,10 @@ static int spy_chat(const provider_message_t *messages, size_t message_count,
 	response->content = strdup("ok");
 	response->tool_calls = NULL;
 	response->tool_calls_count = 0;
+	spy_roles_clear();
 	spy_message_count = message_count;
 	for (size_t i = 0; i < message_count && i < SPY_SLOTS; i++) {
-		spy_roles[i] = messages[i].role;
+		spy_roles[i] = messages[i].role ? strdup(messages[i].role) : NULL;
 		if (messages[i].content) {
 			size_t n = strlen(messages[i].content);
 			if (n >= SPY_CONTENT_SIZE) n = SPY_CONTENT_SIZE - 1;
@@ -44,7 +52,7 @@ static int spy_chat(const provider_message_t *messages, size_t message_count,
 	}
 	return 0;
 }
-static void spy_cleanup(void) {}
+static void spy_cleanup(void) { spy_roles_clear(); }
 static const provider_t spy_provider = {
 	.name = "spy",
 	.init = spy_init,
@@ -183,51 +191,54 @@ static int test_agent_run_invalid_args_returns_error(void)
 
 static int test_context_assembly_system_prompt_history_memories(void)
 {
+	int failed = 1;
 	const char *db_path = "build/test_agent_ctx.db";
 	const char *skills_dir = "build/test_agent_skills";
 	const char *config_path = "build/test_agent_ctx.toml";
+	config_t *cfg = NULL;
 	memory_cleanup();
-	ASSERT(memory_init(db_path) == 0);
-	ASSERT(session_save("test_sess", "[{\"role\":\"user\",\"content\":\"old user\"},{\"role\":\"assistant\",\"content\":\"old assistant\"}]") == 0);
-	/* Memory content must match FTS5 query (user message "new message") to be recalled. */
-	ASSERT(memory_save("pref", "User likes coffee. New message context.", NULL) == 0);
+	if (memory_init(db_path) != 0) goto cleanup;
+	if (session_save("test_sess", "[{\"role\":\"user\",\"content\":\"old user\"},{\"role\":\"assistant\",\"content\":\"old assistant\"}]") != 0) goto cleanup;
+	if (memory_save("pref", "User likes coffee. New message context.", NULL) != 0) goto cleanup;
 #ifdef _WIN32
-	ASSERT(_mkdir(skills_dir) == 0);
+	if (_mkdir(skills_dir) != 0) goto cleanup;
 #else
-	ASSERT(mkdir(skills_dir, 0755) == 0);
+	if (mkdir(skills_dir, 0755) != 0) goto cleanup;
 #endif
 	char skill_path[512];
 	snprintf(skill_path, sizeof(skill_path), "%s/skill.md", skills_dir);
 	FILE *sf = fopen(skill_path, "w");
-	ASSERT(sf);
+	if (!sf) goto cleanup;
 	fprintf(sf, "Test skill line for context.");
 	fclose(sf);
+	sf = NULL;
 	FILE *cf = fopen(config_path, "w");
-	ASSERT(cf);
+	if (!cf) goto cleanup;
 	fprintf(cf, "[agent]\nmodel = \"test\"\n[memory]\npath = \"%s\"\n[skills]\ndir = \"%s\"\n", db_path, skills_dir);
 	fclose(cf);
-	config_t *cfg = NULL;
-	char errbuf[256];
-	ASSERT(config_load(config_path, &cfg, errbuf, sizeof(errbuf)) == 0);
-	ASSERT(cfg != NULL);
+	cf = NULL;
+	char errbuf[256] = {0};
+	if (config_load(config_path, &cfg, errbuf, sizeof(errbuf)) != 0) goto cleanup;
+	if (!cfg) goto cleanup;
 	char response_buf[4096];
-	int ret = agent_run(cfg, "test_sess", "new message", &spy_provider, NULL, 0, response_buf, sizeof(response_buf));
-	ASSERT(ret == 0);
-	ASSERT(spy_message_count >= 4);
-	ASSERT(spy_roles[0] && strcmp(spy_roles[0], "system") == 0);
-	ASSERT(strstr(spy_content[0], "User likes coffee") != NULL);
-	ASSERT(strstr(spy_content[0], "Test skill line for context.") != NULL);
-	ASSERT(strstr(spy_content[1], "old user") != NULL);
-	ASSERT(strstr(spy_content[2], "old assistant") != NULL);
-	ASSERT(spy_roles[3] && strcmp(spy_roles[3], "user") == 0);
-	ASSERT(strstr(spy_content[3], "new message") != NULL);
+	if (agent_run(cfg, "test_sess", "new message", &spy_provider, NULL, 0, response_buf, sizeof(response_buf)) != 0) goto cleanup;
+	if (spy_message_count < 4) goto cleanup;
+	if (!spy_roles[0] || strcmp(spy_roles[0], "system") != 0) goto cleanup;
+	if (!strstr(spy_content[0], "User likes coffee")) goto cleanup;
+	if (!strstr(spy_content[0], "Test skill line for context.")) goto cleanup;
+	if (!strstr(spy_content[1], "old user")) goto cleanup;
+	if (!strstr(spy_content[2], "old assistant")) goto cleanup;
+	if (!spy_roles[3] || strcmp(spy_roles[3], "user") != 0) goto cleanup;
+	if (!strstr(spy_content[3], "new message")) goto cleanup;
+	failed = 0;
+cleanup:
 	config_free(cfg);
 	remove(config_path);
 	remove(skill_path);
 	rmdir(skills_dir);
 	remove(db_path);
 	memory_cleanup();
-	return 0;
+	return failed;
 }
 
 static int test_react_loop_tool_then_text(void)
@@ -350,9 +361,10 @@ static int compaction_chat(const provider_message_t *messages, size_t message_co
 		return 0;
 	}
 	response->content = strdup("ok");
+	spy_roles_clear();
 	spy_message_count = message_count;
 	for (size_t i = 0; i < message_count && i < SPY_SLOTS; i++) {
-		spy_roles[i] = messages[i].role;
+		spy_roles[i] = messages[i].role ? strdup(messages[i].role) : NULL;
 		if (messages[i].content) {
 			size_t n = strlen(messages[i].content);
 			if (n >= SPY_CONTENT_SIZE) n = SPY_CONTENT_SIZE - 1;

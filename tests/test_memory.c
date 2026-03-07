@@ -51,6 +51,10 @@ static int test_corrupted_db_recreated(void)
 	ASSERT(f);
 	fprintf(f, "not a sqlite database\n");
 	fclose(f);
+	/* With CR-18: existing file with invalid content causes schema failure; we do not delete. */
+	ASSERT(memory_init(path) == -1);
+	remove(path);
+	/* Fresh file: init succeeds and we can use the DB. */
 	ASSERT(memory_init(path) == 0);
 	ASSERT(memory_save("k", "after recreate", NULL) == 0);
 	char buf[256];
