@@ -2,6 +2,7 @@
  * @file test_config.c
  * @brief Unit tests for config_load: TOML parsing, env overrides, validation.
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "src/core/config.h"
 #include <stdio.h>

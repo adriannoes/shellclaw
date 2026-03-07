@@ -2,6 +2,7 @@
  * @file test_openai.c
  * @brief Tests for OpenAI provider: init, vtable, optional integration, negative (CR-21).
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "core/config.h"
 #include "providers/provider.h"
@@ -69,7 +70,7 @@ static int test_chat_fails_without_init(void)
 	provider_response_t response = {0};
 	const provider_t *p = provider_openai_get();
 	ASSERT(p != NULL);
-	provider_message_t msg = { .role = "user", .content = "Hi" };
+	provider_message_t msg = { .role = "user", .content = "Hi", .tool_calls = NULL, .tool_calls_count = 0, .tool_use_id = NULL };
 	ASSERT(p->chat(&msg, 1, NULL, 0, &response) == -1);
 	ASSERT(response.error != 0);
 	provider_response_clear(&response);
@@ -86,7 +87,7 @@ static int test_init_and_chat_if_key_set(void)
 	const provider_t *p = provider_openai_get();
 	ASSERT(p != NULL);
 	ASSERT(p->init(cfg) == 0);
-	provider_message_t msg = { .role = "user", .content = "Reply with exactly: OK" };
+	provider_message_t msg = { .role = "user", .content = "Reply with exactly: OK", .tool_calls = NULL, .tool_calls_count = 0, .tool_use_id = NULL };
 	provider_response_t response = {0};
 	int ret = p->chat(&msg, 1, NULL, 0, &response);
 	p->cleanup();

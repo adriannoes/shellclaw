@@ -2,6 +2,7 @@
  * @file config.c
  * @brief Configuration loader: TOML parse + environment overrides.
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "config.h"
 #include <limits.h>

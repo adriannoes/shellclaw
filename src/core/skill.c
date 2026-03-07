@@ -2,6 +2,7 @@
  * @file skill.c
  * @brief Skill loader: scan skills directory for .md files and concatenate contents.
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "config.h"
 #include "skill.h"

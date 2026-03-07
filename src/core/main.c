@@ -2,6 +2,7 @@
  * @file main.c
  * @brief Entry point: CLI, config, init order, signals, main loop.
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "core/config.h"
 #include "core/memory.h"

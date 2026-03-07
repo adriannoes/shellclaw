@@ -4,6 +4,7 @@
  *
  * API key from environment via config; never logged.
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "core/config.h"
 #include "providers/provider.h"

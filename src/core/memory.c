@@ -2,6 +2,7 @@
  * @file memory.c
  * @brief SQLite memory store: schema (memories + FTS5, sessions), save/recall, session CRUD.
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "core/memory.h"
 #include <stdio.h>

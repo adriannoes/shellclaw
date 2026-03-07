@@ -2,6 +2,7 @@
  * @file test_agent.c
  * @brief Unit tests for agent_run: API, stub, context assembly, ReAct loop (Tasks 5.1, 5.2, 5.3).
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "core/agent.h"
 #include "core/config.h"

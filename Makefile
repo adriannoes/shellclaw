@@ -4,7 +4,7 @@ BUILD  ?= debug
 BINDIR ?= build
 DSYMDIR ?= tests-dSYM
 INC    := -I. -I src -I vendor/tomlc99 -I vendor/sqlite3 -I vendor/cJSON
-LDLIBS := -lcurl
+LDLIBS := -lcurl -lm
 # On macOS debug builds: generate .dSYM into tests-dSYM/ and remove any from BINDIR
 DSYM_SCRIPT = @mkdir -p $(DSYMDIR) && ( [ "$$(uname)" != "Darwin" ] || [ "$(BUILD)" != "debug" ] || dsymutil $(BINDIR)/$@ -o $(DSYMDIR)/$@.dSYM 2>/dev/null ); rm -rf $(BINDIR)/$@.dSYM
 
@@ -13,6 +13,12 @@ CFLAGS ?= -std=c11 -Wall -Wextra -O2 -DNDEBUG
 else
 CFLAGS ?= -std=c11 -Wall -Wextra -g -O0 -DDEBUG
 endif
+CFLAGS += -Wformat=2 -Wformat-security
+ifeq ($(CI),true)
+CFLAGS += -Werror
+endif
+# Vendor code (toml, sqlite3, cJSON) may emit warnings with GCC on Linux; exclude -Werror
+VENDOR_CFLAGS := $(filter-out -Werror,$(CFLAGS))
 
 # Core
 CONFIG_O  := src/core/config.o
@@ -30,6 +36,9 @@ CJSON_O     := vendor/cJSON/cJSON.o
 ANTHROPIC_O := src/providers/anthropic.o
 OPENAI_O   := src/providers/openai.o
 ROUTER_O   := src/providers/router.o
+# Provider objects built with SHELLCLAW_TEST for negative/parse tests (CR-21)
+ANTHROPIC_TEST_O := $(BINDIR)/anthropic_test.o
+OPENAI_TEST_O    := $(BINDIR)/openai_test.o
 CORE_OBJS := $(CONFIG_O) $(MAIN_O) $(MEMORY_O) $(SKILL_O) $(AGENT_O)
 VENDOR_OBJS := $(TOML_O) $(SQLITE3_O) $(CJSON_O)
 OBJS := $(CORE_OBJS) $(VENDOR_OBJS)
@@ -57,10 +66,10 @@ $(MAIN_O): src/core/main.c src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/core/main.c
 
 $(TOML_O): vendor/tomlc99/toml.c vendor/tomlc99/toml.h
-	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+	$(CC) $(VENDOR_CFLAGS) $(INC) -c -o $@ $<
 
 $(SQLITE3_O): vendor/sqlite3/sqlite3.c vendor/sqlite3/sqlite3.h
-	$(CC) $(CFLAGS) $(SQLITE_CFLAGS) $(INC) -c -o $@ $<
+	$(CC) $(VENDOR_CFLAGS) $(SQLITE_CFLAGS) $(INC) -c -o $@ $<
 
 $(MEMORY_O): src/core/memory.c src/core/memory.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
@@ -78,13 +87,21 @@ $(STUB_O): src/providers/stub.c src/providers/provider.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/providers/stub.c
 
 $(CJSON_O): vendor/cJSON/cJSON.c vendor/cJSON/cJSON.h
-	$(CC) $(CFLAGS) $(INC) -c -o $@ vendor/cJSON/cJSON.c
+	$(CC) $(VENDOR_CFLAGS) $(INC) -c -o $@ vendor/cJSON/cJSON.c
 
 $(ANTHROPIC_O): src/providers/anthropic.c src/providers/provider.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/providers/anthropic.c
 
+$(ANTHROPIC_TEST_O): src/providers/anthropic.c src/providers/provider.h src/core/config.h
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(INC) -DSHELLCLAW_TEST -c -o $@ src/providers/anthropic.c
+
 $(OPENAI_O): src/providers/openai.c src/providers/provider.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/providers/openai.c
+
+$(OPENAI_TEST_O): src/providers/openai.c src/providers/provider.h src/core/config.h
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(INC) -DSHELLCLAW_TEST -c -o $@ src/providers/openai.c
 
 $(ROUTER_O): src/providers/router.c src/providers/provider.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/providers/router.c
@@ -109,14 +126,14 @@ test_provider: tests/test_provider.c $(STUB_O) $(PROVIDER_COMMON_O)
 	$(CC) $(CFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_provider.c $(STUB_O) $(PROVIDER_COMMON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
-test_anthropic: tests/test_anthropic.c $(ANTHROPIC_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+test_anthropic: tests/test_anthropic.c $(ANTHROPIC_TEST_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_anthropic.c $(ANTHROPIC_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
+	$(CC) $(CFLAGS) $(INC) -DSHELLCLAW_TEST -o $(BINDIR)/$@ tests/test_anthropic.c $(ANTHROPIC_TEST_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
-test_openai: tests/test_openai.c $(OPENAI_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+test_openai: tests/test_openai.c $(OPENAI_TEST_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_openai.c $(OPENAI_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
+	$(CC) $(CFLAGS) $(INC) -DSHELLCLAW_TEST -o $(BINDIR)/$@ tests/test_openai.c $(OPENAI_TEST_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
 test_router: tests/test_router.c $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
@@ -145,6 +162,6 @@ clean-root-dsym:
 	@rm -f shellclaw test_agent test_anthropic test_config test_memory test_openai test_provider test_router test_skill
 
 clean: clean-root-dsym
-	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O)
+	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O)
 	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent
 	rm -rf $(BINDIR)/*.dSYM $(DSYMDIR)

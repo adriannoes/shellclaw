@@ -2,6 +2,7 @@
  * @file agent.c
  * @brief ReAct agent loop implementation.
  */
+#define _POSIX_C_SOURCE 200809L
 
 #include "core/agent.h"
 #include "core/config.h"
