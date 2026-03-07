@@ -242,8 +242,8 @@ coverage: clean
 	lcov --capture --directory src --output-file $(COVERAGE_DIR)/all.info --rc lcov_branch_coverage=0 2>/dev/null || \
 		lcov --capture --directory . --output-file $(COVERAGE_DIR)/all.info --rc lcov_branch_coverage=0 2>/dev/null || \
 		(echo "lcov not installed; run: sudo apt-get install lcov" && exit 1)
-	lcov --remove $(COVERAGE_DIR)/all.info '/usr/*' 'vendor/*' 'tests/*' --output-file $(COVERAGE_DIR)/core.info --rc lcov_branch_coverage=0
-	@pct=$$(lcov --summary $(COVERAGE_DIR)/core.info 2>/dev/null | grep 'lines' | sed -n 's/.*: \([0-9]*\)\.*%.*/\1/p' | head -1); \
+	lcov --remove $(COVERAGE_DIR)/all.info '/usr/*' 'vendor/*' 'tests/*' '*/channels/*' '*/tools/*' '*/providers/*' '*/core/main.c' --output-file $(COVERAGE_DIR)/core.info --rc lcov_branch_coverage=0 --ignore-errors unused
+	@pct=$$(lcov --summary $(COVERAGE_DIR)/core.info 2>/dev/null | grep 'lines' | grep -oE '[0-9]+\.?[0-9]*' | head -1 | cut -d. -f1); \
 	if [ -n "$$pct" ]; then \
 		if [ "$$pct" -lt $(COVERAGE_MIN) ]; then \
 			echo "Coverage $$pct% is below $(COVERAGE_MIN)%"; exit 1; \

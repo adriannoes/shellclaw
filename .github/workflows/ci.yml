@@ -29,9 +29,6 @@ jobs:
       - name: Release build
         run: make clean && make release
 
-      - name: Coverage (core modules >= 80%)
-        run: make coverage
-
       - name: Binary size check (< 2 MB)
         run: |
           size=$(stat -c%s build/shellclaw)
@@ -40,3 +37,6 @@ jobs:
             exit 1
           fi
           echo "Binary size: $size bytes (OK)"
+
+      - name: Coverage (core modules >= 80%)
+        run: make coverage

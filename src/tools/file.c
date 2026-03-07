@@ -3,6 +3,7 @@
  * @brief File tool: read_file, write_file, list_dir with workspace boundary check.
  */
 #define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 
 #include "tools/tool.h"
 #include "tools/file.h"
@@ -111,7 +112,16 @@ static int file_write(const char *path, const char *content, char *result_buf, s
 		} else {
 			const char *base = strrchr(path, '/');
 			base = base ? base + 1 : path;
+			size_t res_len = strlen(resolved);
+			size_t base_len = strlen(base);
+			if (res_len + 1 + base_len >= sizeof(safe_path)) {
+				snprintf(result_buf, max_len, "{\"error\":\"path too long\"}");
+				return -1;
+			}
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
 			snprintf(safe_path, sizeof(safe_path), "%s/%s", resolved, base);
+#pragma GCC diagnostic pop
 		}
 	}
 	FILE *f = fopen(safe_path, "w");

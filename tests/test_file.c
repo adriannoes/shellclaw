@@ -2,6 +2,10 @@
  * @file test_file.c
  * @brief Unit tests for file tool: read, write, list_dir, workspace boundary.
  */
+#define _POSIX_C_SOURCE 200809L
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
 
 #include "tools/tool.h"
 #include "tools/file.h"
