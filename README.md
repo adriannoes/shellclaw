@@ -20,7 +20,7 @@ ShellClaw is **not another OpenClaw clone** in a different language. It is a **h
 
 | Feature | ShellClaw |
 |---|---|
-| **Binary** | ~400 KB |
+| **Binary** | < 2 MB |
 | **RAM** | < 5 MB |
 | **Startup** | < 1 second |
 | **Language** | C (~4,000 lines) |
@@ -36,6 +36,12 @@ ShellClaw is **not another OpenClaw clone** in a different language. It is a **h
 - **`tests-dSYM/`** — Debug symbol bundles (macOS only, debug builds). All `.dSYM` folders are generated here so the repo root stays clean. Use `make clean` to remove. If you have old `.dSYM` folders in the repo root (e.g. `test_agent.dSYM`), run `make clean` or `make clean-root-dsym` to remove them.
 
 To run the main binary: `./build/shellclaw`. To run tests: `make test` (executes all tests from `build/`). To debug with lldb and symbols from `tests-dSYM/`: e.g. `lldb build/test_agent` then `settings set target.debug-file-search-path tests-dSYM`.
+
+**CI and quality checks:**
+- `make static` — Run cppcheck on `src/` (requires cppcheck).
+- `make coverage` — Build with coverage, run tests, generate report; fails if core coverage < 80% (requires lcov).
+- Binary size: CI enforces < 2 MB for release build.
+- Cold start / RAM: Run `time ./build/shellclaw --version` for startup time; `ps -o rss= -p $(pgrep shellclaw)` for RSS (manual checks).
 
 ## Architecture
 
