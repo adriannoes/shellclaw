@@ -1,5 +1,7 @@
 # Build artifacts
 build/
+tests-dSYM/
+*.dSYM
 *.o
 *.d
 *.a
@@ -23,7 +25,6 @@ auth_tokens.json
 # IDE and OS
 .idea/
 .vscode/
-.cursor/
 .DS_Store
 *.swp
 *.swo
