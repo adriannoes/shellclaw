@@ -28,7 +28,7 @@
 
 static const char SUMMARIZE_SYSTEM[] = "Summarize the following conversation in one short paragraph. Output only the summary, no preamble.";
 
-/** When msg_count > max_ctx, summarize oldest messages; replace with one summary + last (max_ctx-1) raw. */
+/** Summarize oldest messages when over max_ctx; replace with one summary + trailing. */
 static int compact_session_via_llm(const char *session_id, char *session_buf, size_t session_buf_size,
 	int msg_count, int max_ctx, const provider_t *provider)
 {
@@ -137,7 +137,7 @@ static size_t append_memories_to_system(char *system_buf, size_t buf_size, const
 	return len;
 }
 
-/** Parse session JSON into provider_message_t slots; copy roles/contents into provided buffers. */
+/** Parse session JSON into message slots; copy roles and content into given buffers. */
 static int parse_session_into_messages(const char *session_json, int max_messages,
 	provider_message_t *out_msgs, char *role_buf, size_t role_buf_size,
 	char *content_buf, size_t content_buf_size, int *out_count)
@@ -196,7 +196,7 @@ static void free_tool_calls_copy(provider_tool_call_t *copy, size_t n)
 	free(copy);
 }
 
-/** Append one user and one assistant message to session JSON. Invalid/empty existing → []. */
+/** Append user+assistant exchange to session JSON. Invalid or empty existing becomes []. */
 static int append_exchange_to_session_json(const char *existing_json, const char *user_message,
 	const char *assistant_content, char *out_buf, size_t out_size)
 {
@@ -254,26 +254,62 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
               const provider_t *provider, const agent_tool_t *tools, size_t tool_count,
               char *response_buf, size_t response_size)
 {
+	int ret = -1;
+	provider_tool_def_t *tool_defs = NULL;
+	char *system_buf = NULL;
+	char *skills_buf = NULL;
+	char *session_buf = NULL;
+	char *recall_buf = NULL;
+	char *history_content = NULL;
+	provider_message_t *history_msgs = NULL;
+	char *history_roles_buf = NULL;
+	char *tool_result_bufs = NULL;
+	provider_message_t *messages = NULL;
+	char *prev_assistant = NULL;
+	provider_tool_call_t *prev_calls = NULL;
+	size_t prev_n = 0;
 	if (!cfg || !session_id || !user_message || !provider || !response_buf || response_size == 0) {
 		if (response_buf && response_size > 0)
 			strncpy(response_buf, "agent_run: invalid arguments", response_size - 1);
 		if (response_buf && response_size > 0) response_buf[response_size - 1] = '\0';
 		return -1;
 	}
-	const provider_tool_def_t *tool_defs = (const provider_tool_def_t *)tools;
-	char *system_buf = malloc(SYSTEM_PROMPT_MAX);
-	char *skills_buf = malloc(SKILLS_BUF_SIZE);
-	char *session_buf = malloc(SESSION_JSON_MAX);
-	char *recall_buf = malloc(RECALL_BUF_SIZE);
-	char *history_content = malloc(HISTORY_CONTENT_MAX);
+	if (tool_count > 0 && tools) {
+		tool_defs = malloc(tool_count * sizeof(provider_tool_def_t));
+		if (!tool_defs) {
+			if (response_buf && response_size > 0) {
+				strncpy(response_buf, "agent_run: out of memory", response_size - 1);
+				response_buf[response_size - 1] = '\0';
+			}
+			return -1;
+		}
+		for (size_t i = 0; i < tool_count; i++) {
+			tool_defs[i].name = tools[i].name;
+			tool_defs[i].description = tools[i].description;
+			tool_defs[i].parameters_json = tools[i].parameters_json;
+		}
+	}
+	system_buf = malloc(SYSTEM_PROMPT_MAX);
+	skills_buf = malloc(SKILLS_BUF_SIZE);
+	session_buf = malloc(SESSION_JSON_MAX);
+	recall_buf = malloc(RECALL_BUF_SIZE);
+	history_content = malloc(HISTORY_CONTENT_MAX);
 	if (!system_buf || !skills_buf || !session_buf || !recall_buf || !history_content) {
-		free(system_buf);
-		free(skills_buf);
-		free(session_buf);
-		free(recall_buf);
-		free(history_content);
-		if (response_buf && response_size > 0) { strncpy(response_buf, "agent_run: out of memory", response_size - 1); response_buf[response_size - 1] = '\0'; }
-		return -1;
+		if (response_buf && response_size > 0) {
+			strncpy(response_buf, "agent_run: out of memory", response_size - 1);
+			response_buf[response_size - 1] = '\0';
+		}
+		goto cleanup;
+	}
+	history_msgs = malloc(MAX_HISTORY_MESSAGES * sizeof(provider_message_t));
+	history_roles_buf = malloc(MAX_HISTORY_MESSAGES * ROLE_LEN);
+	tool_result_bufs = malloc((size_t)MAX_TOOL_CALLS * TOOL_RESULT_SIZE);
+	if (!history_msgs || !history_roles_buf || !tool_result_bufs) {
+		if (response_buf && response_size > 0) {
+			strncpy(response_buf, "agent_run: out of memory", response_size - 1);
+			response_buf[response_size - 1] = '\0';
+		}
+		goto cleanup;
 	}
 	skill_load_all(cfg, skills_buf, SKILLS_BUF_SIZE);
 	if (skill_build_system_prompt_base(cfg, skills_buf, system_buf, SYSTEM_PROMPT_MAX) != 0) {
@@ -294,22 +330,18 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 		if (msg_count > max_ctx)
 			compact_session_via_llm(session_id, session_buf, SESSION_JSON_MAX, msg_count, max_ctx, provider);
 	}
-	static provider_message_t history_msgs[MAX_HISTORY_MESSAGES];
-	char history_roles[MAX_HISTORY_MESSAGES][ROLE_LEN];
 	int history_count = 0;
 	parse_session_into_messages(session_buf, max_ctx, history_msgs,
-		(char *)history_roles, MAX_HISTORY_MESSAGES * ROLE_LEN,
+		history_roles_buf, MAX_HISTORY_MESSAGES * ROLE_LEN,
 		history_content, HISTORY_CONTENT_MAX, &history_count);
 	size_t total_msgs = 1 + (size_t)history_count + 1;
-	provider_message_t *messages = malloc(total_msgs * sizeof(provider_message_t));
+	messages = malloc(total_msgs * sizeof(provider_message_t));
 	if (!messages) {
-		free(system_buf);
-		free(skills_buf);
-		free(session_buf);
-		free(recall_buf);
-		free(history_content);
-		if (response_buf && response_size > 0) { strncpy(response_buf, "agent_run: out of memory", response_size - 1); response_buf[response_size - 1] = '\0'; }
-		return -1;
+		if (response_buf && response_size > 0) {
+			strncpy(response_buf, "agent_run: out of memory", response_size - 1);
+			response_buf[response_size - 1] = '\0';
+		}
+		goto cleanup;
 	}
 	memset(messages, 0, total_msgs * sizeof(provider_message_t));
 	messages[0].role = "system";
@@ -323,32 +355,17 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 	int max_iter = config_agent_max_tool_iterations(cfg);
 	if (max_iter <= 0) max_iter = 20;
 	int iteration = 0;
-	char *prev_assistant = NULL;
-	provider_tool_call_t *prev_calls = NULL;
-	size_t prev_n = 0;
 	provider_response_t response = {0};
 	for (;;) {
 		int err = provider->chat(messages, total_msgs, tool_defs, tool_count, &response);
 		if (err != 0) {
 			copy_response_to_buf(response.content, response_buf, response_size);
 			provider_response_clear(&response);
-			free(prev_assistant);
-			free_tool_calls_copy(prev_calls, prev_n);
-			free(messages);
-			free(history_content);
-			free(recall_buf);
-			free(session_buf);
-			free(skills_buf);
-			free(system_buf);
-			return -1;
+			goto cleanup;
 		}
 		if (response.tool_calls_count == 0 || iteration >= max_iter) {
 			copy_response_to_buf(response.content, response_buf, response_size);
 			provider_response_clear(&response);
-			free(prev_assistant);
-			free_tool_calls_copy(prev_calls, prev_n);
-			free(messages);
-			/* Persist exchange to session. memory_save() reserved for explicit remember. */
 			{
 				char *updated = malloc(SESSION_JSON_MAX);
 				if (updated) {
@@ -358,12 +375,8 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 					free(updated);
 				}
 			}
-			free(history_content);
-			free(recall_buf);
-			free(session_buf);
-			free(skills_buf);
-			free(system_buf);
-			return 0;
+			ret = 0;
+			goto cleanup;
 		}
 		free(prev_assistant);
 		free_tool_calls_copy(prev_calls, prev_n);
@@ -375,38 +388,32 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 		char *assistant_content = response.content ? strdup(response.content) : NULL;
 		if (!assistant_content && response.content && response.content[0] != '\0') {
 			provider_response_clear(&response);
-			free(messages);
-			free(history_content);
-			free(recall_buf);
-			free(session_buf);
-			free(skills_buf);
-			free(system_buf);
-			if (response_buf && response_size > 0) { strncpy(response_buf, "agent_run: out of memory", response_size - 1); response_buf[response_size - 1] = '\0'; }
-			return -1;
+			if (response_buf && response_size > 0) {
+				strncpy(response_buf, "agent_run: out of memory", response_size - 1);
+				response_buf[response_size - 1] = '\0';
+			}
+			goto cleanup;
 		}
 		if (!assistant_content) assistant_content = strdup("");
 		provider_tool_call_t *our_calls = copy_tool_calls(response.tool_calls, nc);
 		provider_response_clear(&response);
 		if (!our_calls) {
 			free(assistant_content);
-			free(messages);
-			free(history_content);
-			free(recall_buf);
-			free(session_buf);
-			free(skills_buf);
-			free(system_buf);
-			if (response_buf && response_size > 0) { strncpy(response_buf, "agent_run: out of memory", response_size - 1); response_buf[response_size - 1] = '\0'; }
-			return -1;
+			if (response_buf && response_size > 0) {
+				strncpy(response_buf, "agent_run: out of memory", response_size - 1);
+				response_buf[response_size - 1] = '\0';
+			}
+			goto cleanup;
 		}
-		static char tool_result_bufs[MAX_TOOL_CALLS][TOOL_RESULT_SIZE];
 		for (size_t k = 0; k < nc; k++) {
-			tool_result_bufs[k][0] = '\0';
+			char *one_buf = tool_result_bufs + k * TOOL_RESULT_SIZE;
+			one_buf[0] = '\0';
 			const agent_tool_t *tool = find_tool(tools, tool_count, our_calls[k].name);
 			if (tool && tool->execute)
 				tool->execute(our_calls[k].arguments ? our_calls[k].arguments : "{}",
-					tool_result_bufs[k], TOOL_RESULT_SIZE);
+					one_buf, TOOL_RESULT_SIZE);
 			else
-				snprintf(tool_result_bufs[k], TOOL_RESULT_SIZE, "error: unknown tool \"%s\"",
+				snprintf(one_buf, TOOL_RESULT_SIZE, "error: unknown tool \"%s\"",
 					our_calls[k].name ? our_calls[k].name : "");
 		}
 		size_t new_count = total_msgs + 1 + nc;
@@ -414,14 +421,11 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 		if (!new_messages) {
 			free_tool_calls_copy(our_calls, nc);
 			free(assistant_content);
-			free(messages);
-			free(history_content);
-			free(recall_buf);
-			free(session_buf);
-			free(skills_buf);
-			free(system_buf);
-			if (response_buf && response_size > 0) { strncpy(response_buf, "agent_run: out of memory", response_size - 1); response_buf[response_size - 1] = '\0'; }
-			return -1;
+			if (response_buf && response_size > 0) {
+				strncpy(response_buf, "agent_run: out of memory", response_size - 1);
+				response_buf[response_size - 1] = '\0';
+			}
+			goto cleanup;
 		}
 		memset(new_messages, 0, new_count * sizeof(provider_message_t));
 		memcpy(new_messages, messages, total_msgs * sizeof(provider_message_t));
@@ -431,7 +435,7 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 		new_messages[total_msgs].tool_calls_count = nc;
 		for (size_t k = 0; k < nc; k++) {
 			new_messages[total_msgs + 1 + k].role = "user";
-			new_messages[total_msgs + 1 + k].content = tool_result_bufs[k];
+			new_messages[total_msgs + 1 + k].content = tool_result_bufs + k * TOOL_RESULT_SIZE;
 			new_messages[total_msgs + 1 + k].tool_use_id = our_calls[k].id;
 		}
 		free(messages);
@@ -442,4 +446,18 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
 		prev_calls = our_calls;
 		prev_n = nc;
 	}
+cleanup:
+	free(system_buf);
+	free(skills_buf);
+	free(session_buf);
+	free(recall_buf);
+	free(history_content);
+	free(tool_defs);
+	free(history_msgs);
+	free(history_roles_buf);
+	free(tool_result_bufs);
+	free(prev_assistant);
+	free_tool_calls_copy(prev_calls, prev_n);
+	free(messages);
+	return ret;
 }
