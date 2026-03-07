@@ -28,7 +28,7 @@ static size_t append_str(char *out_buf, size_t out_size, size_t *used, const cha
 	size_t remain = out_size > *used ? out_size - *used - 1 : 0;
 	if (remain == 0) return 0;
 	if (len > remain) len = remain;
-	memcpy(out_buf + *used, str, len + 1);
+	memcpy(out_buf + *used, str, len);
 	*used += len;
 	out_buf[*used] = '\0';
 	return len;
@@ -42,7 +42,7 @@ static size_t append_file_content(FILE *f, char *out_buf, size_t out_size, size_
 		size_t n = strlen(buf);
 		size_t remain = out_size - *used - 1;
 		if (n > remain) n = remain;
-		memcpy(out_buf + *used, buf, n + 1);
+		memcpy(out_buf + *used, buf, n);
 		*used += n;
 		out_buf[*used] = '\0';
 		total += n;
