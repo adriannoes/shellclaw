@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "sqlite3.h"
 
@@ -71,9 +72,16 @@ fail:
 	return -1;
 }
 
+static int path_exists(const char *path)
+{
+	struct stat st;
+	return stat(path, &st) == 0;
+}
+
 int memory_init(const char *path)
 {
 	if (!path || g_db) return -1;
+	int file_existed = path_exists(path);
 	int recreated = 0;
 	if (sqlite3_open(path, &g_db) != SQLITE_OK) {
 		if (g_db) { sqlite3_close(g_db); g_db = NULL; }
@@ -85,21 +93,35 @@ int memory_init(const char *path)
 		}
 		recreated = 1;
 	}
+	sqlite3_exec(g_db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
+	sqlite3_busy_timeout(g_db, 5000);
 	if (run_schema() != 0) {
 		sqlite3_close(g_db);
 		g_db = NULL;
+		if (file_existed) {
+			fprintf(stderr, "Error: memory DB schema mismatch at %s\n", path);
+			return -1;
+		}
 		remove(path);
 		if (sqlite3_open(path, &g_db) != SQLITE_OK) {
 			if (g_db) sqlite3_close(g_db);
 			g_db = NULL;
 			return -1;
 		}
+		sqlite3_exec(g_db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
+		sqlite3_busy_timeout(g_db, 5000);
 		if (run_schema() != 0) {
 			sqlite3_close(g_db);
 			g_db = NULL;
 			return -1;
 		}
 		recreated = 1;
+	}
+	/* FTS5 integrity-check; step result ignored (e.g. empty FTS). */
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, "INSERT INTO memories_fts(memories_fts) VALUES('integrity-check')", -1, &stmt, NULL) == SQLITE_OK) {
+		(void)sqlite3_step(stmt);
+		sqlite3_finalize(stmt);
 	}
 	if (recreated) fprintf(stderr, WARN_RECREATED, path);
 	return 0;
@@ -137,10 +159,18 @@ int memory_recall(const char *query, char *results, size_t max_len, int limit)
 		const char *content = (const char *)sqlite3_column_text(stmt, 0);
 		if (content) {
 			size_t n = strlen(content);
-			if (len + n + 2 > max_len) n = max_len - len - 2;
-			if (len > 0) { results[len++] = '\n'; results[len++] = '\n'; }
-			memcpy(results + len, content, n + 1);
-			len += n;
+			if (len > 0) {
+				if (len + 2 >= max_len) break;
+				results[len++] = '\n';
+				results[len++] = '\n';
+			}
+			{
+				size_t remain = max_len - len - 1;
+				if (n > remain) n = remain;
+				memcpy(results + len, content, n);
+				len += n;
+				results[len] = '\0';
+			}
 		}
 	}
 	sqlite3_finalize(stmt);
