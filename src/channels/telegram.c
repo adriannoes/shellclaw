@@ -20,6 +20,7 @@
 #define TG_FILE_BASE "https://api.telegram.org/file/bot"
 #define POLL_TIMEOUT_SEC 30
 #define RESP_BUF_SIZE (256 * 1024)
+#define RESP_BUF_INIT 4096
 
 struct telegram_ctx {
 	char *token;
@@ -30,18 +31,33 @@ struct telegram_ctx {
 
 static struct telegram_ctx g_tg;
 
+typedef struct {
+	char *buf;
+	size_t len;
+	size_t cap;
+} tg_buf_t;
+
 static size_t write_cb(const char *ptr, size_t size, size_t nmemb, void *userdata)
 {
+	tg_buf_t *b = (tg_buf_t *)userdata;
+	if (!b || !b->buf) return 0;
 	if (nmemb != 0 && size > SIZE_MAX / nmemb) return 0;
-	size_t total = size * nmemb;
-	char **buf = (char **)userdata;
-	size_t cur = *buf ? strlen(*buf) : 0;
-	char *new_buf = realloc(*buf, cur + total + 1);
-	if (!new_buf) return 0;
-	*buf = new_buf;
-	memcpy(new_buf + cur, ptr, total);
-	new_buf[cur + total] = '\0';
-	return total;
+	size_t n = size * nmemb;
+	size_t need = b->len + n + 1;
+	if (need > RESP_BUF_SIZE) return 0;
+	if (need > b->cap) {
+		size_t new_cap = b->cap ? b->cap * 2 : RESP_BUF_INIT;
+		while (new_cap < need && new_cap <= RESP_BUF_SIZE) new_cap *= 2;
+		if (need > new_cap) return 0;
+		char *p = realloc(b->buf, new_cap);
+		if (!p) return 0;
+		b->buf = p;
+		b->cap = new_cap;
+	}
+	memcpy(b->buf + b->len, ptr, n);
+	b->len += n;
+	b->buf[b->len] = '\0';
+	return n;
 }
 
 static int is_user_allowed(const config_t *cfg, long user_id)
@@ -173,7 +189,9 @@ static int tg_poll(channel_incoming_msg_t *out, int timeout_ms)
 	         TG_API_BASE, g_tg.token, TG_GET_UPDATES, timeout_sec, g_tg.last_update_id + 1);
 	CURL *curl = curl_easy_init();
 	if (!curl) return -1;
-	char *resp = NULL;
+	tg_buf_t resp = { .buf = malloc(RESP_BUF_INIT), .len = 0, .cap = RESP_BUF_INIT };
+	if (!resp.buf) { curl_easy_cleanup(curl); return -1; }
+	resp.buf[0] = '\0';
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -182,13 +200,13 @@ static int tg_poll(channel_incoming_msg_t *out, int timeout_ms)
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(timeout_sec + 5));
 	CURLcode res = curl_easy_perform(curl);
 	curl_easy_cleanup(curl);
-	if (res != CURLE_OK || !resp) {
-		free(resp);
+	if (res != CURLE_OK || !resp.buf) {
+		free(resp.buf);
 		return 0;
 	}
 	long update_id = 0;
-	int r = parse_update(resp, out, &update_id);
-	free(resp);
+	int r = parse_update(resp.buf, out, &update_id);
+	free(resp.buf);
 	if (r > 0) {
 		g_tg.last_update_id = update_id;
 		return 1;
@@ -209,7 +227,7 @@ static int tg_send(const char *recipient, const char *text,
 	const char *chat_id = strchr(recipient, ':');
 	if (chat_id) chat_id++;
 	else chat_id = recipient;
-	char url[256];
+	char url[512];
 	snprintf(url, sizeof(url), "%s%s/%s", TG_API_BASE, g_tg.token, TG_SEND_MSG);
 	CURL *curl = curl_easy_init();
 	if (!curl) return -1;
@@ -257,3 +275,15 @@ const channel_t *channel_telegram_get(void)
 {
 	return &tg_channel;
 }
+
+#ifdef SHELLCLAW_TEST
+int telegram_parse_update_for_test(const char *json, channel_incoming_msg_t *out, long *update_id)
+{
+	return parse_update(json, out, update_id);
+}
+
+void telegram_set_test_config(const config_t *cfg)
+{
+	g_tg.cfg = cfg;
+}
+#endif
