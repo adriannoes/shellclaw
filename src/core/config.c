@@ -74,11 +74,11 @@ static char *expand_tilde(const char *path)
 	if (!home) home = "";
 	if (path[1] == '\0' || path[1] == '/') {
 		size_t hlen = strlen(home);
-		size_t plen = strlen(path);
-		char *out = malloc(hlen + plen + 1);
+		size_t tail = strlen(path + 1);  /* skip '~' */
+		char *out = malloc(hlen + tail + 1);
 		if (!out) return NULL;
-		memcpy(out, home, hlen + 1);
-		if (path[1] == '/') memcpy(out + hlen, path + 1, plen);
+		memcpy(out, home, hlen);
+		memcpy(out + hlen, path + 1, tail + 1);  /* includes NUL */
 		return out;
 	}
 	return strdup(path);
