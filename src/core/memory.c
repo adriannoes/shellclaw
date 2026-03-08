@@ -192,7 +192,7 @@ int session_load(const char *session_id, char *messages_out, size_t max_len)
 		if (msg) {
 			size_t n = strlen(msg);
 			if (n >= max_len) n = max_len - 1;
-			memcpy(messages_out, msg, n + 1);
+			memcpy(messages_out, msg, n);
 			messages_out[n] = '\0';
 			ret = 0;
 		}

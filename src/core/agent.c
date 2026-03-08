@@ -71,7 +71,7 @@ static int compact_session_via_llm(const char *session_id, char *session_buf, si
 	char summary_buf[SUMMARY_RESULT_MAX];
 	size_t sum_len = strlen(resp.content);
 	if (sum_len >= SUMMARY_RESULT_MAX) sum_len = SUMMARY_RESULT_MAX - 1;
-	memcpy(summary_buf, resp.content, sum_len + 1);
+	memcpy(summary_buf, resp.content, sum_len);
 	summary_buf[sum_len] = '\0';
 	provider_response_clear(&resp);
 	cJSON *new_arr = cJSON_CreateArray();
@@ -98,7 +98,7 @@ static int compact_session_via_llm(const char *session_id, char *session_buf, si
 	if (!printed) return -1;
 	size_t plen = strlen(printed);
 	if (plen >= session_buf_size) plen = session_buf_size - 1;
-	memcpy(session_buf, printed, plen + 1);
+	memcpy(session_buf, printed, plen);
 	session_buf[plen] = '\0';
 	cJSON_free(printed);
 	session_save(session_id, session_buf);
@@ -228,7 +228,7 @@ static int append_exchange_to_session_json(const char *existing_json, const char
 	if (!printed) return -1;
 	size_t len = strlen(printed);
 	if (len >= out_size) len = out_size - 1;
-	memcpy(out_buf, printed, len + 1);
+	memcpy(out_buf, printed, len);
 	out_buf[len] = '\0';
 	cJSON_free(printed);
 	return 0;
