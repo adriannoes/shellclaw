@@ -29,6 +29,13 @@ jobs:
       - name: Release build
         run: make clean && make release
 
+      - name: AddressSanitizer + UBSan
+        run: |
+          make clean
+          CFLAGS="-std=c11 -Wall -Wextra -Werror -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer" \
+          LDFLAGS="-fsanitize=address,undefined" \
+          make test
+
       - name: Binary size check (< 2 MB)
         run: |
           size=$(stat -c%s build/shellclaw)

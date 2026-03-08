@@ -43,6 +43,10 @@ To run the main binary: `./build/shellclaw`. To run tests: `make test` (executes
 - Binary size: CI enforces < 2 MB for release build.
 - Cold start / RAM: Run `time ./build/shellclaw --version` for startup time; `ps -o rss= -p $(pgrep shellclaw)` for RSS (manual checks).
 
+## Thread Safety
+
+ShellClaw uses a **single-threaded model**: all subsystems (memory, providers, channels, tools) keep state in `static` globals, initialized once at startup. Do not call `agent_run`, provider `chat`, or memory functions from multiple threads. If threaded operation is needed in the future, each subsystem's globals must be wrapped in a context struct or protected with mutexes.
+
 ## Architecture
 
 ```
