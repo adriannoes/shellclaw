@@ -21,6 +21,12 @@
 static const char SHELL_PARAMS[] =
 	"{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"Shell command to execute\"}},\"required\":[\"command\"]}";
 
+/**
+ * Best-effort blocklist for obviously dangerous commands.
+ * WARNING: This is NOT a security sandbox. Determined users can bypass it
+ * with aliases, variable expansion, encoding tricks, or absolute paths.
+ * For real isolation, use chroot, seccomp, namespaces, or containers.
+ */
 static const char *const BLOCKLIST[] = {
 	"rm -rf /", "rm -rf / ", "rm -rf /$", "rm -rf /*",
 	"mkfs", "dd if=", "dd of=", "shutdown", "reboot",

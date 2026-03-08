@@ -102,8 +102,9 @@ static int file_write(const char *path, const char *content, char *result_buf, s
 		snprintf(result_buf, max_len, "{\"error\":\"path outside workspace\"}");
 		return -1;
 	}
+	int ws_only = g_file_cfg ? config_workspace_only(g_file_cfg) : 0;
 	char safe_path[PATH_MAX];
-	if (!config_workspace_only(g_file_cfg)) {
+	if (!ws_only) {
 		snprintf(safe_path, sizeof(safe_path), "%s", path);
 	} else {
 		struct stat st;

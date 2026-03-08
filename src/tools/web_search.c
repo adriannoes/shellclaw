@@ -134,8 +134,9 @@ static int web_search_execute(const char *args_json, char *result_buf, size_t ma
 		}
 	}
 	cJSON_Delete(ddg);
-	if (used == 0)
+	if (used == 0) {
 		snprintf(result_buf, max_len, "No results found for: %s", query);
+	}
 	free(query);
 	return 0;
 }
