@@ -93,6 +93,7 @@ static int web_search_execute(const char *args_json, char *result_buf, size_t ma
 	curl_easy_cleanup(curl);
 	if (res != CURLE_OK || !resp) {
 		free(resp);
+		free(query);
 		snprintf(result_buf, max_len, "{\"error\":\"search request failed\"}");
 		return -1;
 	}
@@ -100,6 +101,7 @@ static int web_search_execute(const char *args_json, char *result_buf, size_t ma
 	free(resp);
 	if (!ddg || !cJSON_IsObject(ddg)) {
 		if (ddg) cJSON_Delete(ddg);
+		free(query);
 		snprintf(result_buf, max_len, "{\"error\":\"failed to parse response\"}");
 		return -1;
 	}
