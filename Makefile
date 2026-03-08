@@ -59,6 +59,7 @@ REGISTRY_O := src/tools/registry.o
 # Provider objects built with SHELLCLAW_TEST for negative/parse tests (CR-21)
 ANTHROPIC_TEST_O := $(BINDIR)/anthropic_test.o
 OPENAI_TEST_O    := $(BINDIR)/openai_test.o
+CHANNEL_TG_TEST_O := $(BINDIR)/telegram_test.o
 CORE_OBJS := $(CONFIG_O) $(MAIN_O) $(MEMORY_O) $(SKILL_O) $(AGENT_O)
 VENDOR_OBJS := $(TOML_O) $(SQLITE3_O) $(CJSON_O)
 OBJS := $(CORE_OBJS) $(VENDOR_OBJS)
@@ -211,6 +212,20 @@ test_file: tests/test_file.c $(FILE_O) $(REGISTRY_O) $(CONFIG_O) $(TOML_O) $(CJS
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_file.c $(FILE_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
+$(CHANNEL_TG_TEST_O): src/channels/telegram.c src/channels/channel.h src/core/config.h
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(INC) -DSHELLCLAW_TEST -c -o $@ src/channels/telegram.c
+
+test_telegram: tests/test_telegram.c $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_TEST -o $(BINDIR)/$@ tests/test_telegram.c $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_web_search: tests/test_web_search.c $(WEBSEARCH_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_web_search.c $(WEBSEARCH_O) $(CJSON_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
 static:
 	cppcheck --enable=warning,style,performance,portability --error-exitcode=1 \
 		-I. -Isrc -Ivendor/tomlc99 -Ivendor/sqlite3 -Ivendor/cJSON \
@@ -219,7 +234,7 @@ static:
 		--suppress=knownConditionTrueFalse \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -232,6 +247,8 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_cli
 	$(BINDIR)/test_shell
 	$(BINDIR)/test_file
+	$(BINDIR)/test_telegram
+	$(BINDIR)/test_web_search
 
 COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
@@ -256,11 +273,11 @@ coverage: clean
 
 # Remove build artifacts left in repo root by old Makefiles (binaries and .dSYM)
 clean-root-dsym:
-	@for d in shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_openai test_provider test_router test_shell test_skill; do rm -rf $$d.dSYM; done
-	@rm -f shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_openai test_provider test_router test_shell test_skill
+	@for d in shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_openai test_provider test_router test_shell test_skill test_telegram test_web_search; do rm -rf $$d.dSYM; done
+	@rm -f shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_openai test_provider test_router test_shell test_skill test_telegram test_web_search
 
 clean: clean-root-dsym
-	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O)
+	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O)
 	find . -name '*.gcno' -o -name '*.gcda' -o -name '*.gcov' | xargs rm -f 2>/dev/null || true
-	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file
+	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search
 	rm -rf $(BINDIR)/*.dSYM $(DSYMDIR)
