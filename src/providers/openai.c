@@ -24,8 +24,8 @@ typedef struct {
 	size_t cap;
 } curl_buf_t;
 
-static char *g_api_key;
-static const config_t *g_cfg;
+static char *s_oai_api_key;
+static const config_t *s_oai_cfg;
 
 static size_t write_cb(const char *ptr, size_t size, size_t nmemb, void *userdata)
 {
@@ -138,7 +138,7 @@ static int do_request(const char *url, const char *body, provider_response_t *re
 		set_error(response, "Failed to initialize curl");
 		return -1;
 	}
-	size_t key_len = g_api_key ? strlen(g_api_key) : 0;
+	size_t key_len = s_oai_api_key ? strlen(s_oai_api_key) : 0;
 	size_t auth_header_size = key_len + 24;
 	char *auth_header = malloc(auth_header_size);
 	if (!auth_header) {
@@ -146,7 +146,7 @@ static int do_request(const char *url, const char *body, provider_response_t *re
 		set_error(response, "Out of memory");
 		return -1;
 	}
-	snprintf(auth_header, auth_header_size, "Authorization: Bearer %s", g_api_key ? g_api_key : "");
+	snprintf(auth_header, auth_header_size, "Authorization: Bearer %s", s_oai_api_key ? s_oai_api_key : "");
 	curl_buf_t resp_buf = { .buf = malloc(RESPONSE_BUF_INIT), .len = 0, .cap = RESPONSE_BUF_INIT };
 	if (!resp_buf.buf) {
 		free(auth_header);
@@ -192,13 +192,13 @@ static int build_and_send(const provider_message_t *messages, size_t message_cou
                           const provider_tool_def_t *tools, size_t tool_count,
                           provider_response_t *response)
 {
-	if (!g_cfg) { set_error(response, "OpenAI provider not initialized"); return -1; }
-	const char *endpoint = config_provider_openai_endpoint(g_cfg);
+	if (!s_oai_cfg) { set_error(response, "OpenAI provider not initialized"); return -1; }
+	const char *endpoint = config_provider_openai_endpoint(s_oai_cfg);
 	if (!endpoint || !endpoint[0]) endpoint = "https://api.openai.com/v1/chat/completions";
 	cJSON *root = cJSON_CreateObject();
 	if (!root) { set_error(response, "Out of memory"); return -1; }
-	const char *model = config_agent_model(g_cfg);
-	int max_tokens = config_agent_max_tokens(g_cfg);
+	const char *model = config_agent_model(s_oai_cfg);
+	int max_tokens = config_agent_max_tokens(s_oai_cfg);
 	if (!model) model = "gpt-4o-mini";
 	if (max_tokens <= 0) max_tokens = 4096;
 	cJSON_AddItemToObject(root, "model", cJSON_CreateString(model));
@@ -277,17 +277,17 @@ static int openai_init(const config_t *cfg)
 	if (!env_name || !env_name[0]) return -1;
 	const char *key = getenv(env_name);
 	if (!key || !key[0]) return -1;
-	free(g_api_key);
-	g_api_key = strdup(key);
-	g_cfg = g_api_key ? cfg : NULL;
-	return g_api_key ? 0 : -1;
+	free(s_oai_api_key);
+	s_oai_api_key = strdup(key);
+	s_oai_cfg = s_oai_api_key ? cfg : NULL;
+	return s_oai_api_key ? 0 : -1;
 }
 
 static int openai_chat(const provider_message_t *messages, size_t message_count,
                        const provider_tool_def_t *tools, size_t tool_count,
                        provider_response_t *response)
 {
-	if (!g_api_key || !g_cfg) {
+	if (!s_oai_api_key || !s_oai_cfg) {
 		set_error(response, "OpenAI provider not initialized or API key missing");
 		return -1;
 	}
@@ -297,13 +297,13 @@ static int openai_chat(const provider_message_t *messages, size_t message_count,
 
 static void openai_cleanup(void)
 {
-	if (g_api_key) {
-		volatile char *p = (volatile char *)g_api_key;
-		for (size_t i = 0; g_api_key[i] != '\0'; i++) p[i] = '\0';
-		free(g_api_key);
-		g_api_key = NULL;
+	if (s_oai_api_key) {
+		volatile char *p = (volatile char *)s_oai_api_key;
+		for (size_t i = 0; s_oai_api_key[i] != '\0'; i++) p[i] = '\0';
+		free(s_oai_api_key);
+		s_oai_api_key = NULL;
 	}
-	g_cfg = NULL;
+	s_oai_cfg = NULL;
 }
 
 static const provider_t openai_provider = {
