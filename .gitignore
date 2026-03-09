@@ -37,6 +37,8 @@ auth_tokens.json
 
 # Debug artifacts
 test_file_debug.txt
+*.gcno
+*.gcda
 
 # Raspberry Pi specific
 *.img
