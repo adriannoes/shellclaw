@@ -244,6 +244,7 @@ cleanup:
 
 static int test_react_loop_tool_then_text(void)
 {
+	int failed = 1;
 	const char *path = "build/test_agent_react.toml";
 	FILE *f = fopen(path, "w");
 	ASSERT(f);
@@ -251,23 +252,26 @@ static int test_react_loop_tool_then_text(void)
 	fclose(f);
 	config_t *cfg = NULL;
 	char errbuf[256];
-	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
-	ASSERT(cfg != NULL);
+	if (config_load(path, &cfg, errbuf, sizeof(errbuf)) != 0) goto cleanup;
+	if (cfg == NULL) goto cleanup;
 	const agent_tool_t *tools = &mock_echo_tool;
 	size_t tool_count = 1;
 	char response_buf[4096];
 	response_buf[0] = '\0';
 	int ret = agent_run(cfg, "cli:react", "hi", &tool_then_text_provider, tools, tool_count, response_buf, sizeof(response_buf));
-	ASSERT(ret == 0);
-	ASSERT(strstr(response_buf, "final text") != NULL);
-	ASSERT(tool_then_text_call_count == 2);
+	if (ret != 0) goto cleanup;
+	if (strstr(response_buf, "final text") == NULL) goto cleanup;
+	if (tool_then_text_call_count != 2) goto cleanup;
+	failed = 0;
+cleanup:
 	config_free(cfg);
 	remove(path);
-	return 0;
+	return failed;
 }
 
 static int test_react_loop_max_iterations(void)
 {
+	int failed = 1;
 	const char *path = "build/test_agent_maxiter.toml";
 	FILE *f = fopen(path, "w");
 	ASSERT(f);
@@ -275,20 +279,22 @@ static int test_react_loop_max_iterations(void)
 	fclose(f);
 	config_t *cfg = NULL;
 	char errbuf[256];
-	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
-	ASSERT(cfg != NULL);
+	if (config_load(path, &cfg, errbuf, sizeof(errbuf)) != 0) goto cleanup;
+	if (cfg == NULL) goto cleanup;
 	const agent_tool_t *tools = &mock_echo_tool;
 	size_t tool_count = 1;
 	char response_buf[4096];
 	response_buf[0] = '\0';
 	int ret = agent_run(cfg, "cli:maxiter", "hi", &always_tool_provider, tools, tool_count, response_buf, sizeof(response_buf));
-	ASSERT(ret == 0);
-	ASSERT(strstr(response_buf, "partial") != NULL);
+	if (ret != 0) goto cleanup;
+	if (strstr(response_buf, "partial") == NULL) goto cleanup;
 	/* First chat + 2 tool rounds (max_tool_iterations=2) = 3 provider calls. */
-	ASSERT(always_tool_call_count == 3);
+	if (always_tool_call_count != 3) goto cleanup;
+	failed = 0;
+cleanup:
 	config_free(cfg);
 	remove(path);
-	return 0;
+	return failed;
 }
 
 static int persist_reply_init(const config_t *cfg) { (void)cfg; return 0; }
@@ -315,35 +321,38 @@ static const provider_t persist_reply_provider = {
 
 static int test_session_persisted_after_exchange(void)
 {
+	int failed = 1;
 	const char *db_path = "build/test_agent_persist.db";
 	const char *config_path = "build/test_agent_persist.toml";
 	memory_cleanup();
-	ASSERT(memory_init(db_path) == 0);
+	if (memory_init(db_path) != 0) goto cleanup;
 	FILE *cf = fopen(config_path, "w");
 	ASSERT(cf);
 	fprintf(cf, "[agent]\nmodel = \"test\"\n[memory]\npath = \"%s\"\n", db_path);
 	fclose(cf);
 	config_t *cfg = NULL;
 	char errbuf[256];
-	ASSERT(config_load(config_path, &cfg, errbuf, sizeof(errbuf)) == 0);
-	ASSERT(cfg != NULL);
+	if (config_load(config_path, &cfg, errbuf, sizeof(errbuf)) != 0) goto cleanup;
+	if (cfg == NULL) goto cleanup;
 	char response_buf[4096];
 	response_buf[0] = '\0';
 	const char *session_id = "cli:persist";
 	const char *user_msg = "user message for persist test";
 	int ret = agent_run(cfg, session_id, user_msg, &persist_reply_provider, NULL, 0, response_buf, sizeof(response_buf));
-	ASSERT(ret == 0);
-	ASSERT(strstr(response_buf, "persisted reply") != NULL);
+	if (ret != 0) goto cleanup;
+	if (strstr(response_buf, "persisted reply") == NULL) goto cleanup;
 	char loaded[8192];
 	loaded[0] = '\0';
-	ASSERT(session_load(session_id, loaded, sizeof(loaded)) == 0);
-	ASSERT(strstr(loaded, user_msg) != NULL);
-	ASSERT(strstr(loaded, "persisted reply") != NULL);
+	if (session_load(session_id, loaded, sizeof(loaded)) != 0) goto cleanup;
+	if (strstr(loaded, user_msg) == NULL) goto cleanup;
+	if (strstr(loaded, "persisted reply") == NULL) goto cleanup;
+	failed = 0;
+cleanup:
 	config_free(cfg);
 	remove(config_path);
 	remove(db_path);
 	memory_cleanup();
-	return 0;
+	return failed;
 }
 
 static int compaction_call_count;
@@ -385,10 +394,11 @@ static const provider_t compaction_provider = {
 
 static int test_context_compaction_when_history_exceeds_max(void)
 {
+	int failed = 1;
 	const char *db_path = "build/test_agent_compact.db";
 	const char *config_path = "build/test_agent_compact.toml";
 	memory_cleanup();
-	ASSERT(memory_init(db_path) == 0);
+	if (memory_init(db_path) != 0) goto cleanup_early;
 	char session_json[65536];
 	size_t off = 0;
 	off += (size_t)snprintf(session_json + off, sizeof(session_json) - off, "[");
@@ -398,21 +408,21 @@ static int test_context_compaction_when_history_exceeds_max(void)
 			"%s{\"role\":\"%s\",\"content\":\"msg_%d\"}", i ? "," : "", role, i);
 	}
 	off += (size_t)snprintf(session_json + off, sizeof(session_json) - off, "]");
-	ASSERT(session_save("cli:compact", session_json) == 0);
+	if (session_save("cli:compact", session_json) != 0) goto cleanup;
 	FILE *cf = fopen(config_path, "w");
-	ASSERT(cf);
+	if (!cf) goto cleanup;
 	fprintf(cf, "[agent]\nmodel = \"test\"\nmax_context_messages = 40\n[memory]\npath = \"%s\"\n", db_path);
 	fclose(cf);
 	config_t *cfg = NULL;
 	char errbuf[256];
-	ASSERT(config_load(config_path, &cfg, errbuf, sizeof(errbuf)) == 0);
-	ASSERT(cfg != NULL);
+	if (config_load(config_path, &cfg, errbuf, sizeof(errbuf)) != 0) goto cleanup;
+	if (cfg == NULL) goto cleanup;
 	char response_buf[4096];
 	response_buf[0] = '\0';
 	int ret = agent_run(cfg, "cli:compact", "hi", &compaction_provider, NULL, 0, response_buf, sizeof(response_buf));
-	ASSERT(ret == 0);
-	ASSERT(compaction_call_count >= 2);
-	ASSERT(strstr(response_buf, "ok") != NULL);
+	if (ret != 0) goto cleanup;
+	if (compaction_call_count < 2) goto cleanup;
+	if (strstr(response_buf, "ok") == NULL) goto cleanup;
 	/* Second chat context must contain the summary and tail (e.g. msg_11 from kept raw messages). */
 	int found_summary = 0;
 	int found_tail = 0;
@@ -420,13 +430,16 @@ static int test_context_compaction_when_history_exceeds_max(void)
 		if (strstr(spy_content[i], "Summary of earlier") != NULL) found_summary = 1;
 		if (strstr(spy_content[i], "msg_11") != NULL) found_tail = 1;
 	}
-	ASSERT(found_summary);
-	ASSERT(found_tail);
+	if (!found_summary) goto cleanup;
+	if (!found_tail) goto cleanup;
+	failed = 0;
+cleanup:
 	config_free(cfg);
+cleanup_early:
 	remove(config_path);
 	remove(db_path);
 	memory_cleanup();
-	return 0;
+	return failed;
 }
 
 int main(void)

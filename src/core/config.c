@@ -72,15 +72,15 @@ static char *expand_tilde(const char *path)
 	if (!path || path[0] != '~') return path ? strdup(path) : NULL;
 	const char *home = getenv("HOME");
 	if (!home) home = "";
-	if (path[1] == '\0' || path[1] == '/') {
-		size_t hlen = strlen(home);
-		size_t tail = strlen(path + 1);  /* skip '~' */
-		char *out = malloc(hlen + tail + 1);
-		if (!out) return NULL;
-		memcpy(out, home, hlen);
-		memcpy(out + hlen, path + 1, tail + 1);  /* includes NUL */
-		return out;
-	}
+		if (path[1] == '\0' || path[1] == '/') {
+			size_t hlen = strlen(home);
+			size_t tail = strlen(path + 1);  /* skip '~' */
+			char *out = malloc(hlen + tail + 1);
+			if (!out) return NULL;
+			memcpy(out, home, hlen);
+			memcpy(out + hlen, path + 1, tail + 1);  /* includes NUL */
+			return out;
+		}
 	return strdup(path);
 }
 
@@ -150,12 +150,12 @@ static int parse_telegram(const toml_table_t *root, config_t *cfg, char *errbuf,
 	const toml_array_t *arr = toml_array_in(tg, "allowed_users");
 	if (arr) {
 		int n = toml_array_nelem(arr);
-		char **users = n > 0 ? malloc((size_t)n * sizeof(char *)) : NULL;
-		if (n > 0 && !users) {
-			ERRBUF_COPY(errbuf, errbufsz, "out of memory allocating telegram allowed_users");
-			return -1;
-		}
-		if (users) {
+		if (n > 0) {
+			char **users = malloc((size_t)n * sizeof(char *));
+			if (!users) {
+				ERRBUF_COPY(errbuf, errbufsz, "out of memory allocating telegram allowed_users");
+				return -1;
+			}
 			for (int i = 0; i < n; i++) {
 				toml_datum_t s = toml_string_at(arr, i);
 				users[i] = s.ok ? s.u.s : NULL;
@@ -288,9 +288,11 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	if (!fp) {
 		if (errbuf && errbufsz > 0) {
 			int n = snprintf(errbuf, errbufsz, "cannot open config file: %s", path);
-			if (n >= (int)errbufsz && errbufsz > 4) {
-				memcpy(errbuf + errbufsz - 4, "...", 3);
-				errbuf[errbufsz - 1] = '\0';
+			if (n < 0 || n >= (int)errbufsz) {
+				if (errbufsz > 4) {
+					memcpy(errbuf + errbufsz - 4, "...", 3);
+					errbuf[errbufsz - 1] = '\0';
+				}
 			}
 		}
 		return -1;
