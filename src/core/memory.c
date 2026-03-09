@@ -97,12 +97,14 @@ int memory_init(const char *path)
 	sqlite3_exec(g_db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
 	sqlite3_busy_timeout(g_db, 5000);
 	if (run_schema() != 0) {
-		sqlite3_close(g_db);
-		g_db = NULL;
 		if (file_existed) {
 			fprintf(stderr, "Error: memory DB schema mismatch at %s\n", path);
+			sqlite3_close(g_db);
+			g_db = NULL;
 			return -1;
 		}
+		sqlite3_close(g_db);
+		g_db = NULL;
 		remove(path);
 		if (sqlite3_open(path, &g_db) != SQLITE_OK) {
 			if (g_db) sqlite3_close(g_db);
