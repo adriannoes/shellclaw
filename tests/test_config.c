@@ -104,6 +104,49 @@ static int test_defaults(void)
 	return 0;
 }
 
+static int test_gateway_section(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_gateway.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[gateway]\nenabled = true\nhost = \"0.0.0.0\"\nport = 18789\nallow_bind_all = true\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	int ret = config_load(path, &cfg, errbuf, sizeof(errbuf));
+	ASSERT(ret == 0);
+	ASSERT(cfg != NULL);
+	ASSERT(config_gateway_enabled(cfg) == 1);
+	ASSERT(config_gateway_host(cfg) != NULL);
+	ASSERT(strcmp(config_gateway_host(cfg), "0.0.0.0") == 0);
+	ASSERT(config_gateway_port(cfg) == 18789);
+	ASSERT(config_gateway_allow_bind_all(cfg) == 1);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_gateway_defaults(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_gateway_defaults.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	int ret = config_load(path, &cfg, NULL, 0);
+	ASSERT(ret == 0);
+	ASSERT(config_gateway_enabled(cfg) == 0);
+	ASSERT(config_gateway_host(cfg) != NULL);
+	ASSERT(strcmp(config_gateway_host(cfg), "127.0.0.1") == 0);
+	ASSERT(config_gateway_port(cfg) == 18789);
+	ASSERT(config_gateway_allow_bind_all(cfg) == 0);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_load_valid_minimal());
@@ -111,6 +154,8 @@ int main(void)
 	RUN(test_load_missing_required_model());
 	RUN(test_env_override());
 	RUN(test_defaults());
+	RUN(test_gateway_section());
+	RUN(test_gateway_defaults());
 	printf("test_config: all tests passed\n");
 	return 0;
 }

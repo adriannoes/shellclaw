@@ -59,6 +59,11 @@ int config_workspace_only(const config_t *c);
 const char *config_workspace_path(const config_t *c);
 int config_shell_timeout_sec(const config_t *c);
 
+int config_gateway_enabled(const config_t *c);
+const char *config_gateway_host(const config_t *c);
+int config_gateway_port(const config_t *c);
+int config_gateway_allow_bind_all(const config_t *c);
+
 #ifdef __cplusplus
 }
 #endif
