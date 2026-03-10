@@ -1,0 +1,89 @@
+/* ShellClaw Web UI - terminal aesthetic */
+:root {
+  --bg: #0d1117;
+  --fg: #c9d1d9;
+  --accent: #00ff41;
+  --dim: #8b949e;
+  --border: #30363d;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #161b22;
+  border-bottom: 1px solid var(--border);
+}
+nav a {
+  color: var(--dim);
+  text-decoration: none;
+}
+nav a:hover, nav a.active { color: var(--accent); }
+nav .brand { font-weight: bold; color: var(--accent); }
+main {
+  padding: 1rem;
+  max-width: 960px;
+  margin: 0 auto;
+}
+h1, h2 { color: var(--accent); margin-top: 0; }
+input, textarea, button {
+  font-family: inherit;
+  font-size: 0.9rem;
+  background: #161b22;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+}
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+button:hover { opacity: 0.9; }
+button.danger { background: #f85149; border-color: #f85149; }
+.pair-form, .config-form { max-width: 400px; }
+.pair-form input, .config-form input { width: 100%; margin-bottom: 0.5rem; }
+.form-row { margin-bottom: 0.75rem; }
+.form-row label { display: block; margin-bottom: 0.25rem; color: var(--dim); }
+.form-row input, .form-row textarea { width: 100%; }
+#chat-log {
+  height: 300px;
+  overflow-y: auto;
+  background: #161b22;
+  border: 1px solid var(--border);
+  padding: 0.75rem;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+#chat-input { width: 100%; margin-top: 0.5rem; }
+.status-ok { color: var(--accent); }
+.status-err { color: #f85149; }
+.skill-list, .session-list { list-style: none; padding: 0; }
+.skill-list li, .session-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.log-line { font-size: 0.8rem; margin: 0.25rem 0; }
+.log-info { color: var(--dim); }
+.log-warn { color: #d29922; }
+.log-error { color: #f85149; }
+.pre-wrap { white-space: pre-wrap; font-size: 0.85rem; }
