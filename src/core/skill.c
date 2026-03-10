@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 
@@ -116,4 +117,104 @@ int skill_build_system_prompt_base(const config_t *cfg, const char *skills_conte
 	if (skills_content && skills_content[0] != '\0')
 		append_str(out_buf, out_size, &used, skills_content);
 	return 0;
+}
+
+static int is_safe_skill_name(const char *name)
+{
+	if (!name || name[0] == '\0') return 0;
+	if (name[0] == '.') return 0;
+	for (const char *p = name; *p; p++) {
+		if (*p == '/' || *p == '\\') return 0;
+		if (p[0] == '.' && p[1] == '.') return 0;
+	}
+	return 1;
+}
+
+static int build_skill_path(const config_t *cfg, const char *name, char *path_out, size_t path_size)
+{
+	if (!cfg || !name || !path_out || path_size == 0) return -1;
+	if (!is_safe_skill_name(name)) return -1;
+	const char *dir = config_skills_dir(cfg);
+	if (!dir || dir[0] == '\0') return -1;
+	int n = snprintf(path_out, path_size, "%s/%s.md", dir, name);
+	return (n < 0 || (size_t)n >= path_size) ? -1 : 0;
+}
+
+int skill_list_names(const config_t *cfg, char **names_out, int max_count)
+{
+	if (!cfg || !names_out || max_count <= 0) return -1;
+	const char *dir_path = config_skills_dir(cfg);
+	if (!dir_path || dir_path[0] == '\0') return 0;
+	DIR *dir = opendir(dir_path);
+	if (!dir) return 0;
+	int count = 0;
+	struct dirent *ent;
+	while (count < max_count && (ent = readdir(dir)) != NULL) {
+		if (ent->d_name[0] == '.') continue;
+		if (!ends_with_md(ent->d_name)) continue;
+		size_t len = strlen(ent->d_name);
+		if (len <= 3) continue;
+		names_out[count] = strndup(ent->d_name, len - 3);
+		if (!names_out[count]) {
+			for (int i = 0; i < count; i++) free(names_out[i]);
+			closedir(dir);
+			return -1;
+		}
+		count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+int skill_get_content(const config_t *cfg, const char *name, char *out_buf, size_t out_size)
+{
+	if (!cfg || !name || !out_buf || out_size == 0) return -1;
+	char path[MAX_PATH_LEN];
+	if (build_skill_path(cfg, name, path, sizeof(path)) != 0) return -1;
+	FILE *f = fopen(path, "r");
+	if (!f) return -1;
+	out_buf[0] = '\0';
+	size_t used = 0;
+	append_file_content(f, out_buf, out_size, &used);
+	fclose(f);
+	return 0;
+}
+
+int skill_create(const config_t *cfg, const char *name, const char *content)
+{
+	if (!cfg || !name || !content) return -1;
+	char path[MAX_PATH_LEN];
+	if (build_skill_path(cfg, name, path, sizeof(path)) != 0) return -1;
+	FILE *f = fopen(path, "r");
+	if (f) {
+		fclose(f);
+		return -1;
+	}
+	f = fopen(path, "w");
+	if (!f) return -1;
+	size_t len = strlen(content);
+	size_t written = fwrite(content, 1, len, f);
+	fclose(f);
+	return (written == len) ? 0 : -1;
+}
+
+int skill_update(const config_t *cfg, const char *name, const char *content)
+{
+	if (!cfg || !name || !content) return -1;
+	char path[MAX_PATH_LEN];
+	if (build_skill_path(cfg, name, path, sizeof(path)) != 0) return -1;
+	FILE *f = fopen(path, "w");
+	if (!f) return -1;
+	size_t len = strlen(content);
+	size_t written = fwrite(content, 1, len, f);
+	fclose(f);
+	return (written == len) ? 0 : -1;
+}
+
+int skill_delete(const config_t *cfg, const char *name)
+{
+	if (!cfg || !name) return -1;
+	char path[MAX_PATH_LEN];
+	if (build_skill_path(cfg, name, path, sizeof(path)) != 0) return -1;
+	return remove(path) == 0 ? 0 : -1;
 }
