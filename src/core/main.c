@@ -11,6 +11,11 @@
 #include "channels/channel.h"
 #include "providers/provider.h"
 #include "tools/tool.h"
+#ifdef SHELLCLAW_GATEWAY
+#include "channels/webchat.h"
+#include "gateway/auth.h"
+#include "gateway/http.h"
+#endif
 #include <curl/curl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -18,7 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define VERSION "0.1.0"
+#define VERSION "0.2.0"
 #define DEFAULT_CONFIG_PATH "~/.shellclaw/config.toml"
 #define SKILLS_BUF_SIZE (256 * 1024)
 #define SYSTEM_PROMPT_BUF_SIZE (256 * 1024)
@@ -29,6 +34,7 @@ static int g_verbose;
 static volatile sig_atomic_t g_shutdown;
 
 static const char *g_cli_one_shot;
+static const char *g_config_path;
 static const config_t *g_cfg;
 static const provider_t *g_provider;
 #define MAX_TOOLS 8
@@ -79,6 +85,10 @@ static void providers_cleanup(void)
 static const channel_t *g_channels[MAX_CHANNELS];
 static int g_channel_count;
 
+#ifdef SHELLCLAW_GATEWAY
+static auth_ctx_t *g_auth_ctx;
+#endif
+
 static int channels_init(const config_t *cfg)
 {
 	g_cfg = cfg;
@@ -93,6 +103,13 @@ static int channels_init(const config_t *cfg)
 		if (tg->init(cfg) == 0)
 			g_channels[g_channel_count++] = tg;
 	}
+#ifdef SHELLCLAW_GATEWAY
+	if (config_gateway_enabled(cfg)) {
+		const channel_t *wc = channel_webchat_get();
+		if (wc->init(cfg) == 0)
+			g_channels[g_channel_count++] = wc;
+	}
+#endif
 	return 0;
 }
 
@@ -160,6 +177,33 @@ static int init_subsystems(const config_t *cfg)
 		memory_cleanup();
 		return -1;
 	}
+#ifdef SHELLCLAW_GATEWAY
+	if (config_gateway_enabled(cfg)) {
+		g_auth_ctx = auth_init(NULL);
+		if (!g_auth_ctx) {
+			fprintf(stderr, "Error: auth init failed\n");
+			channels_cleanup();
+			providers_cleanup();
+			skills_cleanup();
+			memory_cleanup();
+			return -1;
+		}
+		char *code = auth_get_or_create_pairing_code(g_auth_ctx);
+		if (code) {
+			free(code);
+		}
+		if (http_start(cfg, g_auth_ctx, g_config_path) != 0) {
+			fprintf(stderr, "Error: gateway start failed\n");
+			auth_cleanup(g_auth_ctx);
+			g_auth_ctx = NULL;
+			channels_cleanup();
+			providers_cleanup();
+			skills_cleanup();
+			memory_cleanup();
+			return -1;
+		}
+	}
+#endif
 	/* cppcheck-suppress knownConditionTrueFalse */
 	if (tools_init(cfg) != 0) {
 		fprintf(stderr, "Error: tools init failed\n");
@@ -174,6 +218,13 @@ static int init_subsystems(const config_t *cfg)
 
 static void cleanup_subsystems(void)
 {
+#ifdef SHELLCLAW_GATEWAY
+	if (g_auth_ctx) {
+		auth_cleanup(g_auth_ctx);
+		g_auth_ctx = NULL;
+	}
+	http_stop();
+#endif
 	tools_cleanup();
 	channels_cleanup();
 	providers_cleanup();
@@ -287,6 +338,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	g_shutdown = 0;
+	g_config_path = config_path;
 	setup_signals();
 	if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
 		fprintf(stderr, "Error: curl_global_init failed\n");
