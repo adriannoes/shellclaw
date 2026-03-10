@@ -70,6 +70,15 @@ int session_save(const char *session_id, const char *messages);
 int session_delete(const char *session_id);
 
 /**
+ * List session IDs from the database.
+ *
+ * @param session_ids_out Array of pointers to receive session IDs; caller must free each.
+ * @param max_count       Maximum number of session IDs to return.
+ * @return Number of sessions returned, or -1 on error.
+ */
+int session_list(char **session_ids_out, int max_count);
+
+/**
  * Release resources and close the database. Safe to call multiple times.
  */
 void memory_cleanup(void);

@@ -65,6 +65,28 @@ static int test_corrupted_db_recreated(void)
 	return 0;
 }
 
+static int test_session_list(void)
+{
+	const char *path = "/tmp/shellclaw_test_memory_list.db";
+	remove(path);
+	ASSERT(memory_init(path) == 0);
+	ASSERT(session_save("s1", "[]") == 0);
+	ASSERT(session_save("s2", "[]") == 0);
+	ASSERT(session_save("s3", "[]") == 0);
+	char *ids[8];
+	int n = session_list(ids, 8);
+	ASSERT(n >= 3);
+	for (int i = 0; i < n; i++)
+		free(ids[i]);
+	n = session_list(ids, 2);
+	ASSERT(n == 2);
+	for (int i = 0; i < n; i++)
+		free(ids[i]);
+	memory_cleanup();
+	remove(path);
+	return 0;
+}
+
 static int test_session_crud(void)
 {
 	const char *path = "/tmp/shellclaw_test_memory3.db";
@@ -89,6 +111,7 @@ int main(void)
 	RUN(test_schema_and_fts5());
 	RUN(test_save_overwrite());
 	RUN(test_corrupted_db_recreated());
+	RUN(test_session_list());
 	RUN(test_session_crud());
 	printf("test_memory: all tests passed\n");
 	return 0;

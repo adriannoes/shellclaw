@@ -230,6 +230,29 @@ int session_delete(const char *session_id)
 	return ret;
 }
 
+int session_list(char **session_ids_out, int max_count)
+{
+	if (!g_db || !session_ids_out || max_count <= 0) return -1;
+	const char *sql = "SELECT id FROM sessions ORDER BY updated_at DESC";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	int count = 0;
+	while (count < max_count && sqlite3_step(stmt) == SQLITE_ROW) {
+		const char *id = (const char *)sqlite3_column_text(stmt, 0);
+		if (id) {
+			session_ids_out[count] = strdup(id);
+			if (!session_ids_out[count]) {
+				for (int i = 0; i < count; i++) free(session_ids_out[i]);
+				sqlite3_finalize(stmt);
+				return -1;
+			}
+			count++;
+		}
+	}
+	sqlite3_finalize(stmt);
+	return count;
+}
+
 void memory_cleanup(void)
 {
 	if (g_db) {
