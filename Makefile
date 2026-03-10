@@ -5,6 +5,12 @@ BINDIR ?= build
 DSYMDIR ?= tests-dSYM
 INC    := -I. -I src -I vendor/tomlc99 -I vendor/sqlite3 -I vendor/cJSON
 LDLIBS := -lcurl -lm
+# Gateway (Phase 2): libwebsockets for HTTP+WebSocket on same port
+# Install: brew install libwebsockets
+# Set GATEWAY=0 to build without gateway when libwebsockets not installed
+GATEWAY ?= $(shell pkg-config --exists libwebsockets 2>/dev/null && echo 1 || echo 0)
+GATEWAY_CFLAGS := $(if $(filter 1,$(GATEWAY)),$(shell pkg-config --cflags libwebsockets 2>/dev/null),)
+GATEWAY_LDLIBS := $(if $(filter 1,$(GATEWAY)),$(shell pkg-config --libs libwebsockets 2>/dev/null),)
 LDFLAGS :=
 # On macOS debug builds: generate .dSYM into tests-dSYM/ and remove any from BINDIR
 DSYM_SCRIPT = @mkdir -p $(DSYMDIR) && ( [ "$$(uname)" != "Darwin" ] || [ "$(BUILD)" != "debug" ] || dsymutil $(BINDIR)/$@ -o $(DSYMDIR)/$@.dSYM 2>/dev/null ); rm -rf $(BINDIR)/$@.dSYM
@@ -24,6 +30,7 @@ else
 CFLAGS ?= -std=c11 -Wall -Wextra -g -O0 -DDEBUG
 endif
 CFLAGS += -Wformat=2 -Wformat-security
+CFLAGS += $(if $(filter 1,$(GATEWAY)),-DSHELLCLAW_GATEWAY,)
 ifeq ($(CI),true)
 CFLAGS += -Werror
 endif
@@ -51,6 +58,12 @@ CHANNEL_COMMON_O := src/channels/channel_common.o
 CHANNEL_STUB_O   := src/channels/stub.o
 CHANNEL_CLI_O    := src/channels/cli.o
 CHANNEL_TG_O     := src/channels/telegram.o
+# Gateway (Phase 2) - auth always built (no libwebsockets); http/ws when libwebsockets available
+AUTH_O   := src/gateway/auth.o
+CHANNEL_WEBCHAT_O := $(if $(filter 1,$(GATEWAY)),src/channels/webchat.o,)
+STATIC_O := $(if $(filter 1,$(GATEWAY)),src/gateway/static.o,)
+HTTP_O   := $(if $(filter 1,$(GATEWAY)),src/gateway/http.o,)
+WS_O     := $(if $(filter 1,$(GATEWAY)),src/gateway/ws.o,)
 # Tools (Task 7)
 SHELL_O    := src/tools/shell.o
 WEBSEARCH_O := src/tools/web_search.o
@@ -75,9 +88,9 @@ debug:
 release:
 	$(MAKE) BUILD=release shellclaw
 
-shellclaw: $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O)
+shellclaw: $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(LDLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(LDLIBS) $(GATEWAY_LDLIBS)
 	$(DSYM_SCRIPT)
 	@if [ "$(BUILD)" = "release" ]; then strip -s $(BINDIR)/$@ 2>/dev/null || true; fi
 
@@ -139,6 +152,26 @@ $(CHANNEL_CLI_O): src/channels/cli.c src/channels/channel.h src/core/config.h
 
 $(CHANNEL_TG_O): src/channels/telegram.c src/channels/channel.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/channels/telegram.c
+
+$(CHANNEL_WEBCHAT_O): src/channels/webchat.c src/channels/channel.h src/channels/webchat.h src/core/config.h
+	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/channels/webchat.c
+
+$(AUTH_O): src/gateway/auth.c src/gateway/auth.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/gateway/auth.c
+
+src/gateway/ui_assets.h: web/index.html web/css/style.css web/js/app.js scripts/embed_ui.sh
+	@mkdir -p src/gateway
+	@chmod +x scripts/embed_ui.sh
+	./scripts/embed_ui.sh
+
+src/gateway/static.o: src/gateway/static.c src/gateway/static.h src/gateway/ui_assets.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/gateway/static.c
+
+$(HTTP_O): src/gateway/http.c src/gateway/http.h src/gateway/auth.h src/gateway/ws.h src/gateway/static.h src/core/config.h src/core/memory.h src/core/skill.h
+	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/gateway/http.c
+
+$(WS_O): src/gateway/ws.c src/gateway/ws.h
+	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/gateway/ws.c
 
 $(SHELL_O): src/tools/shell.c src/tools/tool.h src/tools/shell.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/shell.c
@@ -226,6 +259,23 @@ test_web_search: tests/test_web_search.c $(WEBSEARCH_O) $(CJSON_O)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_web_search.c $(WEBSEARCH_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
+test_auth: tests/test_auth.c $(AUTH_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_auth.c $(AUTH_O) $(CJSON_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_gateway_http: tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O)
+	@if [ "$(GATEWAY)" != "1" ]; then echo "test_gateway_http: skipped (GATEWAY=0)"; exit 0; fi; \
+	mkdir -p $(BINDIR) && \
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_GATEWAY -o $(BINDIR)/$@ tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O) $(LDLIBS) && \
+	$(DSYM_SCRIPT)
+
+test_static: tests/test_static.c src/gateway/ui_assets.h src/gateway/static.o
+	@mkdir -p $(BINDIR)
+	./scripts/embed_ui.sh
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_static.c src/gateway/static.o $(LDLIBS)
+	$(DSYM_SCRIPT)
+
 static:
 	cppcheck --enable=warning,style,performance,portability --error-exitcode=1 \
 		-I. -Isrc -Ivendor/tomlc99 -Ivendor/sqlite3 -Ivendor/cJSON \
@@ -249,6 +299,9 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_file
 	$(BINDIR)/test_telegram
 	$(BINDIR)/test_web_search
+	$(MAKE) test_auth 2>/dev/null && $(BINDIR)/test_auth || true
+	@$(MAKE) test_static 2>/dev/null && $(BINDIR)/test_static || true
+	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) test_gateway_http 2>/dev/null && $(BINDIR)/test_gateway_http || true; fi
 
 COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
@@ -277,7 +330,8 @@ clean-root-dsym:
 	@rm -f shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_openai test_provider test_router test_shell test_skill test_telegram test_web_search
 
 clean: clean-root-dsym
-	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O)
+	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O)
+	rm -f src/gateway/ui_assets.h
 	find . -name '*.gcno' -o -name '*.gcda' -o -name '*.gcov' | xargs rm -f 2>/dev/null || true
-	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search
+	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static
 	rm -rf $(BINDIR)/*.dSYM $(DSYMDIR)
