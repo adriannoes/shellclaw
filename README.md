@@ -6,13 +6,13 @@ A lightweight AI assistant written in C, designed to run on a Raspberry Pi Zero 
 
 **Roadmap (high level):**
 
-| Phase | Version | Focus |
-|-------|---------|--------|
-| 1: Foundation | v0.1.0 | Core agent loop, CLI + Telegram, Anthropic/OpenAI, shell/search/file tools, SQLite memory & sessions, skill loading |
-| 2: Gateway | v0.2.0 | HTTP server, embedded Web UI, WebSocket chat, cron scheduler, pairing auth, ASAP manifest, skill hot-reload |
-| 3: Protocol | v0.3.0 | ASAP client/server, registry, `asap_invoke` tool, process sandbox (namespaces + cgroups), Tavily search |
-| 4: Autonomy | v0.4.0 | Local inference (llama.cpp), provider fallback, Discord channel, systemd service, OTA updates |
-| 5: Hardware & Release | v1.0.0 | GPIO, I2C sensors, camera, Ed25519 signing, ASAP marketplace registration, security audit, full docs |
+| Phase | Version | Status | Focus |
+|-------|---------|--------|-------|
+| 1: Foundation | v0.1.0 | ✅ Done | Core agent loop, CLI + Telegram, Anthropic/OpenAI, shell/search/file tools, SQLite memory & sessions, skill loading |
+| 2: Gateway | v0.2.0 | ✅ Done | HTTP server, embedded Web UI, WebSocket chat, cron scheduler, pairing auth, ASAP manifest, skill hot-reload |
+| 3: Protocol | v0.3.0 | — | ASAP client/server, registry, `asap_invoke` tool, process sandbox (namespaces + cgroups), Tavily search |
+| 4: Autonomy | v0.4.0 | — | Local inference (llama.cpp), provider fallback, Discord channel, systemd service, OTA updates |
+| 5: Hardware & Release | v1.0.0 | — | GPIO, I2C sensors, camera, Ed25519 signing, ASAP marketplace registration, security audit, full docs |
 
 ## What makes ShellClaw different
 
@@ -30,18 +30,18 @@ ShellClaw is **not another OpenClaw clone** in a different language. It is a **h
 | **Offline** | llama.cpp fallback |
 | **Agent network** | ASAP Protocol |
 
-## Build layout
+## Build and run
 
-- **`build/`** — Binaries: `build/shellclaw` and test executables (`build/test_config`, `build/test_agent`, etc.). Created by `make shellclaw` and `make test`.
-- **`tests-dSYM/`** — Debug symbol bundles (macOS only, debug builds). All `.dSYM` folders are generated here so the repo root stays clean. Use `make clean` to remove. If you have old `.dSYM` folders in the repo root (e.g. `test_agent.dSYM`), run `make clean` or `make clean-root-dsym` to remove them.
+**Build:** `make shellclaw` → binary at `build/shellclaw`. `make test` → builds and runs all tests in `build/`.
 
-To run the main binary: `./build/shellclaw`. To run tests: `make test` (executes all tests from `build/`). To debug with lldb and symbols from `tests-dSYM/`: e.g. `lldb build/test_agent` then `settings set target.debug-file-search-path tests-dSYM`.
+**Run:** `./build/shellclaw`
 
-**CI and quality checks:**
-- `make static` — Run cppcheck on `src/` (requires cppcheck).
-- `make coverage` — Build with coverage, run tests, generate report; fails if core coverage < 80% (requires lcov).
-- Binary size: CI enforces < 2 MB for release build.
-- Cold start / RAM: Run `time ./build/shellclaw --version` for startup time; `ps -o rss= -p $(pgrep shellclaw)` for RSS (manual checks).
+**Quality checks:**
+- `make static` — cppcheck on `src/` (requires cppcheck)
+- `make coverage` — coverage report; fails if core < 80% (requires lcov)
+- CI enforces release binary < 2 MB
+
+**Debug (macOS):** Symbols in `tests-dSYM/`. Use `lldb build/test_agent` then `settings set target.debug-file-search-path tests-dSYM`. Old `.dSYM` in repo root? Run `make clean-root-dsym`.
 
 ## Thread Safety
 
