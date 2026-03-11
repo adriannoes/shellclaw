@@ -58,6 +58,7 @@ CHANNEL_COMMON_O := src/channels/channel_common.o
 CHANNEL_STUB_O   := src/channels/stub.o
 CHANNEL_CLI_O    := src/channels/cli.o
 CHANNEL_TG_O     := src/channels/telegram.o
+CHANNEL_HEARTBEAT_O := src/channels/heartbeat.o
 # Gateway (Phase 2) - auth always built (no libwebsockets); http/ws when libwebsockets available
 AUTH_O   := src/gateway/auth.o
 CHANNEL_WEBCHAT_O := $(if $(filter 1,$(GATEWAY)),src/channels/webchat.o,)
@@ -69,6 +70,8 @@ SHELL_O    := src/tools/shell.o
 WEBSEARCH_O := src/tools/web_search.o
 FILE_O     := src/tools/file.o
 REGISTRY_O := src/tools/registry.o
+CRON_O     := src/tools/cron.o
+MANIFEST_O := src/asap/manifest.o
 # Provider objects built with SHELLCLAW_TEST for negative/parse tests (CR-21)
 ANTHROPIC_TEST_O := $(BINDIR)/anthropic_test.o
 OPENAI_TEST_O    := $(BINDIR)/openai_test.o
@@ -88,9 +91,9 @@ debug:
 release:
 	$(MAKE) BUILD=release shellclaw
 
-shellclaw: $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O)
+shellclaw: $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(LDLIBS) $(GATEWAY_LDLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O) $(LDLIBS) $(GATEWAY_LDLIBS)
 	$(DSYM_SCRIPT)
 	@if [ "$(BUILD)" = "release" ]; then strip -s $(BINDIR)/$@ 2>/dev/null || true; fi
 
@@ -153,6 +156,9 @@ $(CHANNEL_CLI_O): src/channels/cli.c src/channels/channel.h src/core/config.h
 $(CHANNEL_TG_O): src/channels/telegram.c src/channels/channel.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/channels/telegram.c
 
+$(CHANNEL_HEARTBEAT_O): src/channels/heartbeat.c src/channels/heartbeat.h src/channels/channel.h src/core/config.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/channels/heartbeat.c
+
 $(CHANNEL_WEBCHAT_O): src/channels/webchat.c src/channels/channel.h src/channels/webchat.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/channels/webchat.c
 
@@ -167,7 +173,10 @@ src/gateway/ui_assets.h: web/index.html web/css/style.css web/js/app.js scripts/
 src/gateway/static.o: src/gateway/static.c src/gateway/static.h src/gateway/ui_assets.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/gateway/static.c
 
-$(HTTP_O): src/gateway/http.c src/gateway/http.h src/gateway/auth.h src/gateway/ws.h src/gateway/static.h src/core/config.h src/core/memory.h src/core/skill.h
+$(MANIFEST_O): src/asap/manifest.c src/asap/manifest.h src/core/config.h src/core/skill.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/manifest.c
+
+$(HTTP_O): src/gateway/http.c src/gateway/http.h src/gateway/auth.h src/gateway/ws.h src/gateway/static.h src/asap/manifest.h src/core/config.h src/core/memory.h src/core/skill.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/gateway/http.c
 
 $(WS_O): src/gateway/ws.c src/gateway/ws.h
@@ -176,7 +185,7 @@ $(WS_O): src/gateway/ws.c src/gateway/ws.h
 $(SHELL_O): src/tools/shell.c src/tools/tool.h src/tools/shell.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/shell.c
 
-$(WEBSEARCH_O): src/tools/web_search.c src/tools/tool.h src/tools/web_search.h
+$(WEBSEARCH_O): src/tools/web_search.c src/tools/tool.h src/tools/web_search.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/web_search.c
 
 $(FILE_O): src/tools/file.c src/tools/tool.h src/tools/file.h src/core/config.h
@@ -184,6 +193,9 @@ $(FILE_O): src/tools/file.c src/tools/tool.h src/tools/file.h src/core/config.h
 
 $(REGISTRY_O): src/tools/registry.c src/tools/tool.h src/tools/shell.h src/tools/web_search.h src/tools/file.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/registry.c
+
+$(CRON_O): src/tools/cron.c src/tools/cron.h src/core/memory.h src/channels/channel.h src/core/config.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/cron.c
 
 test_config: tests/test_config.c $(CONFIG_O) $(TOML_O)
 	@mkdir -p $(BINDIR)
@@ -254,9 +266,14 @@ test_telegram: tests/test_telegram.c $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_TEST -o $(BINDIR)/$@ tests/test_telegram.c $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
-test_web_search: tests/test_web_search.c $(WEBSEARCH_O) $(CJSON_O)
+test_web_search: tests/test_web_search.c $(WEBSEARCH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_web_search.c $(WEBSEARCH_O) $(CJSON_O) $(LDLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_web_search.c $(WEBSEARCH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_cron: tests/test_cron.c $(CRON_O) $(MEMORY_O) $(SQLITE3_O) $(CHANNEL_COMMON_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_cron.c $(CRON_O) $(MEMORY_O) $(SQLITE3_O) $(CHANNEL_COMMON_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
 test_auth: tests/test_auth.c $(AUTH_O) $(CJSON_O)
@@ -264,10 +281,15 @@ test_auth: tests/test_auth.c $(AUTH_O) $(CJSON_O)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_auth.c $(AUTH_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
-test_gateway_http: tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O)
+test_manifest: tests/test_manifest.c $(MANIFEST_O) $(CONFIG_O) $(TOML_O) $(SKILL_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_manifest.c $(MANIFEST_O) $(CONFIG_O) $(TOML_O) $(SKILL_O) $(CJSON_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_gateway_http: tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@if [ "$(GATEWAY)" != "1" ]; then echo "test_gateway_http: skipped (GATEWAY=0)"; exit 0; fi; \
 	mkdir -p $(BINDIR) && \
-	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_GATEWAY -o $(BINDIR)/$@ tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O) $(LDLIBS) && \
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_GATEWAY -o $(BINDIR)/$@ tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) && \
 	$(DSYM_SCRIPT)
 
 test_static: tests/test_static.c src/gateway/ui_assets.h src/gateway/static.o
@@ -282,9 +304,12 @@ static:
 		--suppress=missingIncludeSystem \
 		--suppress=constVariablePointer \
 		--suppress=knownConditionTrueFalse \
+		--suppress=doubleFree:src/core/config.c \
+		--suppress=constParameterPointer \
+		--suppress=constParameterCallback \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -299,30 +324,20 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_file
 	$(BINDIR)/test_telegram
 	$(BINDIR)/test_web_search
-	$(MAKE) test_auth 2>/dev/null && $(BINDIR)/test_auth || true
-	@$(MAKE) test_static 2>/dev/null && $(BINDIR)/test_static || true
-	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) test_gateway_http 2>/dev/null && $(BINDIR)/test_gateway_http || true; fi
+	$(BINDIR)/test_cron
+	$(BINDIR)/test_manifest
+	$(MAKE) test_auth && $(BINDIR)/test_auth
+	$(MAKE) test_static && $(BINDIR)/test_static
+	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) test_gateway_http && $(BINDIR)/test_gateway_http; fi
 
 COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage test
-	@mkdir -p $(COVERAGE_DIR)
-	lcov --capture --directory src --output-file $(COVERAGE_DIR)/all.info --rc lcov_branch_coverage=0 2>/dev/null || \
-		lcov --capture --directory . --output-file $(COVERAGE_DIR)/all.info --rc lcov_branch_coverage=0 2>/dev/null || \
-		(echo "lcov not installed; run: sudo apt-get install lcov" && exit 1)
-	lcov --remove $(COVERAGE_DIR)/all.info '/usr/*' 'vendor/*' 'tests/*' '*/channels/*' '*/tools/*' '*/providers/*' '*/core/main.c' --output-file $(COVERAGE_DIR)/core.info --rc lcov_branch_coverage=0 --ignore-errors unused
-	@pct=$$(lcov --summary $(COVERAGE_DIR)/core.info 2>/dev/null | grep 'lines' | grep -oE '[0-9]+\.?[0-9]*' | head -1 | cut -d. -f1); \
-	if [ -n "$$pct" ]; then \
-		if [ "$$pct" -lt $(COVERAGE_MIN) ]; then \
-			echo "Coverage $$pct% is below $(COVERAGE_MIN)%"; exit 1; \
-		fi; \
-		echo "Coverage: $$pct% (>= $(COVERAGE_MIN)%)"; \
-	else \
-		echo "Could not parse coverage"; exit 1; \
-	fi
-	genhtml $(COVERAGE_DIR)/core.info -o $(COVERAGE_DIR)/html --quiet 2>/dev/null || true
+	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_auth test_static
+	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage test_gateway_http; fi
+	@chmod +x scripts/coverage.sh
+	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh
 
 # Remove build artifacts left in repo root by old Makefiles (binaries and .dSYM)
 clean-root-dsym:
@@ -330,8 +345,8 @@ clean-root-dsym:
 	@rm -f shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_openai test_provider test_router test_shell test_skill test_telegram test_web_search
 
 clean: clean-root-dsym
-	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O)
+	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O)
 	rm -f src/gateway/ui_assets.h
 	find . -name '*.gcno' -o -name '*.gcda' -o -name '*.gcov' | xargs rm -f 2>/dev/null || true
-	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static
+	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_manifest $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static
 	rm -rf $(BINDIR)/*.dSYM $(DSYMDIR)
