@@ -58,6 +58,25 @@ static const char *SCHEMA_SESSIONS =
 	"  updated_at TEXT"
 	");";
 
+static const char *SCHEMA_CRON_JOBS =
+	"CREATE TABLE IF NOT EXISTS cron_jobs ("
+	"  id TEXT PRIMARY KEY,"
+	"  schedule TEXT NOT NULL,"
+	"  message TEXT NOT NULL,"
+	"  channel TEXT,"
+	"  recipient TEXT,"
+	"  next_run INTEGER NOT NULL,"
+	"  enabled INTEGER NOT NULL DEFAULT 1"
+	");";
+
+static const char *SCHEMA_CONFIG_KV =
+	"CREATE TABLE IF NOT EXISTS config_kv ("
+	"  key TEXT PRIMARY KEY,"
+	"  value TEXT NOT NULL"
+	");";
+
+#define SCHEMA_VERSION "2"
+
 static int run_schema(void)
 {
 	char *err = NULL;
@@ -67,10 +86,24 @@ static int run_schema(void)
 	if (sqlite3_exec(g_db, TRIGGER_MEMORIES_AD, NULL, NULL, &err) != SQLITE_OK) goto fail;
 	if (sqlite3_exec(g_db, TRIGGER_MEMORIES_AU, NULL, NULL, &err) != SQLITE_OK) goto fail;
 	if (sqlite3_exec(g_db, SCHEMA_SESSIONS, NULL, NULL, &err) != SQLITE_OK) goto fail;
+	if (sqlite3_exec(g_db, SCHEMA_CRON_JOBS, NULL, NULL, &err) != SQLITE_OK) goto fail;
+	if (sqlite3_exec(g_db, SCHEMA_CONFIG_KV, NULL, NULL, &err) != SQLITE_OK) goto fail;
 	return 0;
 fail:
 	if (err) sqlite3_free(err);
 	return -1;
+}
+
+static int run_migration(void)
+{
+	const char *sql = "INSERT OR REPLACE INTO config_kv(key, value) VALUES('schema_version', ?1)";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_text(stmt, 1, SCHEMA_VERSION, -1, SQLITE_TRANSIENT);
+	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	sqlite3_finalize(stmt);
+	if (ret != 0) return ret;
+	return 0;
 }
 
 static int path_exists(const char *path)
@@ -96,7 +129,7 @@ int memory_init(const char *path)
 	}
 	sqlite3_exec(g_db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
 	sqlite3_busy_timeout(g_db, 5000);
-	if (run_schema() != 0) {
+	if (run_schema() != 0 || run_migration() != 0) {
 		if (file_existed) {
 			fprintf(stderr, "Error: memory DB schema mismatch at %s\n", path);
 			sqlite3_close(g_db);
@@ -113,7 +146,7 @@ int memory_init(const char *path)
 		}
 		sqlite3_exec(g_db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
 		sqlite3_busy_timeout(g_db, 5000);
-		if (run_schema() != 0) {
+		if (run_schema() != 0 || run_migration() != 0) {
 			sqlite3_close(g_db);
 			g_db = NULL;
 			return -1;
@@ -251,6 +284,156 @@ int session_list(char **session_ids_out, int max_count)
 	}
 	sqlite3_finalize(stmt);
 	return count;
+}
+
+int config_kv_get(const char *key, char *value_out, size_t max_len)
+{
+	if (!g_db || !key || !value_out || max_len == 0) return -1;
+	value_out[0] = '\0';
+	const char *sql = "SELECT value FROM config_kv WHERE key = ?1";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT);
+	int ret = -1;
+	if (sqlite3_step(stmt) == SQLITE_ROW) {
+		const char *val = (const char *)sqlite3_column_text(stmt, 0);
+		if (val) {
+			size_t n = strlen(val);
+			if (n >= max_len) n = max_len - 1;
+			memcpy(value_out, val, n);
+			value_out[n] = '\0';
+			ret = 0;
+		}
+	}
+	sqlite3_finalize(stmt);
+	return ret;
+}
+
+int config_kv_set(const char *key, const char *value)
+{
+	if (!g_db || !key || !value) return -1;
+	const char *sql = "INSERT INTO config_kv(key, value) VALUES(?1, ?2) "
+		"ON CONFLICT(key) DO UPDATE SET value=excluded.value";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
+	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	sqlite3_finalize(stmt);
+	return ret;
+}
+
+static void copy_str_bounded(char *dst, size_t dst_size, const char *src)
+{
+	if (!dst || dst_size == 0) return;
+	if (!src) { dst[0] = '\0'; return; }
+	size_t n = strlen(src);
+	if (n >= dst_size) n = dst_size - 1;
+	memcpy(dst, src, n);
+	dst[n] = '\0';
+}
+
+int cron_job_create(const char *id, const char *schedule, const char *message,
+                    const char *channel, const char *recipient, long long next_run, int enabled)
+{
+	if (!g_db || !id || !schedule || !message) return -1;
+	const char *ch = channel ? channel : "";
+	const char *rec = recipient ? recipient : "";
+	const char *sql = "INSERT INTO cron_jobs(id, schedule, message, channel, recipient, next_run, enabled) "
+		"VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(stmt, 2, schedule, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(stmt, 3, message, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(stmt, 4, ch, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_text(stmt, 5, rec, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_int64(stmt, 6, next_run);
+	sqlite3_bind_int(stmt, 7, enabled ? 1 : 0);
+	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	sqlite3_finalize(stmt);
+	return ret;
+}
+
+int cron_job_delete(const char *id)
+{
+	if (!g_db || !id) return -1;
+	const char *sql = "DELETE FROM cron_jobs WHERE id = ?1";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT);
+	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	sqlite3_finalize(stmt);
+	return ret;
+}
+
+int cron_job_toggle(const char *id)
+{
+	if (!g_db || !id) return -1;
+	const char *sql = "UPDATE cron_jobs SET enabled = 1 - enabled WHERE id = ?1";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT);
+	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	sqlite3_finalize(stmt);
+	return ret;
+}
+
+int cron_job_update_next_run(const char *id, long long next_run)
+{
+	if (!g_db || !id) return -1;
+	const char *sql = "UPDATE cron_jobs SET next_run = ?1 WHERE id = ?2";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_int64(stmt, 1, next_run);
+	sqlite3_bind_text(stmt, 2, id, -1, SQLITE_TRANSIENT);
+	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	sqlite3_finalize(stmt);
+	return ret;
+}
+
+int cron_job_list(cron_job_row_t *out, int max_count)
+{
+	if (!g_db || !out || max_count <= 0) return -1;
+	const char *sql = "SELECT id, schedule, message, channel, recipient, next_run, enabled FROM cron_jobs ORDER BY next_run ASC";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	int count = 0;
+	while (count < max_count && sqlite3_step(stmt) == SQLITE_ROW) {
+		copy_str_bounded(out[count].id, sizeof(out[count].id), (const char *)sqlite3_column_text(stmt, 0));
+		copy_str_bounded(out[count].schedule, sizeof(out[count].schedule), (const char *)sqlite3_column_text(stmt, 1));
+		copy_str_bounded(out[count].message, sizeof(out[count].message), (const char *)sqlite3_column_text(stmt, 2));
+		copy_str_bounded(out[count].channel, sizeof(out[count].channel), (const char *)sqlite3_column_text(stmt, 3));
+		copy_str_bounded(out[count].recipient, sizeof(out[count].recipient), (const char *)sqlite3_column_text(stmt, 4));
+		out[count].next_run = sqlite3_column_int64(stmt, 5);
+		out[count].enabled = sqlite3_column_int(stmt, 6);
+		count++;
+	}
+	sqlite3_finalize(stmt);
+	return count;
+}
+
+int cron_job_get_next_due(long long now, cron_job_row_t *out)
+{
+	if (!g_db || !out) return -1;
+	const char *sql = "SELECT id, schedule, message, channel, recipient, next_run, enabled FROM cron_jobs "
+		"WHERE next_run <= ?1 AND enabled = 1 ORDER BY next_run ASC LIMIT 1";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_int64(stmt, 1, now);
+	int ret = 0;
+	if (sqlite3_step(stmt) == SQLITE_ROW) {
+		copy_str_bounded(out->id, sizeof(out->id), (const char *)sqlite3_column_text(stmt, 0));
+		copy_str_bounded(out->schedule, sizeof(out->schedule), (const char *)sqlite3_column_text(stmt, 1));
+		copy_str_bounded(out->message, sizeof(out->message), (const char *)sqlite3_column_text(stmt, 2));
+		copy_str_bounded(out->channel, sizeof(out->channel), (const char *)sqlite3_column_text(stmt, 3));
+		copy_str_bounded(out->recipient, sizeof(out->recipient), (const char *)sqlite3_column_text(stmt, 4));
+		out->next_run = sqlite3_column_int64(stmt, 5);
+		out->enabled = sqlite3_column_int(stmt, 6);
+		ret = 1;
+	}
+	sqlite3_finalize(stmt);
+	return ret;
 }
 
 void memory_cleanup(void)
