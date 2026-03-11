@@ -1,11 +1,35 @@
 /**
  * @file channel_common.c
- * @brief Shared channel utilities: channel_incoming_msg_clear.
+ * @brief Shared channel utilities: channel_incoming_msg_clear, channel registry.
  */
 
 #include "channels/channel.h"
 #include <stdlib.h>
 #include <string.h>
+
+static struct {
+	const char *name;
+	const channel_t *ch;
+} g_registered[MAX_REGISTERED_CHANNELS];
+static int g_registered_count;
+
+void channel_register(const char *name, const channel_t *ch)
+{
+	if (!name || !ch || g_registered_count >= MAX_REGISTERED_CHANNELS) return;
+	g_registered[g_registered_count].name = name;
+	g_registered[g_registered_count].ch = ch;
+	g_registered_count++;
+}
+
+const channel_t *channel_get_by_name(const char *name)
+{
+	if (!name) return NULL;
+	for (int i = 0; i < g_registered_count; i++) {
+		if (strcmp(g_registered[i].name, name) == 0)
+			return g_registered[i].ch;
+	}
+	return NULL;
+}
 
 void channel_incoming_msg_clear(channel_incoming_msg_t *msg)
 {

@@ -65,6 +65,14 @@ typedef struct channel {
 	void (*cleanup)(void);
 } channel_t;
 
+#define MAX_REGISTERED_CHANNELS 8
+
+/** Register a channel by name for routing (e.g. cron send). */
+void channel_register(const char *name, const channel_t *ch);
+
+/** Get channel by name. Returns NULL if not found. */
+const channel_t *channel_get_by_name(const char *name);
+
 /** Stub channel for tests. poll() always returns 0 (no message). */
 const channel_t *channel_stub_get(void);
 
