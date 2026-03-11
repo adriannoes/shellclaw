@@ -322,6 +322,7 @@ static const provider_t persist_reply_provider = {
 static int test_session_persisted_after_exchange(void)
 {
 	int failed = 1;
+	config_t *cfg = NULL;
 	const char *db_path = "build/test_agent_persist.db";
 	const char *config_path = "build/test_agent_persist.toml";
 	memory_cleanup();
@@ -330,7 +331,6 @@ static int test_session_persisted_after_exchange(void)
 	ASSERT(cf);
 	fprintf(cf, "[agent]\nmodel = \"test\"\n[memory]\npath = \"%s\"\n", db_path);
 	fclose(cf);
-	config_t *cfg = NULL;
 	char errbuf[256];
 	if (config_load(config_path, &cfg, errbuf, sizeof(errbuf)) != 0) goto cleanup;
 	if (cfg == NULL) goto cleanup;
@@ -395,6 +395,7 @@ static const provider_t compaction_provider = {
 static int test_context_compaction_when_history_exceeds_max(void)
 {
 	int failed = 1;
+	config_t *cfg = NULL;
 	const char *db_path = "build/test_agent_compact.db";
 	const char *config_path = "build/test_agent_compact.toml";
 	memory_cleanup();
@@ -413,7 +414,6 @@ static int test_context_compaction_when_history_exceeds_max(void)
 	if (!cf) goto cleanup;
 	fprintf(cf, "[agent]\nmodel = \"test\"\nmax_context_messages = 40\n[memory]\npath = \"%s\"\n", db_path);
 	fclose(cf);
-	config_t *cfg = NULL;
 	char errbuf[256];
 	if (config_load(config_path, &cfg, errbuf, sizeof(errbuf)) != 0) goto cleanup;
 	if (cfg == NULL) goto cleanup;

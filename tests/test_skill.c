@@ -162,6 +162,67 @@ static int test_system_prompt_base_order(void)
 	return 0;
 }
 
+static int test_skill_crud(void)
+{
+	char cmd[256];
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\" && mkdir -p \"%s\"", TMP_DIR, TMP_DIR);
+	ASSERT(system(cmd) == 0);
+	ASSERT(write_minimal_config(TMP_DIR) == 0);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	ASSERT(config_load(TMP_CONFIG, &cfg, errbuf, sizeof(errbuf)) == 0);
+	ASSERT(skill_create(cfg, "foo", "# Foo\nContent here") == 0);
+	char *names[8];
+	int n = skill_list_names(cfg, names, 8);
+	ASSERT(n == 1);
+	ASSERT(strcmp(names[0], "foo") == 0);
+	free(names[0]);
+	char content[256];
+	ASSERT(skill_get_content(cfg, "foo", content, sizeof(content)) == 0);
+	ASSERT(strstr(content, "Content here") != NULL);
+	ASSERT(skill_update(cfg, "foo", "# Foo\nUpdated content") == 0);
+	ASSERT(skill_get_content(cfg, "foo", content, sizeof(content)) == 0);
+	ASSERT(strstr(content, "Updated content") != NULL);
+	ASSERT(skill_delete(cfg, "foo") == 0);
+	ASSERT(skill_get_content(cfg, "foo", content, sizeof(content)) == -1);
+	n = skill_list_names(cfg, names, 8);
+	ASSERT(n == 0);
+	config_free(cfg);
+	remove(TMP_CONFIG);
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", TMP_DIR);
+	(void)system(cmd);
+	return 0;
+}
+
+static int test_hot_reload_watch(void)
+{
+	char cmd[256];
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\" && mkdir -p \"%s\"", TMP_DIR, TMP_DIR);
+	ASSERT(system(cmd) == 0);
+	char path[256];
+	snprintf(path, sizeof(path), "%s/watch_test.md", TMP_DIR);
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "Watch test content");
+	fclose(f);
+	ASSERT(write_minimal_config(TMP_DIR) == 0);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	ASSERT(config_load(TMP_CONFIG, &cfg, errbuf, sizeof(errbuf)) == 0);
+	ASSERT(skill_watch_start(cfg, 0) == 0);
+	char out[2048];
+	ASSERT(skill_load_all(cfg, out, sizeof(out)) == 0);
+	ASSERT(strstr(out, "Watch test content") != NULL);
+	skill_watch_stop();
+	ASSERT(skill_load_all(cfg, out, sizeof(out)) == 0);
+	ASSERT(strstr(out, "Watch test content") != NULL);
+	config_free(cfg);
+	remove(TMP_CONFIG);
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", TMP_DIR);
+	(void)system(cmd);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_null_config_returns_error());
@@ -169,6 +230,8 @@ int main(void)
 	RUN(test_load_two_md_files());
 	RUN(test_missing_dir_no_crash());
 	RUN(test_system_prompt_base_order());
+	RUN(test_skill_crud());
+	RUN(test_hot_reload_watch());
 	printf("test_skill: all tests passed\n");
 	return 0;
 }

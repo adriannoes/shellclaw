@@ -7,6 +7,7 @@
 #include "tools/shell.h"
 #include "tools/web_search.h"
 #include "tools/file.h"
+#include "tools/cron.h"
 #include "core/config.h"
 #include <stddef.h>
 
@@ -14,6 +15,7 @@ void tool_set_config(const config_t *cfg)
 {
 	tool_shell_set_config(cfg);
 	tool_file_set_config(cfg);
+	tool_web_search_set_config(cfg);
 }
 
 size_t tool_get_all(const tool_t **out, size_t max_count)
@@ -23,9 +25,11 @@ size_t tool_get_all(const tool_t **out, size_t max_count)
 	const tool_t *shell = tool_shell_get();
 	const tool_t *web = tool_web_search_get();
 	const tool_t *file = tool_file_get();
+	const tool_t *cron = tool_cron_get();
 	/* cppcheck-suppress knownConditionTrueFalse */
 	if (n < max_count && shell) out[n++] = shell;
 	if (n < max_count && web) out[n++] = web;
 	if (n < max_count && file) out[n++] = file;
+	if (n < max_count && cron) out[n++] = cron;
 	return n;
 }

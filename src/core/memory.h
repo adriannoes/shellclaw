@@ -70,6 +70,92 @@ int session_save(const char *session_id, const char *messages);
 int session_delete(const char *session_id);
 
 /**
+ * List session IDs from the database.
+ *
+ * @param session_ids_out Array of pointers to receive session IDs; caller must free each.
+ * @param max_count       Maximum number of session IDs to return.
+ * @return Number of sessions returned, or -1 on error.
+ */
+int session_list(char **session_ids_out, int max_count);
+
+/**
+ * Get a value from config_kv by key.
+ *
+ * @param key      Key to look up.
+ * @param value_out Output buffer for the value.
+ * @param max_len   Size of value_out buffer.
+ * @return 0 on success, -1 if not found or error.
+ */
+int config_kv_get(const char *key, char *value_out, size_t max_len);
+
+/**
+ * Set (upsert) a value in config_kv.
+ *
+ * @param key   Key.
+ * @param value Value to store (must not be NULL).
+ * @return 0 on success, non-zero on error.
+ */
+int config_kv_set(const char *key, const char *value);
+
+/** Row from cron_jobs table for list/get operations. */
+typedef struct cron_job_row {
+	char id[128];
+	char schedule[128];
+	char message[512];
+	char channel[64];
+	char recipient[64];
+	long long next_run;
+	int enabled;
+} cron_job_row_t;
+
+/**
+ * Create a cron job.
+ *
+ * @return 0 on success, non-zero on error.
+ */
+int cron_job_create(const char *id, const char *schedule, const char *message,
+                   const char *channel, const char *recipient, long long next_run, int enabled);
+
+/**
+ * Delete a cron job by id.
+ *
+ * @return 0 on success, non-zero on error.
+ */
+int cron_job_delete(const char *id);
+
+/**
+ * Toggle enabled flag (0 <-> 1).
+ *
+ * @return 0 on success, non-zero on error.
+ */
+int cron_job_toggle(const char *id);
+
+/**
+ * Update next_run for a job.
+ *
+ * @return 0 on success, non-zero on error.
+ */
+int cron_job_update_next_run(const char *id, long long next_run);
+
+/**
+ * List cron jobs into output array.
+ *
+ * @param out       Array to fill (caller-allocated).
+ * @param max_count Maximum jobs to return.
+ * @return Number of jobs written, or -1 on error.
+ */
+int cron_job_list(cron_job_row_t *out, int max_count);
+
+/**
+ * Get the next due job (next_run <= now, enabled).
+ *
+ * @param now Current Unix timestamp.
+ * @param out Filled with job data if found.
+ * @return 1 if found, 0 if none, -1 on error.
+ */
+int cron_job_get_next_due(long long now, cron_job_row_t *out);
+
+/**
  * Release resources and close the database. Safe to call multiple times.
  */
 void memory_cleanup(void);

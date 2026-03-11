@@ -59,6 +59,22 @@ int config_workspace_only(const config_t *c);
 const char *config_workspace_path(const config_t *c);
 int config_shell_timeout_sec(const config_t *c);
 
+int config_gateway_enabled(const config_t *c);
+const char *config_gateway_host(const config_t *c);
+int config_gateway_port(const config_t *c);
+int config_gateway_allow_bind_all(const config_t *c);
+
+int config_asap_enabled(const config_t *c);
+const char *config_asap_agent_urn(const config_t *c);
+const char *config_asap_agent_name(const config_t *c);
+const char *config_asap_registry_url(const config_t *c);
+
+int config_heartbeat_enabled(const config_t *c);
+int config_heartbeat_interval_minutes(const config_t *c);
+const char *config_heartbeat_default_channel(const config_t *c);
+
+const char *config_brave_api_key_env(const config_t *c);
+
 #ifdef __cplusplus
 }
 #endif

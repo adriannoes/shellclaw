@@ -61,6 +61,10 @@ interval_minutes = 30
 dir = "~/.shellclaw/skills"
 hot_reload = true
 
+[web_search]
+# When BRAVE_API_KEY (or brave_api_key_env) is set, uses Brave Search; else DuckDuckGo
+# brave_api_key_env = "BRAVE_API_KEY"
+
 [asap]
 enabled = false
 agent_urn = "urn:asap:agent:shellclaw-home-01"

@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 
 #include "toml.h"
@@ -26,6 +27,7 @@
 #define DEFAULT_MAX_TOKENS 4096
 #define DEFAULT_TEMPERATURE 0.7
 #define DEFAULT_SHELL_TIMEOUT_SEC 60
+#define DEFAULT_GATEWAY_PORT 18789
 
 #define ENV_AGENT_MODEL          "SHELLCLAW_AGENT_MODEL"
 #define ENV_AGENT_MAX_TOKENS     "SHELLCLAW_AGENT_MAX_TOKENS"
@@ -36,6 +38,10 @@
 #define ENV_SKILLS_DIR            "SHELLCLAW_SKILLS_DIR"
 #define ENV_OPENAI_ENDPOINT      "SHELLCLAW_OPENAI_ENDPOINT"
 #define ENV_DEFAULT_PROVIDER     "SHELLCLAW_DEFAULT_PROVIDER"
+#define ENV_GATEWAY_ENABLED      "SHELLCLAW_GATEWAY_ENABLED"
+#define ENV_GATEWAY_HOST         "SHELLCLAW_GATEWAY_HOST"
+#define ENV_GATEWAY_PORT         "SHELLCLAW_GATEWAY_PORT"
+#define ENV_GATEWAY_ALLOW_BIND   "SHELLCLAW_GATEWAY_ALLOW_BIND_ALL"
 
 struct config {
 	char *agent_model;
@@ -59,6 +65,18 @@ struct config {
 	int workspace_only;
 	char *workspace_path;
 	int shell_timeout_sec;
+	int gateway_enabled;
+	char *gateway_host;
+	int gateway_port;
+	int gateway_allow_bind_all;
+	int asap_enabled;
+	char *asap_agent_urn;
+	char *asap_agent_name;
+	char *asap_registry_url;
+	int heartbeat_enabled;
+	int heartbeat_interval_minutes;
+	char *heartbeat_default_channel;
+	char *brave_api_key_env;
 };
 
 static void set_string(char **dst, const char *src)
@@ -167,6 +185,58 @@ static int parse_telegram(const toml_table_t *root, config_t *cfg, char *errbuf,
 	return 0;
 }
 
+static int parse_gateway(const toml_table_t *root, config_t *cfg)
+{
+	const toml_table_t *gw = toml_table_in(root, "gateway");
+	if (!gw) return 0;
+	toml_datum_t d = toml_bool_in(gw, "enabled");
+	if (d.ok) cfg->gateway_enabled = d.u.b;
+	d = toml_string_in(gw, "host");
+	if (d.ok) { set_string(&cfg->gateway_host, d.u.s); free(d.u.s); }
+	d = toml_int_in(gw, "port");
+	if (d.ok) cfg->gateway_port = (int)d.u.i;
+	d = toml_bool_in(gw, "allow_bind_all");
+	if (d.ok) cfg->gateway_allow_bind_all = d.u.b;
+	return 0;
+}
+
+static int parse_asap(const toml_table_t *root, config_t *cfg)
+{
+	const toml_table_t *asap = toml_table_in(root, "asap");
+	if (!asap) return 0;
+	toml_datum_t d = toml_bool_in(asap, "enabled");
+	if (d.ok) cfg->asap_enabled = d.u.b;
+	d = toml_string_in(asap, "agent_urn");
+	if (d.ok) { set_string(&cfg->asap_agent_urn, d.u.s); free(d.u.s); }
+	d = toml_string_in(asap, "agent_name");
+	if (d.ok) { set_string(&cfg->asap_agent_name, d.u.s); free(d.u.s); }
+	d = toml_string_in(asap, "registry_url");
+	if (d.ok) { set_string(&cfg->asap_registry_url, d.u.s); free(d.u.s); }
+	return 0;
+}
+
+static int parse_heartbeat(const toml_table_t *root, config_t *cfg)
+{
+	const toml_table_t *hb = toml_table_in(root, "heartbeat");
+	if (!hb) return 0;
+	toml_datum_t d = toml_bool_in(hb, "enabled");
+	if (d.ok) cfg->heartbeat_enabled = d.u.b;
+	d = toml_int_in(hb, "interval_minutes");
+	if (d.ok) cfg->heartbeat_interval_minutes = (int)d.u.i;
+	d = toml_string_in(hb, "default_channel");
+	if (d.ok) { set_string(&cfg->heartbeat_default_channel, d.u.s); free(d.u.s); }
+	return 0;
+}
+
+static int parse_web_search(const toml_table_t *root, config_t *cfg)
+{
+	const toml_table_t *ws = toml_table_in(root, "web_search");
+	if (!ws) return 0;
+	toml_datum_t d = toml_string_in(ws, "brave_api_key_env");
+	if (d.ok) { set_string(&cfg->brave_api_key_env, d.u.s); free(d.u.s); }
+	return 0;
+}
+
 static int parse_memory_skills_sandbox(const toml_table_t *root, config_t *cfg)
 {
 	const toml_table_t *mem = toml_table_in(root, "memory");
@@ -232,6 +302,20 @@ static void apply_env_overrides(config_t *cfg)
 	if (v) set_string(&cfg->provider_openai_endpoint, v);
 	v = getenv(ENV_DEFAULT_PROVIDER);
 	if (v) set_string(&cfg->provider_default, v);
+	v = getenv(ENV_GATEWAY_ENABLED);
+	if (v && (strcmp(v, "1") == 0 || strcasecmp(v, "true") == 0 || strcasecmp(v, "yes") == 0))
+		cfg->gateway_enabled = 1;
+	else if (v && (strcmp(v, "0") == 0 || strcasecmp(v, "false") == 0 || strcasecmp(v, "no") == 0))
+		cfg->gateway_enabled = 0;
+	v = getenv(ENV_GATEWAY_HOST);
+	if (v) set_string(&cfg->gateway_host, v);
+	v = getenv(ENV_GATEWAY_PORT);
+	if (v) parse_int_env(v, &cfg->gateway_port, 1, 65535);
+	v = getenv(ENV_GATEWAY_ALLOW_BIND);
+	if (v && (strcmp(v, "1") == 0 || strcasecmp(v, "true") == 0 || strcasecmp(v, "yes") == 0))
+		cfg->gateway_allow_bind_all = 1;
+	else if (v && (strcmp(v, "0") == 0 || strcasecmp(v, "false") == 0 || strcasecmp(v, "no") == 0))
+		cfg->gateway_allow_bind_all = 0;
 }
 
 static void expand_paths(config_t *cfg)
@@ -321,7 +405,14 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	set_string(&cfg->memory_db_path, "~/.shellclaw/memory.db");
 	set_string(&cfg->skills_dir, "~/.shellclaw/skills");
 	cfg->workspace_only = 1;
+	cfg->gateway_port = DEFAULT_GATEWAY_PORT;
+	set_string(&cfg->gateway_host, "127.0.0.1");
 	set_string(&cfg->workspace_path, "~/.shellclaw");
+	set_string(&cfg->asap_agent_urn, "urn:asap:agent:shellclaw");
+	set_string(&cfg->asap_agent_name, "ShellClaw");
+	cfg->heartbeat_interval_minutes = 30;
+	set_string(&cfg->heartbeat_default_channel, "cli");
+	set_string(&cfg->brave_api_key_env, "BRAVE_API_KEY");
 	cfg->shell_timeout_sec = DEFAULT_SHELL_TIMEOUT_SEC;
 	int err = parse_agent(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
@@ -329,6 +420,10 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	err = parse_telegram(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
 	parse_memory_skills_sandbox(tab, cfg);
+	parse_gateway(tab, cfg);
+	parse_asap(tab, cfg);
+	parse_heartbeat(tab, cfg);
+	parse_web_search(tab, cfg);
 	toml_free(tab);
 	tab = NULL;
 	apply_env_overrides(cfg);
@@ -365,6 +460,12 @@ void config_free(config_t *cfg)
 	set_string(&cfg->memory_db_path, NULL);
 	set_string(&cfg->skills_dir, NULL);
 	set_string(&cfg->workspace_path, NULL);
+	set_string(&cfg->gateway_host, NULL);
+	set_string(&cfg->asap_agent_urn, NULL);
+	set_string(&cfg->asap_agent_name, NULL);
+	set_string(&cfg->asap_registry_url, NULL);
+	set_string(&cfg->heartbeat_default_channel, NULL);
+	set_string(&cfg->brave_api_key_env, NULL);
 	free(cfg);
 }
 
@@ -392,3 +493,15 @@ const char *config_skills_dir(const config_t *c) { return c ? c->skills_dir : NU
 int config_workspace_only(const config_t *c) { return c ? c->workspace_only : 0; }
 const char *config_workspace_path(const config_t *c) { return c ? c->workspace_path : NULL; }
 int config_shell_timeout_sec(const config_t *c) { return c && c->shell_timeout_sec > 0 ? c->shell_timeout_sec : DEFAULT_SHELL_TIMEOUT_SEC; }
+int config_gateway_enabled(const config_t *c) { return c ? c->gateway_enabled : 0; }
+const char *config_gateway_host(const config_t *c) { return c && c->gateway_host ? c->gateway_host : "127.0.0.1"; }
+int config_gateway_port(const config_t *c) { return c && c->gateway_port > 0 ? c->gateway_port : DEFAULT_GATEWAY_PORT; }
+int config_gateway_allow_bind_all(const config_t *c) { return c ? c->gateway_allow_bind_all : 0; }
+int config_asap_enabled(const config_t *c) { return c ? c->asap_enabled : 0; }
+const char *config_asap_agent_urn(const config_t *c) { return c && c->asap_agent_urn ? c->asap_agent_urn : "urn:asap:agent:shellclaw"; }
+const char *config_asap_agent_name(const config_t *c) { return c && c->asap_agent_name ? c->asap_agent_name : "ShellClaw"; }
+const char *config_asap_registry_url(const config_t *c) { return c ? c->asap_registry_url : NULL; }
+int config_heartbeat_enabled(const config_t *c) { return c ? c->heartbeat_enabled : 0; }
+int config_heartbeat_interval_minutes(const config_t *c) { return c && c->heartbeat_interval_minutes > 0 ? c->heartbeat_interval_minutes : 30; }
+const char *config_heartbeat_default_channel(const config_t *c) { return c && c->heartbeat_default_channel ? c->heartbeat_default_channel : "cli"; }
+const char *config_brave_api_key_env(const config_t *c) { return c && c->brave_api_key_env ? c->brave_api_key_env : "BRAVE_API_KEY"; }

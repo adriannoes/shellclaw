@@ -9,8 +9,16 @@
 #include "core/memory.h"
 #include "core/skill.h"
 #include "channels/channel.h"
+#include "channels/heartbeat.h"
 #include "providers/provider.h"
 #include "tools/tool.h"
+#include "tools/cron.h"
+#ifdef SHELLCLAW_GATEWAY
+#include "channels/webchat.h"
+#include "gateway/auth.h"
+#include "gateway/http.h"
+#include "gateway/ws.h"
+#endif
 #include <curl/curl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -18,7 +26,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define VERSION "0.1.0"
+#define VERSION "0.2.0"
 #define DEFAULT_CONFIG_PATH "~/.shellclaw/config.toml"
 #define SKILLS_BUF_SIZE (256 * 1024)
 #define SYSTEM_PROMPT_BUF_SIZE (256 * 1024)
@@ -29,6 +37,7 @@ static int g_verbose;
 static volatile sig_atomic_t g_shutdown;
 
 static const char *g_cli_one_shot;
+static const char *g_config_path;
 static const config_t *g_cfg;
 static const provider_t *g_provider;
 #define MAX_TOOLS 8
@@ -56,10 +65,15 @@ static int skills_init(const config_t *cfg)
 		ret = skill_build_system_prompt_base(cfg, skills_buf, system_buf, SYSTEM_PROMPT_BUF_SIZE);
 	free(skills_buf);
 	free(system_buf);
+	if (ret == 0 && config_skills_dir(cfg) && config_skills_dir(cfg)[0])
+		(void)skill_watch_start(cfg, g_verbose);
 	return ret;
 }
 
-static void skills_cleanup(void) { (void)0; }
+static void skills_cleanup(void)
+{
+	skill_watch_stop();
+}
 
 static int providers_init(const config_t *cfg)
 {
@@ -79,6 +93,10 @@ static void providers_cleanup(void)
 static const channel_t *g_channels[MAX_CHANNELS];
 static int g_channel_count;
 
+#ifdef SHELLCLAW_GATEWAY
+static auth_ctx_t *g_auth_ctx;
+#endif
+
 static int channels_init(const config_t *cfg)
 {
 	g_cfg = cfg;
@@ -87,11 +105,35 @@ static int channels_init(const config_t *cfg)
 	channel_cli_set_verbose(g_verbose);
 	const channel_t *cli = channel_cli_get();
 	if (cli->init(cfg) != 0) return -1;
+	channel_register("cli", cli);
 	g_channels[g_channel_count++] = cli;
 	if (config_telegram_enabled(cfg)) {
 		const channel_t *tg = channel_telegram_get();
-		if (tg->init(cfg) == 0)
+		if (tg->init(cfg) == 0) {
+			channel_register("telegram", tg);
 			g_channels[g_channel_count++] = tg;
+		}
+	}
+#ifdef SHELLCLAW_GATEWAY
+	if (config_gateway_enabled(cfg)) {
+		const channel_t *wc = channel_webchat_get();
+		if (wc->init(cfg) == 0) {
+			channel_register("webchat", wc);
+			g_channels[g_channel_count++] = wc;
+		}
+	}
+#endif
+	const channel_t *cron_ch = channel_cron_get();
+	if (cron_ch->init(cfg) == 0) {
+		channel_register("cron", cron_ch);
+		g_channels[g_channel_count++] = cron_ch;
+	}
+	if (config_heartbeat_enabled(cfg)) {
+		const channel_t *hb_ch = channel_heartbeat_get();
+		if (hb_ch->init(cfg) == 0) {
+			channel_register("heartbeat", hb_ch);
+			g_channels[g_channel_count++] = hb_ch;
+		}
 	}
 	return 0;
 }
@@ -160,9 +202,40 @@ static int init_subsystems(const config_t *cfg)
 		memory_cleanup();
 		return -1;
 	}
+#ifdef SHELLCLAW_GATEWAY
+	if (config_gateway_enabled(cfg)) {
+		g_auth_ctx = auth_init(NULL);
+		if (!g_auth_ctx) {
+			fprintf(stderr, "Error: auth init failed\n");
+			channels_cleanup();
+			providers_cleanup();
+			skills_cleanup();
+			memory_cleanup();
+			return -1;
+		}
+		char *code = auth_get_or_create_pairing_code(g_auth_ctx);
+		if (code) {
+			free(code);
+		}
+		if (http_start(cfg, g_auth_ctx, g_config_path) != 0) {
+			fprintf(stderr, "Error: gateway start failed\n");
+			auth_cleanup(g_auth_ctx);
+			g_auth_ctx = NULL;
+			channels_cleanup();
+			providers_cleanup();
+			skills_cleanup();
+			memory_cleanup();
+			return -1;
+		}
+	}
+#endif
 	/* cppcheck-suppress knownConditionTrueFalse */
 	if (tools_init(cfg) != 0) {
 		fprintf(stderr, "Error: tools init failed\n");
+#ifdef SHELLCLAW_GATEWAY
+		http_stop();
+		if (g_auth_ctx) { auth_cleanup(g_auth_ctx); g_auth_ctx = NULL; }
+#endif
 		channels_cleanup();
 		providers_cleanup();
 		skills_cleanup();
@@ -174,6 +247,15 @@ static int init_subsystems(const config_t *cfg)
 
 static void cleanup_subsystems(void)
 {
+#ifdef SHELLCLAW_GATEWAY
+	ws_shutdown_signal();
+	if (g_auth_ctx) {
+		auth_cleanup(g_auth_ctx);
+		g_auth_ctx = NULL;
+	}
+	http_stop();
+	ws_cleanup();
+#endif
 	tools_cleanup();
 	channels_cleanup();
 	providers_cleanup();
@@ -287,6 +369,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	g_shutdown = 0;
+	g_config_path = config_path;
 	setup_signals();
 	if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
 		fprintf(stderr, "Error: curl_global_init failed\n");
