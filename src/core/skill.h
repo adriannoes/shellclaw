@@ -97,6 +97,22 @@ int skill_update(const config_t *cfg, const char *name, const char *content);
  */
 int skill_delete(const config_t *cfg, const char *name);
 
+/**
+ * Start watching the skills directory for changes (hot-reload).
+ * Uses inotify on Linux, kqueue on macOS; no-op if dir missing.
+ * When enabled, skill_load_all returns cached content updated on file changes.
+ *
+ * @param cfg    Configuration (skills_dir, soul, identity paths).
+ * @param verbose If non-zero, log changes to stderr.
+ * @return 0 on success, -1 if watch could not be started (e.g. dir missing).
+ */
+int skill_watch_start(const config_t *cfg, int verbose);
+
+/**
+ * Stop the skills watcher and free cached data.
+ */
+void skill_watch_stop(void);
+
 #ifdef __cplusplus
 }
 #endif
