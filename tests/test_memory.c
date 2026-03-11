@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sqlite3.h"
+
 #define ASSERT(c) do { if (!(c)) { fprintf(stderr, "FAIL: %s:%d %s\n", __FILE__, __LINE__, #c); return 1; } } while (0)
 #define RUN(t) do { int r = (t); if (r) return r; } while (0)
 
@@ -106,6 +108,51 @@ static int test_session_crud(void)
 	return 0;
 }
 
+static int test_gateway_schema_new_db(void)
+{
+	const char *path = "/tmp/shellclaw_test_gateway_schema.db";
+	remove(path);
+	ASSERT(memory_init(path) == 0);
+	char schema_ver[32];
+	ASSERT(config_kv_get("schema_version", schema_ver, sizeof(schema_ver)) == 0);
+	ASSERT(strcmp(schema_ver, "2") == 0);
+	ASSERT(config_kv_set("test_key", "test_value") == 0);
+	char val[64];
+	ASSERT(config_kv_get("test_key", val, sizeof(val)) == 0);
+	ASSERT(strcmp(val, "test_value") == 0);
+	memory_cleanup();
+	remove(path);
+	return 0;
+}
+
+static int test_gateway_schema_migration_v01(void)
+{
+	const char *path = "/tmp/shellclaw_test_gateway_migration.db";
+	remove(path);
+	ASSERT(memory_init(path) == 0);
+	ASSERT(memory_save("pre_migration", "data before migration", NULL) == 0);
+	ASSERT(session_save("sess:1", "[{\"role\":\"user\",\"content\":\"hi\"}]") == 0);
+	memory_cleanup();
+	sqlite3 *db = NULL;
+	if (sqlite3_open(path, &db) != SQLITE_OK) return 1;
+	sqlite3_exec(db, "DROP TABLE IF EXISTS cron_jobs", NULL, NULL, NULL);
+	sqlite3_exec(db, "DROP TABLE IF EXISTS config_kv", NULL, NULL, NULL);
+	sqlite3_close(db);
+	ASSERT(memory_init(path) == 0);
+	char schema_ver[32];
+	ASSERT(config_kv_get("schema_version", schema_ver, sizeof(schema_ver)) == 0);
+	ASSERT(strcmp(schema_ver, "2") == 0);
+	char buf[256];
+	ASSERT(memory_recall("pre_migration", buf, sizeof(buf), 5) == 0);
+	ASSERT(strstr(buf, "data before migration") != NULL);
+	char loaded[256];
+	ASSERT(session_load("sess:1", loaded, sizeof(loaded)) == 0);
+	ASSERT(strstr(loaded, "hi") != NULL);
+	memory_cleanup();
+	remove(path);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_schema_and_fts5());
@@ -113,6 +160,8 @@ int main(void)
 	RUN(test_corrupted_db_recreated());
 	RUN(test_session_list());
 	RUN(test_session_crud());
+	RUN(test_gateway_schema_new_db());
+	RUN(test_gateway_schema_migration_v01());
 	printf("test_memory: all tests passed\n");
 	return 0;
 }

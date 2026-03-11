@@ -194,6 +194,35 @@ static int test_skill_crud(void)
 	return 0;
 }
 
+static int test_hot_reload_watch(void)
+{
+	char cmd[256];
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\" && mkdir -p \"%s\"", TMP_DIR, TMP_DIR);
+	ASSERT(system(cmd) == 0);
+	char path[256];
+	snprintf(path, sizeof(path), "%s/watch_test.md", TMP_DIR);
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "Watch test content");
+	fclose(f);
+	ASSERT(write_minimal_config(TMP_DIR) == 0);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	ASSERT(config_load(TMP_CONFIG, &cfg, errbuf, sizeof(errbuf)) == 0);
+	ASSERT(skill_watch_start(cfg, 0) == 0);
+	char out[2048];
+	ASSERT(skill_load_all(cfg, out, sizeof(out)) == 0);
+	ASSERT(strstr(out, "Watch test content") != NULL);
+	skill_watch_stop();
+	ASSERT(skill_load_all(cfg, out, sizeof(out)) == 0);
+	ASSERT(strstr(out, "Watch test content") != NULL);
+	config_free(cfg);
+	remove(TMP_CONFIG);
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", TMP_DIR);
+	(void)system(cmd);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_null_config_returns_error());
@@ -202,6 +231,7 @@ int main(void)
 	RUN(test_missing_dir_no_crash());
 	RUN(test_system_prompt_base_order());
 	RUN(test_skill_crud());
+	RUN(test_hot_reload_watch());
 	printf("test_skill: all tests passed\n");
 	return 0;
 }

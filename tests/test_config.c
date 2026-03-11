@@ -147,6 +147,84 @@ static int test_gateway_defaults(void)
 	return 0;
 }
 
+static int test_heartbeat_section(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_heartbeat.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[heartbeat]\nenabled = true\ninterval_minutes = 5\ndefault_channel = \"log\"\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	int ret = config_load(path, &cfg, errbuf, sizeof(errbuf));
+	ASSERT(ret == 0);
+	ASSERT(cfg != NULL);
+	ASSERT(config_heartbeat_enabled(cfg) == 1);
+	ASSERT(config_heartbeat_interval_minutes(cfg) == 5);
+	ASSERT(config_heartbeat_default_channel(cfg) != NULL);
+	ASSERT(strcmp(config_heartbeat_default_channel(cfg), "log") == 0);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_heartbeat_defaults(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_heartbeat_defaults.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	int ret = config_load(path, &cfg, NULL, 0);
+	ASSERT(ret == 0);
+	ASSERT(config_heartbeat_enabled(cfg) == 0);
+	ASSERT(config_heartbeat_interval_minutes(cfg) == 30);
+	ASSERT(config_heartbeat_default_channel(cfg) != NULL);
+	ASSERT(strcmp(config_heartbeat_default_channel(cfg), "cli") == 0);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_web_search_brave_config(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_web_search.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[web_search]\nbrave_api_key_env = \"BRAVE_SEARCH_KEY\"\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	int ret = config_load(path, &cfg, errbuf, sizeof(errbuf));
+	ASSERT(ret == 0);
+	ASSERT(cfg != NULL);
+	ASSERT(config_brave_api_key_env(cfg) != NULL);
+	ASSERT(strcmp(config_brave_api_key_env(cfg), "BRAVE_SEARCH_KEY") == 0);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_web_search_brave_defaults(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_web_search_defaults.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	int ret = config_load(path, &cfg, NULL, 0);
+	ASSERT(ret == 0);
+	ASSERT(config_brave_api_key_env(cfg) != NULL);
+	ASSERT(strcmp(config_brave_api_key_env(cfg), "BRAVE_API_KEY") == 0);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_load_valid_minimal());
@@ -156,6 +234,10 @@ int main(void)
 	RUN(test_defaults());
 	RUN(test_gateway_section());
 	RUN(test_gateway_defaults());
+	RUN(test_heartbeat_section());
+	RUN(test_heartbeat_defaults());
+	RUN(test_web_search_brave_config());
+	RUN(test_web_search_brave_defaults());
 	printf("test_config: all tests passed\n");
 	return 0;
 }
