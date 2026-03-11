@@ -9,12 +9,15 @@
 #include "core/memory.h"
 #include "core/skill.h"
 #include "channels/channel.h"
+#include "channels/heartbeat.h"
 #include "providers/provider.h"
 #include "tools/tool.h"
+#include "tools/cron.h"
 #ifdef SHELLCLAW_GATEWAY
 #include "channels/webchat.h"
 #include "gateway/auth.h"
 #include "gateway/http.h"
+#include "gateway/ws.h"
 #endif
 #include <curl/curl.h>
 #include <signal.h>
@@ -62,10 +65,15 @@ static int skills_init(const config_t *cfg)
 		ret = skill_build_system_prompt_base(cfg, skills_buf, system_buf, SYSTEM_PROMPT_BUF_SIZE);
 	free(skills_buf);
 	free(system_buf);
+	if (ret == 0 && config_skills_dir(cfg) && config_skills_dir(cfg)[0])
+		(void)skill_watch_start(cfg, g_verbose);
 	return ret;
 }
 
-static void skills_cleanup(void) { (void)0; }
+static void skills_cleanup(void)
+{
+	skill_watch_stop();
+}
 
 static int providers_init(const config_t *cfg)
 {
@@ -97,19 +105,36 @@ static int channels_init(const config_t *cfg)
 	channel_cli_set_verbose(g_verbose);
 	const channel_t *cli = channel_cli_get();
 	if (cli->init(cfg) != 0) return -1;
+	channel_register("cli", cli);
 	g_channels[g_channel_count++] = cli;
 	if (config_telegram_enabled(cfg)) {
 		const channel_t *tg = channel_telegram_get();
-		if (tg->init(cfg) == 0)
+		if (tg->init(cfg) == 0) {
+			channel_register("telegram", tg);
 			g_channels[g_channel_count++] = tg;
+		}
 	}
 #ifdef SHELLCLAW_GATEWAY
 	if (config_gateway_enabled(cfg)) {
 		const channel_t *wc = channel_webchat_get();
-		if (wc->init(cfg) == 0)
+		if (wc->init(cfg) == 0) {
+			channel_register("webchat", wc);
 			g_channels[g_channel_count++] = wc;
+		}
 	}
 #endif
+	const channel_t *cron_ch = channel_cron_get();
+	if (cron_ch->init(cfg) == 0) {
+		channel_register("cron", cron_ch);
+		g_channels[g_channel_count++] = cron_ch;
+	}
+	if (config_heartbeat_enabled(cfg)) {
+		const channel_t *hb_ch = channel_heartbeat_get();
+		if (hb_ch->init(cfg) == 0) {
+			channel_register("heartbeat", hb_ch);
+			g_channels[g_channel_count++] = hb_ch;
+		}
+	}
 	return 0;
 }
 
@@ -207,6 +232,10 @@ static int init_subsystems(const config_t *cfg)
 	/* cppcheck-suppress knownConditionTrueFalse */
 	if (tools_init(cfg) != 0) {
 		fprintf(stderr, "Error: tools init failed\n");
+#ifdef SHELLCLAW_GATEWAY
+		http_stop();
+		if (g_auth_ctx) { auth_cleanup(g_auth_ctx); g_auth_ctx = NULL; }
+#endif
 		channels_cleanup();
 		providers_cleanup();
 		skills_cleanup();
@@ -219,11 +248,13 @@ static int init_subsystems(const config_t *cfg)
 static void cleanup_subsystems(void)
 {
 #ifdef SHELLCLAW_GATEWAY
+	ws_shutdown_signal();
 	if (g_auth_ctx) {
 		auth_cleanup(g_auth_ctx);
 		g_auth_ctx = NULL;
 	}
 	http_stop();
+	ws_cleanup();
 #endif
 	tools_cleanup();
 	channels_cleanup();
