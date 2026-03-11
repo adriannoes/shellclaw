@@ -410,7 +410,7 @@ void skill_watch_stop(void)
 	g_watch_running = 0;
 #if defined(__linux__)
 	if (g_watch_stop_pipe[1] >= 0) {
-		(void)write(g_watch_stop_pipe[1], "x", 1);
+		if (write(g_watch_stop_pipe[1], "x", 1) < 0) { /* best-effort on shutdown */ }
 		close(g_watch_stop_pipe[1]);
 		g_watch_stop_pipe[1] = -1;
 	}
