@@ -53,7 +53,7 @@ int ws_pop_incoming(char *session_id_out, size_t session_size,
 
 /**
  * Send text to a WebSocket connection by session_id.
- * Session ID format: "webchat:<conn_id>".
+ * Message is queued and sent from the lws thread. Session ID format: "webchat:<conn_id>".
  *
  * @param session_id Recipient session ID.
  * @param text       Text to send.
@@ -62,11 +62,39 @@ int ws_pop_incoming(char *session_id_out, size_t session_size,
 int ws_send_to(const char *session_id, const char *text);
 
 /**
+ * Dequeue next outgoing message for conn_id. Must be called from lws thread only.
+ *
+ * @param conn_id   Connection ID.
+ * @param buf       Output buffer.
+ * @param buf_size  Size of buf.
+ * @param len_out   Receives actual length written.
+ * @return 1 if message dequeued, 0 if none.
+ */
+int ws_dequeue_outgoing(int conn_id, char *buf, size_t buf_size, size_t *len_out);
+
+/**
+ * Check if more outgoing messages pending for conn_id. Must be called from lws thread only.
+ */
+int ws_has_pending_outgoing(int conn_id);
+
+/**
  * Get next connection ID for new connections.
  *
  * @return New unique connection ID.
  */
 int ws_next_conn_id(void);
+
+/**
+ * Signal WebSocket subsystem to shut down. Wakes any threads blocked
+ * in ws_pop_incoming.
+ */
+void ws_shutdown_signal(void);
+
+/**
+ * Drain and free all queued messages, reset connection map.
+ * Call after shutdown to release resources.
+ */
+void ws_cleanup(void);
 
 /**
  * Set libwebsockets context for lws_write. Called by gateway on start.

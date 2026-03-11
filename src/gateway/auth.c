@@ -7,6 +7,7 @@
 #include "gateway/auth.h"
 #include "cJSON.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
 #include <stdio.h>
@@ -47,28 +48,51 @@ static int is_file_empty_or_missing(const char *path)
 	return (c == EOF);
 }
 
+static int read_urandom(unsigned char *out, size_t n)
+{
+	int fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0) return -1;
+	ssize_t r = read(fd, out, n);
+	close(fd);
+	return (r == (ssize_t)n) ? 0 : -1;
+}
+
 static int generate_random_hex(char *out, size_t len)
 {
-	static int seeded;
-	if (!seeded) {
-		srand((unsigned)time(NULL) ^ (unsigned)getpid());
-		seeded = 1;
+	if (!out || len == 0) return -1;
+	size_t raw_len = (len + 1) / 2;
+	unsigned char *raw = malloc(raw_len);
+	if (!raw) return -1;
+	if (read_urandom(raw, raw_len) != 0) {
+		free(raw);
+		return -1;
 	}
 	for (size_t i = 0; i < len; i++) {
-		int v = rand() % 16;
+		int v = (i % 2 == 0) ? (raw[i / 2] >> 4) : (raw[i / 2] & 0x0F);
 		out[i] = (char)(v < 10 ? '0' + v : 'a' + v - 10);
 	}
 	out[len] = '\0';
+	free(raw);
 	return 0;
 }
 
 static int generate_pairing_code(char *out, size_t out_size)
 {
 	if (!out || out_size < (size_t)(PAIRING_CODE_LEN + 1)) return -1;
+	unsigned char raw[PAIRING_CODE_LEN];
+	if (read_urandom(raw, sizeof(raw)) != 0) return -1;
 	for (int i = 0; i < PAIRING_CODE_LEN; i++)
-		out[i] = (char)('0' + (rand() % 10));
+		out[i] = (char)('0' + (raw[i] % 10));
 	out[PAIRING_CODE_LEN] = '\0';
 	return 0;
+}
+
+static int constant_time_cmp(const char *a, const char *b, size_t len)
+{
+	volatile unsigned char result = 0;
+	for (size_t i = 0; i < len; i++)
+		result |= (unsigned char)a[i] ^ (unsigned char)b[i];
+	return result == 0;
 }
 
 static int is_valid_6digit(const char *code)
@@ -110,11 +134,6 @@ char *auth_get_or_create_pairing_code(auth_ctx_t *ctx)
 	if (!is_file_empty_or_missing(ctx->tokens_path)) return NULL;
 	free(ctx->pending_pairing_code);
 	ctx->pending_pairing_code = NULL;
-	static int seeded;
-	if (!seeded) {
-		srand((unsigned)time(NULL) ^ (unsigned)getpid());
-		seeded = 1;
-	}
 	char code[PAIRING_CODE_LEN + 1];
 	if (generate_pairing_code(code, sizeof(code)) != 0) return NULL;
 	ctx->pending_pairing_code = strdup(code);
@@ -159,8 +178,14 @@ int auth_pair(auth_ctx_t *ctx, const char *code, char *token_out, size_t token_s
 		free(json);
 		return -1;
 	}
-	FILE *out = fopen(ctx->tokens_path, "w");
+	int fd = open(ctx->tokens_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0) {
+		free(json);
+		return -1;
+	}
+	FILE *out = fdopen(fd, "w");
 	if (!out) {
+		close(fd);
 		free(json);
 		return -1;
 	}
@@ -191,10 +216,12 @@ int auth_validate_token(auth_ctx_t *ctx, const char *token)
 	}
 	int found = 0;
 	int count = cJSON_GetArraySize(root);
+	size_t tok_len = strlen(token);
 	for (int i = 0; i < count && !found; i++) {
 		cJSON *item = cJSON_GetArrayItem(root, i);
 		if (cJSON_IsString(item) && item->valuestring &&
-		    strcmp(item->valuestring, token) == 0)
+		    strlen(item->valuestring) == tok_len &&
+		    constant_time_cmp(item->valuestring, token, tok_len))
 			found = 1;
 	}
 	cJSON_Delete(root);

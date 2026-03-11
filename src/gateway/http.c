@@ -8,17 +8,27 @@
 #include "gateway/auth.h"
 #include "gateway/ws.h"
 #include "gateway/static.h"
+#include "asap/manifest.h"
 #include "core/config.h"
 #include "core/memory.h"
 #include "core/skill.h"
+#include "tools/cron.h"
 #include "cJSON.h"
 #include <libwebsockets.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+enum http_method {
+	HTTP_GET = 1,
+	HTTP_POST = 2,
+	HTTP_PUT = 4,
+	HTTP_DELETE = 5
+};
 
 #define GATEWAY_VERSION "0.2.0"
 #define RESP_BUF_SIZE 65536
@@ -39,6 +49,7 @@ typedef struct http_server_ctx {
 typedef struct http_conn {
 	char *response;
 	size_t response_len;
+	size_t response_sent;
 	int headers_sent;
 	int status;
 	char body[BODY_BUF_SIZE];
@@ -65,10 +76,9 @@ static int path_eq(const char *uri, int uri_len, const char *path)
 	return (uri_len == (int)plen && strncmp(uri, path, plen) == 0);
 }
 
-static const char *get_bearer_token(struct lws *wsi)
+static const char *get_bearer_token(struct lws *wsi, char *buf, size_t buf_size)
 {
-	static char buf[256];
-	int n = lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_HTTP_AUTHORIZATION);
+	int n = lws_hdr_copy(wsi, buf, (int)buf_size, WSI_TOKEN_HTTP_AUTHORIZATION);
 	if (n <= 0) return NULL;
 	if (n < 8 || strncmp(buf, "Bearer ", 7) != 0) return NULL;
 	return buf + 7;
@@ -76,7 +86,7 @@ static const char *get_bearer_token(struct lws *wsi)
 
 static int is_static_path(const char *uri, int uri_len, int method)
 {
-	if (method != 1) return 0;
+	if (method != HTTP_GET) return 0;
 	if (path_eq(uri, uri_len, "/health")) return 0;
 	if (path_eq(uri, uri_len, "/pair")) return 0;
 	if (path_match(uri, uri_len, "/.well-known/")) return 0;
@@ -86,11 +96,11 @@ static int is_static_path(const char *uri, int uri_len, int method)
 
 static int requires_auth(const char *uri, int uri_len, int method)
 {
+	(void)method;
 	if (path_eq(uri, uri_len, "/health")) return 0;
 	if (path_eq(uri, uri_len, "/pair")) return 0;
 	if (path_match(uri, uri_len, "/.well-known/")) return 0;
-	if (method == 1 && uri_len == 1 && uri[0] == '/') return 0;
-	if (method == 1 && path_match(uri, uri_len, "/")) return 0;
+	if (path_eq(uri, uri_len, "/")) return 0;
 	if (path_match(uri, uri_len, "/api/")) return 1;
 	return 0;
 }
@@ -202,6 +212,8 @@ static void handle_config_get(const config_t *cfg, char *buf, size_t size, int *
 	}
 }
 
+#define CONFIG_BODY_MAX 65536
+
 static void handle_config_put(http_server_ctx_t *ctx, const char *body, size_t body_len,
                               char *buf, size_t size, int *status)
 {
@@ -209,17 +221,44 @@ static void handle_config_put(http_server_ctx_t *ctx, const char *body, size_t b
 		json_error(buf, size, status, 400, "Bad request");
 		return;
 	}
-	FILE *f = fopen(ctx->config_path, "w");
+	if (body_len > CONFIG_BODY_MAX) {
+		json_error(buf, size, status, 400, "Config too large");
+		return;
+	}
+	size_t path_len = strlen(ctx->config_path);
+	char *tmp_path = malloc(path_len + 8);
+	if (!tmp_path) { json_error(buf, size, status, 500, "Out of memory"); return; }
+	snprintf(tmp_path, path_len + 8, "%s.tmp", ctx->config_path);
+	FILE *f = fopen(tmp_path, "w");
 	if (!f) {
+		free(tmp_path);
 		json_error(buf, size, status, 500, "Failed to write config");
 		return;
 	}
 	size_t written = fwrite(body, 1, body_len, f);
 	fclose(f);
 	if (written != body_len) {
+		unlink(tmp_path);
+		free(tmp_path);
 		json_error(buf, size, status, 500, "Failed to write config");
 		return;
 	}
+	config_t *cfg = NULL;
+	char errbuf[256] = {0};
+	if (config_load(tmp_path, &cfg, errbuf, sizeof(errbuf)) != 0) {
+		unlink(tmp_path);
+		free(tmp_path);
+		json_error(buf, size, status, 400, errbuf[0] ? errbuf : "Invalid TOML");
+		return;
+	}
+	config_free(cfg);
+	if (rename(tmp_path, ctx->config_path) != 0) {
+		unlink(tmp_path);
+		free(tmp_path);
+		json_error(buf, size, status, 500, "Failed to save config");
+		return;
+	}
+	free(tmp_path);
 	*status = 200;
 	json_response(buf, size, status, "{\"ok\":true}");
 }
@@ -244,17 +283,23 @@ static void handle_skills_list(const config_t *cfg, char *buf, size_t size, int 
 	}
 }
 
+#define SKILL_CONTENT_MAX 32768
+#define MEMORY_RESULTS_MAX 16384
+
 static void handle_skill_get(const config_t *cfg, const char *name, char *buf, size_t size, int *status)
 {
-	char content[32768];
-	if (skill_get_content(cfg, name, content, sizeof(content)) != 0) {
+	char *content = malloc(SKILL_CONTENT_MAX);
+	if (!content) { json_error(buf, size, status, 500, "Out of memory"); return; }
+	if (skill_get_content(cfg, name, content, SKILL_CONTENT_MAX) != 0) {
+		free(content);
 		json_error(buf, size, status, 404, "Skill not found");
 		return;
 	}
 	cJSON *obj = cJSON_CreateObject();
-	if (!obj) { json_error(buf, size, status, 500, "Internal error"); return; }
+	if (!obj) { free(content); json_error(buf, size, status, 500, "Internal error"); return; }
 	cJSON_AddItemToObject(obj, "name", cJSON_CreateString(name));
 	cJSON_AddItemToObject(obj, "content", cJSON_CreateString(content));
+	free(content);
 	char *s = cJSON_PrintUnformatted(obj);
 	cJSON_Delete(obj);
 	if (s) {
@@ -321,14 +366,17 @@ static void handle_skill_delete(const config_t *cfg, const char *name,
 
 static void handle_memory_get(const char *query, int limit, char *buf, size_t size, int *status)
 {
-	char results[16384];
-	if (memory_recall(query ? query : "", results, sizeof(results), limit > 0 ? limit : 20) != 0) {
+	char *results = malloc(MEMORY_RESULTS_MAX);
+	if (!results) { json_error(buf, size, status, 500, "Out of memory"); return; }
+	if (memory_recall(query ? query : "", results, MEMORY_RESULTS_MAX, limit > 0 ? limit : 20) != 0) {
+		free(results);
 		json_error(buf, size, status, 500, "Memory recall failed");
 		return;
 	}
 	cJSON *obj = cJSON_CreateObject();
-	if (!obj) { json_error(buf, size, status, 500, "Internal error"); return; }
+	if (!obj) { free(results); json_error(buf, size, status, 500, "Internal error"); return; }
 	cJSON_AddItemToObject(obj, "results", cJSON_CreateString(results));
+	free(results);
 	char *s = cJSON_PrintUnformatted(obj);
 	cJSON_Delete(obj);
 	if (s) {
@@ -369,9 +417,122 @@ static void handle_session_delete(const char *id, char *buf, size_t size, int *s
 	json_response(buf, size, status, "{\"ok\":true}");
 }
 
-static void handle_cron_stub(char *buf, size_t size, int *status)
+static void handle_cron_list(char *buf, size_t size, int *status)
 {
-	json_error(buf, size, status, 501, "Not Implemented");
+	cron_job_row_t *rows = calloc(64, sizeof(cron_job_row_t));
+	if (!rows) { json_error(buf, size, status, 500, "Out of memory"); return; }
+	int n = cron_job_list(rows, 64);
+	cJSON *arr = cJSON_CreateArray();
+	if (!arr) { free(rows); json_error(buf, size, status, 500, "Internal error"); return; }
+	for (int i = 0; i < n; i++) {
+		cJSON *obj = cJSON_CreateObject();
+		if (!obj) break;
+		cJSON_AddItemToObject(obj, "id", cJSON_CreateString(rows[i].id));
+		cJSON_AddItemToObject(obj, "schedule", cJSON_CreateString(rows[i].schedule));
+		cJSON_AddItemToObject(obj, "message", cJSON_CreateString(rows[i].message));
+		cJSON_AddItemToObject(obj, "channel", cJSON_CreateString(rows[i].channel));
+		cJSON_AddItemToObject(obj, "recipient", cJSON_CreateString(rows[i].recipient));
+		cJSON_AddItemToObject(obj, "next_run", cJSON_CreateNumber((double)rows[i].next_run));
+		cJSON_AddItemToObject(obj, "enabled", cJSON_CreateBool(rows[i].enabled));
+		cJSON_AddItemToArray(arr, obj);
+	}
+	free(rows);
+	char *s = cJSON_PrintUnformatted(arr);
+	cJSON_Delete(arr);
+	if (s) {
+		json_response(buf, size, status, s);
+		free(s);
+	} else {
+		json_error(buf, size, status, 500, "Internal error");
+	}
+}
+
+static int read_urandom(unsigned char *out, size_t n)
+{
+	int fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0) return -1;
+	ssize_t r = read(fd, out, n);
+	close(fd);
+	return (r == (ssize_t)n) ? 0 : -1;
+}
+
+static void handle_cron_create(const char *body, size_t body_len, char *buf, size_t size, int *status)
+{
+	cJSON *root = body ? cJSON_ParseWithLength(body, body_len) : NULL;
+	if (!root) { json_error(buf, size, status, 400, "Invalid JSON"); return; }
+	cJSON *schedule = cJSON_GetObjectItem(root, "schedule");
+	cJSON *message = cJSON_GetObjectItem(root, "message");
+	if (!cJSON_IsString(schedule) || !cJSON_IsString(message)) {
+		cJSON_Delete(root);
+		json_error(buf, size, status, 400, "schedule and message required");
+		return;
+	}
+	cJSON *id_node = cJSON_GetObjectItem(root, "id");
+	cJSON *channel = cJSON_GetObjectItem(root, "channel");
+	cJSON *recipient = cJSON_GetObjectItem(root, "recipient");
+	char id[128];
+	if (cJSON_IsString(id_node) && id_node->valuestring[0]) {
+		snprintf(id, sizeof(id), "%.127s", id_node->valuestring);
+	} else {
+		unsigned char rnd[2];
+		if (read_urandom(rnd, sizeof(rnd)) != 0) {
+			cJSON_Delete(root);
+			json_error(buf, size, status, 500, "RNG failure");
+			return;
+		}
+		snprintf(id, sizeof(id), "cron_%ld_%02x%02x", (long)time(NULL), rnd[0], rnd[1]);
+	}
+	char sched_buf[128];
+	char msg_buf[512];
+	char ch_buf[64];
+	char rec_buf[64];
+	snprintf(sched_buf, sizeof(sched_buf), "%s", schedule->valuestring);
+	snprintf(msg_buf, sizeof(msg_buf), "%s", message->valuestring);
+	snprintf(ch_buf, sizeof(ch_buf), "%s",
+	         (channel && cJSON_IsString(channel)) ? channel->valuestring : "cli");
+	snprintf(rec_buf, sizeof(rec_buf), "%s",
+	         (recipient && cJSON_IsString(recipient)) ? recipient->valuestring : "default");
+	long long now = (long long)time(NULL);
+	long long next = 0;
+	if (cron_parse_next_run(sched_buf, now, &next) != 0) {
+		cJSON_Delete(root);
+		json_error(buf, size, status, 400, "Invalid schedule");
+		return;
+	}
+	cJSON_Delete(root);
+	if (cron_job_create(id, sched_buf, msg_buf, ch_buf, rec_buf, next, 1) != 0) {
+		json_error(buf, size, status, 500, "Failed to create job");
+		return;
+	}
+	*status = 201;
+	cJSON *resp_obj = cJSON_CreateObject();
+	if (resp_obj) {
+		cJSON_AddBoolToObject(resp_obj, "ok", 1);
+		cJSON_AddStringToObject(resp_obj, "id", id);
+		char *s = cJSON_PrintUnformatted(resp_obj);
+		cJSON_Delete(resp_obj);
+		if (s) { json_response(buf, size, status, s); free(s); }
+	}
+}
+
+static void handle_cron_delete(const char *id, char *buf, size_t size, int *status)
+{
+	if (cron_job_delete(id) != 0) {
+		json_error(buf, size, status, 404, "Job not found");
+		return;
+	}
+	*status = 200;
+	json_response(buf, size, status, "{\"ok\":true}");
+}
+
+static void handle_cron_toggle(const char *id, char *buf, size_t size, int *status)
+{
+	if (cron_job_toggle(id) != 0) {
+		json_error(buf, size, status, 404, "Job not found");
+		return;
+	}
+	*status = 200;
+	json_response(buf, size, status, "{\"ok\":true}");
 }
 
 static void handle_asap_stub(char *buf, size_t size, int *status)
@@ -379,15 +540,26 @@ static void handle_asap_stub(char *buf, size_t size, int *status)
 	json_error(buf, size, status, 501, "Not Implemented");
 }
 
-static void handle_well_known(const char *uri, int uri_len, char *buf, size_t size, int *status)
+static void handle_well_known(http_server_ctx_t *ctx, const char *uri, int uri_len,
+                             char *buf, size_t size, int *status)
 {
-	if (path_eq(uri, uri_len, "/.well-known/asap/manifest.json") ||
-	    path_eq(uri, uri_len, "/.well-known/asap/health")) {
+	if (path_eq(uri, uri_len, "/.well-known/asap/manifest.json")) {
+		char *json = manifest_build_json(ctx ? ctx->cfg : NULL);
+		if (!json) {
+			json_error(buf, size, status, 500, "Internal error");
+			return;
+		}
 		*status = 200;
-		json_response(buf, size, status, "{\"status\":\"ok\"}");
-	} else {
-		json_error(buf, size, status, 404, "Not found");
+		json_response(buf, size, status, json);
+		free(json);
+		return;
 	}
+	if (path_eq(uri, uri_len, "/.well-known/asap/health")) {
+		*status = 200;
+		json_response(buf, size, status, manifest_health_json());
+		return;
+	}
+	json_error(buf, size, status, 404, "Not found");
 }
 
 static int extract_path_param(const char *uri, int uri_len, const char *prefix, char *out, size_t out_size)
@@ -412,23 +584,23 @@ static int dispatch_route(http_server_ctx_t *ctx, struct lws *wsi, int method,
 		handle_health(ctx, buf, size, status);
 		return 0;
 	}
-	if (path_eq(uri, uri_len, "/pair") && method == 2) {
+	if (path_eq(uri, uri_len, "/pair") && method == HTTP_POST) {
 		handle_pair(ctx, wsi, body, body_len, buf, size, status);
 		return 0;
 	}
 	if (path_match(uri, uri_len, "/.well-known/")) {
-		handle_well_known(uri, uri_len, buf, size, status);
+		handle_well_known(ctx, uri, uri_len, buf, size, status);
 		return 0;
 	}
 	if (path_eq(uri, uri_len, "/api/config")) {
-		if (method == 1) handle_config_get(ctx->cfg, buf, size, status);
-		else if (method == 4) handle_config_put(ctx, body, body_len, buf, size, status);
+		if (method == HTTP_GET) handle_config_get(ctx->cfg, buf, size, status);
+		else if (method == HTTP_PUT) handle_config_put(ctx, body, body_len, buf, size, status);
 		else json_error(buf, size, status, 405, "Method not allowed");
 		return 0;
 	}
 	if (path_eq(uri, uri_len, "/api/skills")) {
-		if (method == 1) handle_skills_list(ctx->cfg, buf, size, status);
-		else if (method == 2) handle_skill_create(ctx->cfg, body, body_len, buf, size, status);
+		if (method == HTTP_GET) handle_skills_list(ctx->cfg, buf, size, status);
+		else if (method == HTTP_POST) handle_skill_create(ctx->cfg, body, body_len, buf, size, status);
 		else json_error(buf, size, status, 405, "Method not allowed");
 		return 0;
 	}
@@ -438,14 +610,14 @@ static int dispatch_route(http_server_ctx_t *ctx, struct lws *wsi, int method,
 			json_error(buf, size, status, 404, "Not found");
 			return 0;
 		}
-		if (method == 1) handle_skill_get(ctx->cfg, name, buf, size, status);
-		else if (method == 4) handle_skill_update(ctx->cfg, name, body, body_len, buf, size, status);
-		else if (method == 5) handle_skill_delete(ctx->cfg, name, buf, size, status);
+		if (method == HTTP_GET) handle_skill_get(ctx->cfg, name, buf, size, status);
+		else if (method == HTTP_PUT) handle_skill_update(ctx->cfg, name, body, body_len, buf, size, status);
+		else if (method == HTTP_DELETE) handle_skill_delete(ctx->cfg, name, buf, size, status);
 		else json_error(buf, size, status, 405, "Method not allowed");
 		return 0;
 	}
 	if (path_match(uri, uri_len, "/api/memory")) {
-		if (method != 1) { json_error(buf, size, status, 405, "Method not allowed"); return 0; }
+		if (method != HTTP_GET) { json_error(buf, size, status, 405, "Method not allowed"); return 0; }
 		char qbuf[256] = {0};
 		char lbuf[32] = {0};
 		lws_get_urlarg_by_name_safe(wsi, "q", qbuf, sizeof(qbuf));
@@ -455,12 +627,12 @@ static int dispatch_route(http_server_ctx_t *ctx, struct lws *wsi, int method,
 		return 0;
 	}
 	if (path_eq(uri, uri_len, "/api/sessions")) {
-		if (method == 1) handle_sessions_list(buf, size, status);
+		if (method == HTTP_GET) handle_sessions_list(buf, size, status);
 		else json_error(buf, size, status, 405, "Method not allowed");
 		return 0;
 	}
 	if (path_match(uri, uri_len, "/api/sessions/")) {
-		if (method != 5) { json_error(buf, size, status, 405, "Method not allowed"); return 0; }
+		if (method != HTTP_DELETE) { json_error(buf, size, status, 405, "Method not allowed"); return 0; }
 		char id[128];
 		if (extract_path_param(uri, uri_len, "/api/sessions/", id, sizeof(id)) != 0) {
 			json_error(buf, size, status, 404, "Not found");
@@ -470,14 +642,30 @@ static int dispatch_route(http_server_ctx_t *ctx, struct lws *wsi, int method,
 		return 0;
 	}
 	if (path_eq(uri, uri_len, "/api/cron")) {
-		handle_cron_stub(buf, size, status);
+		if (method == HTTP_GET) handle_cron_list(buf, size, status);
+		else if (method == HTTP_POST) handle_cron_create(body, body_len, buf, size, status);
+		else json_error(buf, size, status, 405, "Method not allowed");
 		return 0;
 	}
 	if (path_match(uri, uri_len, "/api/cron/")) {
-		handle_cron_stub(buf, size, status);
+		char id[128];
+		if (extract_path_param(uri, uri_len, "/api/cron/", id, sizeof(id)) != 0) {
+			json_error(buf, size, status, 404, "Not found");
+			return 0;
+		}
+		size_t suffix = strlen("/api/cron/") + strlen(id);
+		int is_toggle = (uri_len >= (int)(suffix + 8) &&
+		                 strncmp(uri + suffix, "/toggle", 7) == 0);
+		if (is_toggle) {
+			if (method == HTTP_POST) handle_cron_toggle(id, buf, size, status);
+			else json_error(buf, size, status, 405, "Method not allowed");
+		} else {
+			if (method == HTTP_DELETE) handle_cron_delete(id, buf, size, status);
+			else json_error(buf, size, status, 405, "Method not allowed");
+		}
 		return 0;
 	}
-	if (path_eq(uri, uri_len, "/asap") && method == 2) {
+	if (path_eq(uri, uri_len, "/asap") && method == HTTP_POST) {
 		handle_asap_stub(buf, size, status);
 		return 0;
 	}
@@ -501,7 +689,7 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 			lws_http_transaction_completed(wsi);
 			return 0;
 		}
-		int method = 1;
+		int method = HTTP_GET;
 		{
 			char meth_buf[32] = {0};
 			int n = lws_hdr_custom_copy(wsi, meth_buf, sizeof(meth_buf), ":method", 7);
@@ -510,18 +698,19 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 				if (t > 0 && t < 16) {
 					char req[16];
 					lws_hdr_copy(wsi, req, sizeof(req), WSI_TOKEN_HTTP);
-					if (strncmp(req, "POST", 4) == 0) method = 2;
-					else if (strncmp(req, "PUT", 3) == 0) method = 4;
-					else if (strncmp(req, "DELETE", 6) == 0) method = 5;
+					if (strncmp(req, "POST", 4) == 0) method = HTTP_POST;
+					else if (strncmp(req, "PUT", 3) == 0) method = HTTP_PUT;
+					else if (strncmp(req, "DELETE", 6) == 0) method = HTTP_DELETE;
 				}
 			} else {
-				if (strcmp(meth_buf, "POST") == 0) method = 2;
-				else if (strcmp(meth_buf, "PUT") == 0) method = 4;
-				else if (strcmp(meth_buf, "DELETE") == 0) method = 5;
+				if (strcmp(meth_buf, "POST") == 0) method = HTTP_POST;
+				else if (strcmp(meth_buf, "PUT") == 0) method = HTTP_PUT;
+				else if (strcmp(meth_buf, "DELETE") == 0) method = HTTP_DELETE;
 			}
 		}
 		if (requires_auth(uri, uri_len, method)) {
-			const char *token = get_bearer_token(wsi);
+			char auth_buf[256];
+			const char *token = get_bearer_token(wsi, auth_buf, sizeof(auth_buf));
 			if (!token || !auth_validate_token(ctx->auth, token)) {
 				lws_return_http_status(wsi, 401, "{\"error\":\"Unauthorized\"}");
 				lws_http_transaction_completed(wsi);
@@ -542,19 +731,19 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 			return 0;
 		}
 		conn->status = 200;
-		conn->has_body = (method == 2 || method == 4);
+		conn->has_body = (method == HTTP_POST || method == HTTP_PUT);
 		if (!conn->has_body && is_static_path(uri, uri_len, method)) {
 			const unsigned char *data = NULL;
-			size_t len = 0;
+			size_t data_len = 0;
 			const char *ct = NULL;
 			char path_buf[256];
 			if (uri_len >= (int)sizeof(path_buf)) uri_len = (int)sizeof(path_buf) - 1;
 			memcpy(path_buf, uri, (size_t)uri_len);
 			path_buf[uri_len] = '\0';
-			if (static_lookup(path_buf, &data, &len, &ct) == 0) {
+			if (static_lookup(path_buf, &data, &data_len, &ct) == 0) {
 				conn->is_static = 1;
 				conn->static_data = data;
-				conn->static_len = len;
+				conn->static_len = data_len;
 				conn->static_content_type = ct;
 				conn->static_sent = 0;
 				free(conn->response);
@@ -593,12 +782,12 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 			char uri[256];
 			int uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI);
 			if (uri_len <= 0) uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_POST_URI);
-			int method = 2;
+			int method = HTTP_POST;
 			{
 				char mb[32] = {0};
 				if (lws_hdr_custom_copy(wsi, mb, sizeof(mb), ":method", 7) > 0) {
-					if (strcmp(mb, "PUT") == 0) method = 4;
-					else if (strcmp(mb, "DELETE") == 0) method = 5;
+					if (strcmp(mb, "PUT") == 0) method = HTTP_PUT;
+					else if (strcmp(mb, "DELETE") == 0) method = HTTP_DELETE;
 				}
 			}
 			dispatch_route(ctx, wsi, method, uri, uri_len, conn->body, conn->body_len,
@@ -663,16 +852,24 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 				return -1;
 			conn->headers_sent = 1;
 		}
-		if (conn->response_len > 0) {
-			size_t to_send = conn->response_len;
+		if (conn->response_sent < conn->response_len) {
+			size_t to_send = conn->response_len - conn->response_sent;
 			if (to_send > 4096) to_send = 4096;
-			int m = lws_write(wsi, (unsigned char *)conn->response, to_send, LWS_WRITE_HTTP_FINAL);
+			int flags = (conn->response_sent + to_send >= conn->response_len) ?
+			    LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP;
+			int m = lws_write(wsi, (unsigned char *)conn->response + conn->response_sent,
+			                 to_send, flags);
 			if (m < 0) return -1;
+			conn->response_sent += (size_t)m;
 		}
-		free(conn->response);
-		free(conn);
-		lws_set_wsi_user(wsi, NULL);
-		lws_http_transaction_completed(wsi);
+		if (conn->response_sent >= conn->response_len) {
+			free(conn->response);
+			free(conn);
+			lws_set_wsi_user(wsi, NULL);
+			lws_http_transaction_completed(wsi);
+		} else {
+			lws_callback_on_writable(wsi);
+		}
 		return 0;
 	}
 	case LWS_CALLBACK_CLOSED_HTTP: {
@@ -695,10 +892,36 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *
 {
 	http_server_ctx_t *ctx = g_ctx;
 	switch (reason) {
+	case LWS_CALLBACK_HTTP_CONFIRM_UPGRADE: {
+		if (!ctx || !ctx->auth) return -1;
+		char token_buf[256] = {0};
+		if (lws_get_urlarg_by_name_safe(wsi, "token", token_buf, sizeof(token_buf)) <= 0)
+			return -1;
+		if (!auth_validate_token(ctx->auth, token_buf))
+			return -1;
+		return 0;
+	}
 	case LWS_CALLBACK_ESTABLISHED: {
 		int conn_id = ws_next_conn_id();
 		lws_set_wsi_user(wsi, (void *)(intptr_t)conn_id);
 		ws_register_conn(conn_id, (ws_conn_t)wsi);
+		break;
+	}
+	case LWS_CALLBACK_SERVER_WRITEABLE: {
+		int conn_id = (int)(intptr_t)lws_get_wsi_user(wsi);
+		if (conn_id <= 0) break;
+		char buf[8192];
+		size_t len_out = 0;
+		if (ws_dequeue_outgoing(conn_id, buf, sizeof(buf), &len_out)) {
+			unsigned char frame[LWS_PRE + 8192];
+			if (len_out < sizeof(frame) - LWS_PRE) {
+				memcpy(frame + LWS_PRE, buf, len_out);
+				if (lws_write(wsi, frame + LWS_PRE, len_out, LWS_WRITE_TEXT) < 0)
+					break;
+			}
+			if (ws_has_pending_outgoing(conn_id))
+				lws_callback_on_writable(wsi);
+		}
 		break;
 	}
 	case LWS_CALLBACK_RECEIVE: {
