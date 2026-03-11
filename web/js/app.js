@@ -3,6 +3,14 @@
   const TOKEN_KEY = 'shellclaw_token';
   const API_BASE = '';
 
+  function escapeHtml(str) {
+    if (str == null || str === undefined) return '';
+    const s = String(str);
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
   function getToken() { return localStorage.getItem(TOKEN_KEY); }
   function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
 
@@ -47,18 +55,20 @@
     return h.split('?')[0];
   }
 
-  function render(el, html) { el.innerHTML = html; }
+  function render(el, html) {
+    el.innerHTML = html;
+  }
 
   function renderDashboard() {
     const token = getToken();
     if (!token) { window.location.hash = '#/pair'; return; }
     api('GET', '/health').then(d => {
       render(app, '<h1>Dashboard</h1>' +
-        '<p><span class="status-ok">Status:</span> ' + (d.status || 'ok') + '</p>' +
-        '<p>Uptime: ' + (d.uptime != null ? d.uptime + 's' : '-') + '</p>' +
-        '<p>Version: ' + (d.version || '-') + '</p>');
+        '<p><span class="status-ok">Status:</span> ' + escapeHtml(d.status || 'ok') + '</p>' +
+        '<p>Uptime: ' + escapeHtml(d.uptime != null ? d.uptime + 's' : '-') + '</p>' +
+        '<p>Version: ' + escapeHtml(d.version || '-') + '</p>');
     }).catch(e => {
-      render(app, '<h1>Dashboard</h1><p class="status-err">Failed to fetch: ' + (e || 'Unknown') + '</p>');
+      render(app, '<h1>Dashboard</h1><p class="status-err">Failed to fetch: ' + escapeHtml(e || 'Unknown') + '</p>');
     });
   }
 
@@ -89,11 +99,11 @@
     if (!token) { window.location.hash = '#/pair'; return; }
     api('GET', '/api/config').then(d => {
       render(app, '<h1>Config</h1><form class="config-form" id="config-form">' +
-        '<div class="form-row"><label>Model</label><input name="model" value="' + (d.model || '') + '"></div>' +
-        '<div class="form-row"><label>Max tokens</label><input type="number" name="max_tokens" value="' + (d.max_tokens ?? 4096) + '"></div>' +
-        '<div class="form-row"><label>Temperature</label><input type="number" step="0.1" name="temperature" value="' + (d.temperature ?? 0.7) + '"></div>' +
-        '<div class="form-row"><label>Gateway host</label><input name="gateway_host" value="' + (d.gateway_host || '') + '"></div>' +
-        '<div class="form-row"><label>Gateway port</label><input type="number" name="gateway_port" value="' + (d.gateway_port ?? 18789) + '"></div>' +
+        '<div class="form-row"><label>Model</label><input name="model" value="' + escapeHtml(d.model || '') + '"></div>' +
+        '<div class="form-row"><label>Max tokens</label><input type="number" name="max_tokens" value="' + escapeHtml(String(d.max_tokens ?? 4096)) + '"></div>' +
+        '<div class="form-row"><label>Temperature</label><input type="number" step="0.1" name="temperature" value="' + escapeHtml(String(d.temperature ?? 0.7)) + '"></div>' +
+        '<div class="form-row"><label>Gateway host</label><input name="gateway_host" value="' + escapeHtml(d.gateway_host || '') + '"></div>' +
+        '<div class="form-row"><label>Gateway port</label><input type="number" name="gateway_port" value="' + escapeHtml(String(d.gateway_port ?? 18789)) + '"></div>' +
         '<button type="submit">Save</button></form>');
       document.getElementById('config-form').onsubmit = function (e) {
         e.preventDefault();
@@ -107,7 +117,7 @@
         };
         api('PUT', '/api/config', body).then(() => { alert('Saved'); }).catch(err => alert('Error: ' + err));
       };
-    }).catch(e => { render(app, '<h1>Config</h1><p class="status-err">' + (e || 'Load failed') + '</p>'); });
+    }).catch(e => { render(app, '<h1>Config</h1><p class="status-err">' + escapeHtml(e || 'Load failed') + '</p>'); });
   }
 
   function renderSkills() {
@@ -120,7 +130,7 @@
       const ul = document.getElementById('skill-list');
       (arr || []).forEach(n => {
         const li = document.createElement('li');
-        li.innerHTML = '<span>' + n + '</span><span><a href="#/skills/' + encodeURIComponent(n) + '">View</a> <button class="danger" data-delete="' + n + '">Delete</button></span>';
+        li.innerHTML = '<span>' + escapeHtml(n) + '</span><span><a href="#/skills/' + encodeURIComponent(n) + '">View</a> <button class="danger" data-delete="' + escapeHtml(n) + '">Delete</button></span>';
         li.querySelector('[data-delete]').onclick = () => {
           if (!confirm('Delete ' + n + '?')) return;
           api('DELETE', '/api/skills/' + encodeURIComponent(n)).then(() => { window.location.hash = '#/skills'; });
@@ -132,18 +142,18 @@
         const f = e.target;
         api('POST', '/api/skills', { name: f.name.value, content: f.content.value }).then(() => { window.location.hash = '#/skills'; });
       };
-    }).catch(e => { render(app, '<h1>Skills</h1><p class="status-err">' + (e || 'Load failed') + '</p>'); });
+    }).catch(e => { render(app, '<h1>Skills</h1><p class="status-err">' + escapeHtml(e || 'Load failed') + '</p>'); });
   }
 
   function renderSkillView(name) {
     const token = getToken();
     if (!token) { window.location.hash = '#/pair'; return; }
     api('GET', '/api/skills/' + encodeURIComponent(name)).then(d => {
-      render(app, '<h1>Skill: ' + name + '</h1><textarea id="skill-content" rows="12" style="width:100%">' + (d.content || '') + '</textarea><button id="skill-save">Save</button> <a href="#/skills">Back</a>');
+      render(app, '<h1>Skill: ' + escapeHtml(name) + '</h1><textarea id="skill-content" rows="12" style="width:100%">' + escapeHtml(d.content || '') + '</textarea><button id="skill-save">Save</button> <a href="#/skills">Back</a>');
       document.getElementById('skill-save').onclick = () => {
         api('PUT', '/api/skills/' + encodeURIComponent(name), { content: document.getElementById('skill-content').value }).then(() => alert('Saved'));
       };
-    }).catch(e => { render(app, '<h1>Skill</h1><p class="status-err">' + (e || 'Not found') + '</p>'); });
+    }).catch(e => { render(app, '<h1>Skill</h1><p class="status-err">' + escapeHtml(e || 'Not found') + '</p>'); });
   }
 
   function renderMemory() {
@@ -171,13 +181,13 @@
       const ul = document.getElementById('session-list');
       (arr || []).forEach(id => {
         const li = document.createElement('li');
-        li.innerHTML = '<span>' + id + '</span><button class="danger" data-delete="' + id + '">Delete</button>';
+        li.innerHTML = '<span>' + escapeHtml(id) + '</span><button class="danger" data-delete="' + escapeHtml(id) + '">Delete</button>';
         li.querySelector('[data-delete]').onclick = () => {
           api('DELETE', '/api/sessions/' + encodeURIComponent(id)).then(() => { window.location.hash = '#/sessions'; });
         };
         ul.appendChild(li);
       });
-    }).catch(e => { render(app, '<h1>Sessions</h1><p class="status-err">' + (e || 'Load failed') + '</p>'); });
+    }).catch(e => { render(app, '<h1>Sessions</h1><p class="status-err">' + escapeHtml(e || 'Load failed') + '</p>'); });
   }
 
   function renderCron() {
@@ -194,8 +204,11 @@
     const out = document.getElementById('log-output');
     const ws = wsConnect(function (msg) {
       if (msg.type === 'log') {
-        const cls = 'log-' + (msg.level || 'info');
-        out.innerHTML += '<div class="log-line ' + cls + '">' + (msg.text || '') + '</div>';
+        const cls = 'log-' + escapeHtml(msg.level || 'info');
+        const line = document.createElement('div');
+        line.className = 'log-line ' + cls;
+        line.textContent = msg.text || '';
+        out.appendChild(line);
         out.scrollTop = out.scrollHeight;
       }
     });
@@ -204,9 +217,9 @@
 
   function renderAsap() {
     fetch(API_BASE + '/.well-known/asap/manifest.json').then(r => r.json()).then(d => {
-      render(app, '<h1>ASAP</h1><pre class="pre-wrap">' + JSON.stringify(d, null, 2) + '</pre>');
+      render(app, '<h1>ASAP</h1><pre class="pre-wrap">' + escapeHtml(JSON.stringify(d, null, 2)) + '</pre>');
     }).catch(e => {
-      render(app, '<h1>ASAP</h1><p class="status-err">Failed: ' + e + '</p>');
+      render(app, '<h1>ASAP</h1><p class="status-err">Failed: ' + escapeHtml(e) + '</p>');
     });
   }
 
