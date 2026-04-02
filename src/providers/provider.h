@@ -51,6 +51,26 @@ typedef struct provider_response {
 /** Clear and free response fields. Caller-allocated struct; safe to call repeatedly or on zeroed. */
 void provider_response_clear(provider_response_t *r);
 
+/* --- Shared curl helpers for providers --- */
+
+#define PROVIDER_RESP_BUF_INIT 65536
+
+/** Growable buffer for curl write callbacks. */
+typedef struct provider_curl_buf {
+	char *buf;
+	size_t len;
+	size_t cap;
+} provider_curl_buf_t;
+
+/** Curl write callback using provider_curl_buf_t. Cap: PROVIDER_RESP_BUF_INIT * 4. */
+size_t provider_write_cb(const char *ptr, size_t size, size_t nmemb, void *userdata);
+
+/** Set error flag and optional message on response. */
+void provider_set_error(provider_response_t *response, const char *msg);
+
+/** strdup-equivalent for provider use. Returns NULL on NULL input. */
+char *provider_dup_str(const char *s);
+
 /**
  * Provider vtable: init, chat, cleanup. All providers implement this interface.
  */
