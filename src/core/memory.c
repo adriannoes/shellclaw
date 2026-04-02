@@ -258,7 +258,7 @@ int session_delete(const char *session_id)
 	sqlite3_stmt *stmt = NULL;
 	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
 	sqlite3_bind_text(stmt, 1, session_id, -1, SQLITE_TRANSIENT);
-	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	int ret = (sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(g_db) > 0) ? 0 : -1;
 	sqlite3_finalize(stmt);
 	return ret;
 }
@@ -362,7 +362,7 @@ int cron_job_delete(const char *id)
 	sqlite3_stmt *stmt = NULL;
 	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
 	sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT);
-	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	int ret = (sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(g_db) > 0) ? 0 : -1;
 	sqlite3_finalize(stmt);
 	return ret;
 }
@@ -374,7 +374,7 @@ int cron_job_toggle(const char *id)
 	sqlite3_stmt *stmt = NULL;
 	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
 	sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT);
-	int ret = sqlite3_step(stmt) == SQLITE_DONE ? 0 : -1;
+	int ret = (sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(g_db) > 0) ? 0 : -1;
 	sqlite3_finalize(stmt);
 	return ret;
 }
