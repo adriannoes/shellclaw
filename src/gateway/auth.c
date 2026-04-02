@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/auth.h"
+#include "core/config.h"
 #include "cJSON.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -24,20 +25,6 @@ struct auth_ctx {
 	char *tokens_path;
 	char *pending_pairing_code;
 };
-
-static char *expand_tilde(const char *path)
-{
-	if (!path || path[0] != '~') return path ? strdup(path) : NULL;
-	const char *home = getenv("HOME");
-	if (!home) home = "";
-	size_t hlen = strlen(home);
-	size_t tail = strlen(path + 1);
-	char *out = malloc(hlen + tail + 1);
-	if (!out) return NULL;
-	memcpy(out, home, hlen);
-	memcpy(out + hlen, path + 1, tail + 1);
-	return out;
-}
 
 static int is_file_empty_or_missing(const char *path)
 {
@@ -111,7 +98,7 @@ auth_ctx_t *auth_init(const char *tokens_path)
 	if (tokens_path && tokens_path[0] != '\0') {
 		ctx->tokens_path = strdup(tokens_path);
 	} else {
-		ctx->tokens_path = expand_tilde(DEFAULT_TOKENS_PATH);
+		ctx->tokens_path = config_expand_tilde(DEFAULT_TOKENS_PATH);
 	}
 	if (!ctx->tokens_path) {
 		free(ctx);
@@ -164,12 +151,32 @@ int auth_pair(auth_ctx_t *ctx, const char *code, char *token_out, size_t token_s
 {
 	if (!ctx || !ctx->tokens_path || !code || !token_out || token_size == 0) return -1;
 	if (!is_valid_6digit(code)) return -1;
-	if (!ctx->pending_pairing_code || strcmp(code, ctx->pending_pairing_code) != 0)
+	if (!ctx->pending_pairing_code ||
+	    !constant_time_cmp(code, ctx->pending_pairing_code, PAIRING_CODE_LEN))
 		return -1;
 	char new_token[TOKEN_LEN + 1];
 	generate_random_hex(new_token, TOKEN_LEN);
-	cJSON *arr = cJSON_CreateArray();
+	/* Read existing tokens and append (multi-device support). */
+	cJSON *arr = NULL;
+	{
+		FILE *f = fopen(ctx->tokens_path, "r");
+		if (f) {
+			char buf[8192];
+			size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+			fclose(f);
+			buf[n] = '\0';
+			cJSON *existing = cJSON_Parse(buf);
+			if (existing && cJSON_IsArray(existing))
+				arr = existing;
+			else if (existing)
+				cJSON_Delete(existing);
+		}
+	}
+	if (!arr) arr = cJSON_CreateArray();
 	if (!arr) return -1;
+	/* Cap at 16 tokens to prevent unbounded growth. */
+	while (cJSON_GetArraySize(arr) >= 16)
+		cJSON_DeleteItemFromArray(arr, 0);
 	cJSON_AddItemToArray(arr, cJSON_CreateString(new_token));
 	char *json = cJSON_PrintUnformatted(arr);
 	cJSON_Delete(arr);
