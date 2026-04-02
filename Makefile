@@ -162,7 +162,7 @@ $(CHANNEL_HEARTBEAT_O): src/channels/heartbeat.c src/channels/heartbeat.h src/ch
 $(CHANNEL_WEBCHAT_O): src/channels/webchat.c src/channels/channel.h src/channels/webchat.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/channels/webchat.c
 
-$(AUTH_O): src/gateway/auth.c src/gateway/auth.h
+$(AUTH_O): src/gateway/auth.c src/gateway/auth.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/gateway/auth.c
 
 src/gateway/ui_assets.h: web/index.html web/css/style.css web/js/app.js scripts/embed_ui.sh
@@ -276,9 +276,9 @@ test_cron: tests/test_cron.c $(CRON_O) $(MEMORY_O) $(SQLITE3_O) $(CHANNEL_COMMON
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_cron.c $(CRON_O) $(MEMORY_O) $(SQLITE3_O) $(CHANNEL_COMMON_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
-test_auth: tests/test_auth.c $(AUTH_O) $(CJSON_O)
+test_auth: tests/test_auth.c $(AUTH_O) $(CJSON_O) $(CONFIG_O) $(TOML_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_auth.c $(AUTH_O) $(CJSON_O) $(LDLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_auth.c $(AUTH_O) $(CJSON_O) $(CONFIG_O) $(TOML_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
 test_manifest: tests/test_manifest.c $(MANIFEST_O) $(CONFIG_O) $(TOML_O) $(SKILL_O) $(CJSON_O)
