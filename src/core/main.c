@@ -89,7 +89,7 @@ static void providers_cleanup(void)
 	g_provider = NULL;
 }
 
-#define MAX_CHANNELS 4
+#define MAX_CHANNELS 8
 static const channel_t *g_channels[MAX_CHANNELS];
 static int g_channel_count;
 
