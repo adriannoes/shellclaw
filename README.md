@@ -23,7 +23,7 @@ ShellClaw is **not another OpenClaw clone** in a different language. It is a **h
 | **Binary** | < 2 MB |
 | **RAM** | < 5 MB |
 | **Startup** | < 1 second |
-| **Language** | C (~4,000 lines) |
+| **Language** | C (~5,000 lines) |
 | **Hardware** | GPIO, I2C, SPI, Camera |
 | **Sandbox** | Native Linux namespaces |
 | **Web UI** | Embedded in binary |

@@ -75,6 +75,9 @@ const char *config_heartbeat_default_channel(const config_t *c);
 
 const char *config_brave_api_key_env(const config_t *c);
 
+/** Expand ~ prefix to $HOME in path. Returns malloc'd string. Caller must free. */
+char *config_expand_tilde(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

@@ -9,10 +9,21 @@
 #include "channels/channel.h"
 #include "core/config.h"
 #include "cJSON.h"
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+
+static int read_urandom(unsigned char *out, size_t n)
+{
+	int fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0) return -1;
+	ssize_t r = read(fd, out, n);
+	close(fd);
+	return (r == (ssize_t)n) ? 0 : -1;
+}
 
 #define CRON_TOOL_PARAMS "{\"type\":\"object\",\"properties\":{\"operation\":{\"type\":\"string\",\"enum\":[\"list\",\"create\",\"delete\",\"toggle\"]},\"id\":{\"type\":\"string\"},\"schedule\":{\"type\":\"string\"},\"message\":{\"type\":\"string\"},\"channel\":{\"type\":\"string\"},\"recipient\":{\"type\":\"string\"}},\"required\":[\"operation\"]}"
 
@@ -145,6 +156,24 @@ int cron_is_one_shot(const char *schedule)
 	return strncmp(schedule, CRON_PREFIX_AT, strlen(CRON_PREFIX_AT)) == 0;
 }
 
+int cron_create_job(const char *schedule, const char *message,
+                    const char *channel, const char *recipient,
+                    char *id_out, size_t id_size)
+{
+	if (!schedule || !message || !id_out || id_size == 0) return -1;
+	const char *ch = channel ? channel : "cli";
+	const char *rec = recipient ? recipient : "default";
+	if (id_out[0] == '\0') {
+		unsigned char rnd[2];
+		if (read_urandom(rnd, sizeof(rnd)) != 0) return -1;
+		snprintf(id_out, id_size, "cron_%ld_%02x%02x", (long)time(NULL), rnd[0], rnd[1]);
+	}
+	long long now = (long long)time(NULL);
+	long long next = 0;
+	if (cron_parse_next_run(schedule, now, &next) != 0) return -1;
+	return cron_job_create(id_out, schedule, message, ch, rec, next, 1);
+}
+
 static int cron_init(const config_t *cfg)
 {
 	(void)cfg;
@@ -267,21 +296,13 @@ static int cron_tool_execute(const char *args_json, char *result_buf, size_t max
 		cJSON *channel = cJSON_GetObjectItem(root, "channel");
 		cJSON *recipient = cJSON_GetObjectItem(root, "recipient");
 		char id[128];
-		if (cJSON_IsString(id_node) && id_node->valuestring[0]) {
+		if (cJSON_IsString(id_node) && id_node->valuestring[0])
 			snprintf(id, sizeof(id), "%.127s", id_node->valuestring);
-		} else {
-			snprintf(id, sizeof(id), "cron_%ld_%d", (long)time(NULL), rand() % 10000);
-		}
-		const char *ch = (channel && cJSON_IsString(channel)) ? channel->valuestring : "cli";
-		const char *rec = (recipient && cJSON_IsString(recipient)) ? recipient->valuestring : "default";
-		long long now = (long long)time(NULL);
-		long long next = 0;
-		if (cron_parse_next_run(schedule->valuestring, now, &next) != 0) {
-			cJSON_Delete(root);
-			snprintf(result_buf, max_len, "{\"error\":\"invalid schedule\"}");
-			return -1;
-		}
-		if (cron_job_create(id, schedule->valuestring, message->valuestring, ch, rec, next, 1) != 0) {
+		else
+			id[0] = '\0';
+		const char *ch = (channel && cJSON_IsString(channel)) ? channel->valuestring : NULL;
+		const char *rec = (recipient && cJSON_IsString(recipient)) ? recipient->valuestring : NULL;
+		if (cron_create_job(schedule->valuestring, message->valuestring, ch, rec, id, sizeof(id)) != 0) {
 			cJSON_Delete(root);
 			snprintf(result_buf, max_len, "{\"error\":\"failed to create job\"}");
 			return -1;

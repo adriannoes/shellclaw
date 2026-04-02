@@ -119,10 +119,9 @@ static int file_write(const char *path, const char *content, char *result_buf, s
 				snprintf(result_buf, max_len, "{\"error\":\"path too long\"}");
 				return -1;
 			}
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-truncation"
-			snprintf(safe_path, sizeof(safe_path), "%s/%s", resolved, base);
-#pragma GCC diagnostic pop
+			memcpy(safe_path, resolved, res_len);
+			safe_path[res_len] = '/';
+			memcpy(safe_path + res_len + 1, base, base_len + 1);
 		}
 	}
 	FILE *f = fopen(safe_path, "w");

@@ -16,67 +16,22 @@
 
 #define REQUEST_TIMEOUT_SEC 120
 #define CONNECT_TIMEOUT_SEC 30
-#define RESPONSE_BUF_INIT 65536
-
-typedef struct {
-	char *buf;
-	size_t len;
-	size_t cap;
-} curl_buf_t;
 
 static char *s_oai_api_key;
 static const config_t *s_oai_cfg;
-
-static size_t write_cb(const char *ptr, size_t size, size_t nmemb, void *userdata)
-{
-	curl_buf_t *b = (curl_buf_t *)userdata;
-	if (!b || !b->buf) return 0;
-	if (nmemb != 0 && size > SIZE_MAX / nmemb) return 0;
-	size_t n = size * nmemb;
-	size_t need = b->len + n + 1;
-	if (need > RESPONSE_BUF_INIT * 4) return 0;
-	if (need > b->cap) {
-		size_t new_cap = b->cap ? b->cap * 2 : RESPONSE_BUF_INIT;
-		while (new_cap < need && new_cap <= RESPONSE_BUF_INIT * 4) new_cap *= 2;
-		if (need > new_cap) return 0;
-		char *p = realloc(b->buf, new_cap);
-		if (!p) return 0;
-		b->buf = p;
-		b->cap = new_cap;
-	}
-	memcpy(b->buf + b->len, ptr, n);
-	b->len += n;
-	b->buf[b->len] = '\0';
-	return n;
-}
-
-static void set_error(provider_response_t *response, const char *msg)
-{
-	response->error = 1;
-	response->content = msg ? strdup(msg) : NULL;
-}
-
-static char *dup_str(const char *s)
-{
-	if (!s) return NULL;
-	size_t n = strlen(s) + 1;
-	char *p = malloc(n);
-	if (p) memcpy(p, s, n);
-	return p;
-}
 
 static int parse_response_body(const char *response_buf, provider_response_t *response)
 {
 	cJSON *root = cJSON_Parse(response_buf);
 	if (!root) {
-		set_error(response, "Failed to parse OpenAI response JSON");
+		provider_set_error(response, "Failed to parse OpenAI response JSON");
 		return -1;
 	}
 	cJSON *err_obj = cJSON_GetObjectItem(root, "error");
 	if (cJSON_IsObject(err_obj)) {
 		cJSON *msg = cJSON_GetObjectItem(err_obj, "message");
 		const char *errmsg = cJSON_IsString(msg) ? msg->valuestring : "OpenAI API error";
-		set_error(response, errmsg);
+		provider_set_error(response, errmsg);
 		cJSON_Delete(root);
 		return -1;
 	}
@@ -96,7 +51,7 @@ static int parse_response_body(const char *response_buf, provider_response_t *re
 	response->tool_calls_count = 0;
 	cJSON *content_item = cJSON_GetObjectItem(msg_obj, "content");
 	if (cJSON_IsString(content_item) && content_item->valuestring)
-		response->content = dup_str(content_item->valuestring);
+		response->content = provider_dup_str(content_item->valuestring);
 	else
 		response->content = malloc(1);
 	if (response->content && !cJSON_IsString(content_item))
@@ -114,12 +69,12 @@ static int parse_response_body(const char *response_buf, provider_response_t *re
 					calls[i].arguments = NULL;
 					cJSON *id_item = cJSON_GetObjectItem(tc, "id");
 					cJSON *fn = cJSON_GetObjectItem(tc, "function");
-					if (cJSON_IsString(id_item)) calls[i].id = dup_str(id_item->valuestring);
+					if (cJSON_IsString(id_item)) calls[i].id = provider_dup_str(id_item->valuestring);
 					if (cJSON_IsObject(fn)) {
 						cJSON *name_item = cJSON_GetObjectItem(fn, "name");
 						cJSON *args_item = cJSON_GetObjectItem(fn, "arguments");
-						if (cJSON_IsString(name_item)) calls[i].name = dup_str(name_item->valuestring);
-						if (cJSON_IsString(args_item)) calls[i].arguments = dup_str(args_item->valuestring);
+						if (cJSON_IsString(name_item)) calls[i].name = provider_dup_str(name_item->valuestring);
+						if (cJSON_IsString(args_item)) calls[i].arguments = provider_dup_str(args_item->valuestring);
 					}
 				}
 				response->tool_calls = calls;
@@ -135,7 +90,7 @@ static int do_request(const char *url, const char *body, provider_response_t *re
 {
 	CURL *curl = curl_easy_init();
 	if (!curl) {
-		set_error(response, "Failed to initialize curl");
+		provider_set_error(response, "Failed to initialize curl");
 		return -1;
 	}
 	size_t key_len = s_oai_api_key ? strlen(s_oai_api_key) : 0;
@@ -143,25 +98,26 @@ static int do_request(const char *url, const char *body, provider_response_t *re
 	char *auth_header = malloc(auth_header_size);
 	if (!auth_header) {
 		curl_easy_cleanup(curl);
-		set_error(response, "Out of memory");
+		provider_set_error(response, "Out of memory");
 		return -1;
 	}
 	snprintf(auth_header, auth_header_size, "Authorization: Bearer %s", s_oai_api_key ? s_oai_api_key : "");
-	curl_buf_t resp_buf = { .buf = malloc(RESPONSE_BUF_INIT), .len = 0, .cap = RESPONSE_BUF_INIT };
+	provider_curl_buf_t resp_buf = { .buf = malloc(PROVIDER_RESP_BUF_INIT), .len = 0, .cap = PROVIDER_RESP_BUF_INIT };
 	if (!resp_buf.buf) {
 		free(auth_header);
 		curl_easy_cleanup(curl);
-		set_error(response, "Out of memory");
+		provider_set_error(response, "Out of memory");
 		return -1;
 	}
 	resp_buf.buf[0] = '\0';
 	struct curl_slist *headers = NULL;
 	headers = curl_slist_append(headers, "Content-Type: application/json");
 	headers = curl_slist_append(headers, auth_header);
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, provider_write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_buf);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)REQUEST_TIMEOUT_SEC);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, (long)CONNECT_TIMEOUT_SEC);
@@ -173,14 +129,14 @@ static int do_request(const char *url, const char *body, provider_response_t *re
 	curl_easy_cleanup(curl);
 	if (res != CURLE_OK) {
 		free(resp_buf.buf);
-		set_error(response, curl_easy_strerror(res));
+		provider_set_error(response, curl_easy_strerror(res));
 		return -1;
 	}
 	if (code < 200 || code >= 300) {
 		char errmsg[160];
 		snprintf(errmsg, sizeof(errmsg), "OpenAI API HTTP %ld", code);
 		free(resp_buf.buf);
-		set_error(response, errmsg);
+		provider_set_error(response, errmsg);
 		return -1;
 	}
 	int ret = parse_response_body(resp_buf.buf, response);
@@ -192,11 +148,11 @@ static int build_and_send(const provider_message_t *messages, size_t message_cou
                           const provider_tool_def_t *tools, size_t tool_count,
                           provider_response_t *response)
 {
-	if (!s_oai_cfg) { set_error(response, "OpenAI provider not initialized"); return -1; }
+	if (!s_oai_cfg) { provider_set_error(response, "OpenAI provider not initialized"); return -1; }
 	const char *endpoint = config_provider_openai_endpoint(s_oai_cfg);
 	if (!endpoint || !endpoint[0]) endpoint = "https://api.openai.com/v1/chat/completions";
 	cJSON *root = cJSON_CreateObject();
-	if (!root) { set_error(response, "Out of memory"); return -1; }
+	if (!root) { provider_set_error(response, "Out of memory"); return -1; }
 	const char *model = config_agent_model(s_oai_cfg);
 	int max_tokens = config_agent_max_tokens(s_oai_cfg);
 	if (!model) model = "gpt-4o-mini";
@@ -204,7 +160,7 @@ static int build_and_send(const provider_message_t *messages, size_t message_cou
 	cJSON_AddItemToObject(root, "model", cJSON_CreateString(model));
 	cJSON_AddItemToObject(root, "max_tokens", cJSON_CreateNumber(max_tokens));
 	cJSON *msg_arr = cJSON_CreateArray();
-	if (!msg_arr) { cJSON_Delete(root); set_error(response, "Out of memory"); return -1; }
+	if (!msg_arr) { cJSON_Delete(root); provider_set_error(response, "Out of memory"); return -1; }
 	for (size_t i = 0; i < message_count; i++) {
 		cJSON *msg = cJSON_CreateObject();
 		if (!msg) break;
@@ -264,7 +220,7 @@ static int build_and_send(const provider_message_t *messages, size_t message_cou
 	}
 	char *body = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
-	if (!body) { set_error(response, "Out of memory"); return -1; }
+	if (!body) { provider_set_error(response, "Out of memory"); return -1; }
 	int ret = do_request(endpoint, body, response);
 	cJSON_free(body);
 	return ret;
@@ -288,7 +244,7 @@ static int openai_chat(const provider_message_t *messages, size_t message_count,
                        provider_response_t *response)
 {
 	if (!s_oai_api_key || !s_oai_cfg) {
-		set_error(response, "OpenAI provider not initialized or API key missing");
+		provider_set_error(response, "OpenAI provider not initialized or API key missing");
 		return -1;
 	}
 	provider_response_clear(response);

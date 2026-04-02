@@ -85,7 +85,7 @@ static void set_string(char **dst, const char *src)
 	*dst = src ? strdup(src) : NULL;
 }
 
-static char *expand_tilde(const char *path)
+char *config_expand_tilde(const char *path)
 {
 	if (!path || path[0] != '~') return path ? strdup(path) : NULL;
 	const char *home = getenv("HOME");
@@ -322,27 +322,27 @@ static void expand_paths(config_t *cfg)
 {
 	char *s;
 	if (cfg->agent_soul_path && cfg->agent_soul_path[0] == '~') {
-		s = expand_tilde(cfg->agent_soul_path);
+		s = config_expand_tilde(cfg->agent_soul_path);
 		if (s) { set_string(&cfg->agent_soul_path, s); free(s); }
 	}
 	if (cfg->agent_identity_path && cfg->agent_identity_path[0] == '~') {
-		s = expand_tilde(cfg->agent_identity_path);
+		s = config_expand_tilde(cfg->agent_identity_path);
 		if (s) { set_string(&cfg->agent_identity_path, s); free(s); }
 	}
 	if (cfg->agent_user_path && cfg->agent_user_path[0] == '~') {
-		s = expand_tilde(cfg->agent_user_path);
+		s = config_expand_tilde(cfg->agent_user_path);
 		if (s) { set_string(&cfg->agent_user_path, s); free(s); }
 	}
 	if (cfg->memory_db_path && cfg->memory_db_path[0] == '~') {
-		s = expand_tilde(cfg->memory_db_path);
+		s = config_expand_tilde(cfg->memory_db_path);
 		if (s) { set_string(&cfg->memory_db_path, s); free(s); }
 	}
 	if (cfg->skills_dir && cfg->skills_dir[0] == '~') {
-		s = expand_tilde(cfg->skills_dir);
+		s = config_expand_tilde(cfg->skills_dir);
 		if (s) { set_string(&cfg->skills_dir, s); free(s); }
 	}
 	if (cfg->workspace_path && cfg->workspace_path[0] == '~') {
-		s = expand_tilde(cfg->workspace_path);
+		s = config_expand_tilde(cfg->workspace_path);
 		if (s) { set_string(&cfg->workspace_path, s); free(s); }
 	}
 }
@@ -362,7 +362,7 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 		ERRBUF_COPY(errbuf, errbufsz, "invalid arguments");
 		return -1;
 	}
-	char *resolved = expand_tilde(path);
+	char *resolved = config_expand_tilde(path);
 	if (!resolved) {
 		ERRBUF_COPY(errbuf, errbufsz, "failed to expand path");
 		return -1;

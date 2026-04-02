@@ -17,24 +17,40 @@
 #define DDG_URL "https://api.duckduckgo.com/?q=%s&format=json"
 #define BRAVE_URL "https://api.search.brave.com/res/v1/web/search?q=%s&count=10"
 #define RESP_BUF_SIZE (64 * 1024)
+#define RESP_BUF_MAX (256 * 1024)
 
 static const config_t *g_web_search_cfg;
 
 static const char WEB_SEARCH_PARAMS[] =
 	"{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"required\":[\"query\"]}";
 
+typedef struct {
+	char *buf;
+	size_t len;
+	size_t cap;
+} curl_buf_t;
+
 static size_t write_cb(const char *ptr, size_t size, size_t nmemb, void *userdata)
 {
+	curl_buf_t *b = (curl_buf_t *)userdata;
+	if (!b || !b->buf) return 0;
 	if (nmemb != 0 && size > SIZE_MAX / nmemb) return 0;
-	size_t total = size * nmemb;
-	char **buf = (char **)userdata;
-	size_t cur = *buf ? strlen(*buf) : 0;
-	char *new_buf = realloc(*buf, cur + total + 1);
-	if (!new_buf) return 0;
-	*buf = new_buf;
-	memcpy(new_buf + cur, ptr, total);
-	new_buf[cur + total] = '\0';
-	return total;
+	size_t n = size * nmemb;
+	size_t need = b->len + n + 1;
+	if (need > RESP_BUF_MAX) return 0;
+	if (need > b->cap) {
+		size_t new_cap = b->cap ? b->cap * 2 : RESP_BUF_SIZE;
+		while (new_cap < need && new_cap <= RESP_BUF_MAX) new_cap *= 2;
+		if (need > new_cap) return 0;
+		char *p = realloc(b->buf, new_cap);
+		if (!p) return 0;
+		b->buf = p;
+		b->cap = new_cap;
+	}
+	memcpy(b->buf + b->len, ptr, n);
+	b->len += n;
+	b->buf[b->len] = '\0';
+	return n;
 }
 
 void tool_web_search_set_config(const config_t *cfg)
@@ -71,7 +87,9 @@ static int search_brave(const char *query, char *result_buf, size_t max_len)
 	snprintf(auth_header, sizeof(auth_header), "X-Subscription-Token: %s", api_key);
 	struct curl_slist *headers = NULL;
 	headers = curl_slist_append(headers, auth_header);
-	char *resp = NULL;
+	curl_buf_t resp = { .buf = malloc(RESP_BUF_SIZE), .len = 0, .cap = RESP_BUF_SIZE };
+	if (!resp.buf) { curl_slist_free_all(headers); curl_easy_cleanup(curl); return -1; }
+	resp.buf[0] = '\0';
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -81,12 +99,12 @@ static int search_brave(const char *query, char *result_buf, size_t max_len)
 	CURLcode res = curl_easy_perform(curl);
 	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
-	if (res != CURLE_OK || !resp) {
-		free(resp);
+	if (res != CURLE_OK || resp.len == 0) {
+		free(resp.buf);
 		return -1;
 	}
-	cJSON *root = cJSON_Parse(resp);
-	free(resp);
+	cJSON *root = cJSON_Parse(resp.buf);
+	free(resp.buf);
 	if (!root || !cJSON_IsObject(root)) {
 		if (root) cJSON_Delete(root);
 		return -1;
@@ -124,7 +142,9 @@ static int search_duckduckgo(const char *query, char *result_buf, size_t max_len
 	if (!escaped) { curl_easy_cleanup(curl); return -1; }
 	snprintf(url, sizeof(url), DDG_URL, escaped);
 	curl_free(escaped);
-	char *resp = NULL;
+	curl_buf_t resp = { .buf = malloc(RESP_BUF_SIZE), .len = 0, .cap = RESP_BUF_SIZE };
+	if (!resp.buf) { curl_easy_cleanup(curl); return -1; }
+	resp.buf[0] = '\0';
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
@@ -132,12 +152,12 @@ static int search_duckduckgo(const char *query, char *result_buf, size_t max_len
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
 	CURLcode res = curl_easy_perform(curl);
 	curl_easy_cleanup(curl);
-	if (res != CURLE_OK || !resp) {
-		free(resp);
+	if (res != CURLE_OK || resp.len == 0) {
+		free(resp.buf);
 		return -1;
 	}
-	cJSON *ddg = cJSON_Parse(resp);
-	free(resp);
+	cJSON *ddg = cJSON_Parse(resp.buf);
+	free(resp.buf);
 	if (!ddg || !cJSON_IsObject(ddg)) {
 		if (ddg) cJSON_Delete(ddg);
 		return -1;

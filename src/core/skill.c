@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,7 +35,7 @@
 static char *g_skills_cache;
 static size_t g_skills_cache_len;
 static pthread_mutex_t g_skills_mutex = PTHREAD_MUTEX_INITIALIZER;
-static volatile int g_watch_running;
+static atomic_int g_watch_running;
 static pthread_t g_watch_thread;
 static const config_t *g_watch_cfg;
 static int g_watch_verbose;
