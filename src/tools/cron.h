@@ -41,6 +41,22 @@ const channel_t *channel_cron_get(void);
 /** Get the cron tool for agent (list, create, delete, toggle jobs). */
 const tool_t *tool_cron_get(void);
 
+/**
+ * Create a cron job (shared by tool and HTTP handler).
+ * If id_out[0] == '\0', a random ID is generated.
+ *
+ * @param schedule  Schedule string (interval:N, at:ts, or cron expression).
+ * @param message   Message to inject when job fires.
+ * @param channel   Target channel name (e.g., "cli"). NULL defaults to "cli".
+ * @param recipient Recipient ID. NULL defaults to "default".
+ * @param id_out    Buffer for job ID. If non-empty on entry, used as-is; else generated.
+ * @param id_size   Size of id_out buffer.
+ * @return 0 on success, -1 on error.
+ */
+int cron_create_job(const char *schedule, const char *message,
+                    const char *channel, const char *recipient,
+                    char *id_out, size_t id_size);
+
 #ifdef __cplusplus
 }
 #endif
