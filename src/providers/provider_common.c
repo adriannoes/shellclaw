@@ -52,7 +52,7 @@ size_t provider_write_cb(const char *ptr, size_t size, size_t nmemb, void *userd
 void provider_set_error(provider_response_t *response, const char *msg)
 {
 	response->error = 1;
-	response->content = msg ? strdup(msg) : NULL;
+	response->content = msg ? provider_dup_str(msg) : NULL;
 }
 
 char *provider_dup_str(const char *s)
