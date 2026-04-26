@@ -225,6 +225,83 @@ static int test_parse_bad_optional_type(void)
 	return 0;
 }
 
+static int test_to_jsonrpc_round_trip(void)
+{
+	asap_envelope_t env;
+	asap_envelope_t env2;
+	cJSON *err = NULL;
+	ASSERT(asap_envelope_parse(SAMPLE_TR, &env, &err) == 0);
+	cJSON *resp = asap_envelope_to_jsonrpc(&env, NULL);
+	ASSERT(resp != NULL);
+	cJSON *jv = cJSON_GetObjectItemCaseSensitive(resp, "jsonrpc");
+	ASSERT(jv && cJSON_IsString(jv) && strcmp(jv->valuestring, "2.0") == 0);
+	cJSON *idtop = cJSON_GetObjectItemCaseSensitive(resp, "id");
+	ASSERT(idtop && cJSON_IsNumber(idtop) && (int)idtop->valuedouble == 42);
+	cJSON *res = cJSON_GetObjectItemCaseSensitive(resp, "result");
+	ASSERT(res != NULL);
+	asap_envelope_init(&env2);
+	err = NULL;
+	ASSERT(asap_envelope_from_object(res, cJSON_CreateNull(), &env2, NULL) == 0);
+	ASSERT(strcmp(env2.id, env.id) == 0);
+	ASSERT(strcmp(env2.asap_version, env.asap_version) == 0);
+	ASSERT(strcmp(env2.sender, env.sender) == 0);
+	ASSERT(strcmp(env2.recipient, env.recipient) == 0);
+	ASSERT(strcmp(env2.payload_type, env.payload_type) == 0);
+	ASSERT(cJSON_Compare(env2.payload, env.payload, 1));
+	ASSERT(cJSON_Compare(cJSON_GetObjectItemCaseSensitive(res, "payload"), env.payload, 1));
+	asap_envelope_clear(&env2);
+	asap_envelope_clear(&env);
+	cJSON_Delete(resp);
+	return 0;
+}
+
+static int test_to_jsonrpc_id_override(void)
+{
+	asap_envelope_t env;
+	cJSON *err = NULL;
+	ASSERT(asap_envelope_parse(SAMPLE_TR, &env, &err) == 0);
+	cJSON *override = cJSON_CreateString("ext-id");
+	cJSON *resp = asap_envelope_to_jsonrpc(&env, override);
+	cJSON_Delete(override);
+	cJSON *idtop = cJSON_GetObjectItemCaseSensitive(resp, "id");
+	ASSERT(idtop && cJSON_IsString(idtop) && strcmp(idtop->valuestring, "ext-id") == 0);
+	asap_envelope_clear(&env);
+	cJSON_Delete(resp);
+	return 0;
+}
+
+static int test_to_jsonrpc_invalid_envelope(void)
+{
+	asap_envelope_t e;
+	asap_envelope_init(&e);
+	e.id = strdup("1");
+	e.asap_version = strdup("2.1");
+	e.sender = strdup("a");
+	e.recipient = strdup("b");
+	e.payload_type = strdup("task.request");
+	e.payload = NULL; /* invalid */
+	cJSON *r = asap_envelope_to_jsonrpc(&e, NULL);
+	ASSERT(r == NULL);
+	char *s = asap_envelope_to_jsonrpc_string(&e, NULL);
+	ASSERT(s == NULL);
+	asap_envelope_clear(&e);
+	return 0;
+}
+
+static int test_to_jsonrpc_string_alloc(void)
+{
+	asap_envelope_t env;
+	cJSON *err = NULL;
+	ASSERT(asap_envelope_parse(SAMPLE_TR, &env, &err) == 0);
+	char *s = asap_envelope_to_jsonrpc_string(&env, NULL);
+	ASSERT(s != NULL);
+	ASSERT(strstr(s, "\"result\"") != NULL);
+	ASSERT(strstr(s, "task.request") != NULL);
+	free(s);
+	asap_envelope_clear(&env);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -242,6 +319,10 @@ int main(int argc, char **argv)
 	if (test_parse_unknown_payload_type() != 0) { fprintf(stderr, "test_parse_unknown_payload_type failed\n"); failed++; }
 	if (test_parse_params_not_object() != 0) { fprintf(stderr, "test_parse_params_not_object failed\n"); failed++; }
 	if (test_parse_bad_optional_type() != 0) { fprintf(stderr, "test_parse_bad_optional_type failed\n"); failed++; }
+	if (test_to_jsonrpc_round_trip() != 0) { fprintf(stderr, "test_to_jsonrpc_round_trip failed\n"); failed++; }
+	if (test_to_jsonrpc_id_override() != 0) { fprintf(stderr, "test_to_jsonrpc_id_override failed\n"); failed++; }
+	if (test_to_jsonrpc_invalid_envelope() != 0) { fprintf(stderr, "test_to_jsonrpc_invalid_envelope failed\n"); failed++; }
+	if (test_to_jsonrpc_string_alloc() != 0) { fprintf(stderr, "test_to_jsonrpc_string_alloc failed\n"); failed++; }
 	if (failed == 0)
 		printf("test_asap_envelope: all tests passed\n");
 	return failed;

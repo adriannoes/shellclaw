@@ -142,6 +142,98 @@ static int optional_str_in_params(cJSON *params, const char *key, char **out, cJ
 	return 0;
 }
 
+int asap_envelope_from_object(const cJSON *obj, cJSON *rpc_id, asap_envelope_t *out, cJSON **err_out)
+{
+	cJSON *r = (cJSON *)obj;
+	cJSON *rid_temp = NULL;
+
+	if (err_out) *err_out = NULL;
+	if (!obj || !cJSON_IsObject(r) || !out) return -1;
+	if (!rpc_id) {
+		rid_temp = cJSON_CreateNull();
+		if (!rid_temp) return -1;
+		rpc_id = rid_temp;
+	}
+	asap_envelope_clear(out);
+	asap_envelope_init(out);
+	if (require_str_in_params(r, "id", &out->id, rpc_id, out, err_out) != 0) return -1;
+	if (require_str_in_params(r, "asap_version", &out->asap_version, rpc_id, out, err_out) != 0) return -1;
+	if (require_str_in_params(r, "sender", &out->sender, rpc_id, out, err_out) != 0) return -1;
+	if (require_str_in_params(r, "recipient", &out->recipient, rpc_id, out, err_out) != 0) return -1;
+	if (require_str_in_params(r, "payload_type", &out->payload_type, rpc_id, out, err_out) != 0) return -1;
+	if (!payload_type_is_allowed(out->payload_type))
+		return parse_fail(out, rpc_id, err_out, "Invalid params: unknown payload_type");
+	{
+		cJSON *pl = cJSON_GetObjectItemCaseSensitive(r, "payload");
+		if (pl == NULL || cJSON_IsNull(pl))
+			return parse_fail(out, rpc_id, err_out, "Invalid params: missing or null 'payload'");
+		out->payload = cJSON_Duplicate(pl, 1);
+		if (!out->payload) return parse_fail(out, rpc_id, err_out, "Invalid params: allocation failed");
+	}
+	if (optional_str_in_params(r, "correlation_id", &out->correlation_id, rpc_id, out, err_out) != 0) return -1;
+	if (optional_str_in_params(r, "trace_id", &out->trace_id, rpc_id, out, err_out) != 0) return -1;
+	if (optional_str_in_params(r, "timestamp", &out->timestamp, rpc_id, out, err_out) != 0) return -1;
+	if (rid_temp) cJSON_Delete(rid_temp);
+	return 0;
+}
+
+cJSON *asap_envelope_to_jsonrpc(const asap_envelope_t *env, cJSON *jsonrpc_id)
+{
+	if (!env) return NULL;
+	if (!env->id || !env->asap_version || !env->sender || !env->recipient || !env->payload_type) return NULL;
+	if (!env->payload || cJSON_IsNull(env->payload)) return NULL;
+	if (!payload_type_is_allowed(env->payload_type)) return NULL;
+	cJSON *id_src = jsonrpc_id ? jsonrpc_id : env->jsonrpc_request_id;
+	cJSON *root = cJSON_CreateObject();
+	if (!root) return NULL;
+	cJSON *result = cJSON_CreateObject();
+	if (!result) { cJSON_Delete(root); return NULL; }
+	if (!cJSON_AddStringToObject(root, "jsonrpc", "2.0") || !cJSON_AddStringToObject(result, "id", env->id) ||
+		!cJSON_AddStringToObject(result, "asap_version", env->asap_version) || !cJSON_AddStringToObject(result, "sender", env->sender) ||
+		!cJSON_AddStringToObject(result, "recipient", env->recipient) || !cJSON_AddStringToObject(result, "payload_type", env->payload_type)) {
+		cJSON_Delete(result);
+		cJSON_Delete(root);
+		return NULL;
+	}
+	{
+		cJSON *pl = cJSON_Duplicate(env->payload, 1);
+		if (!pl) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+		if (!cJSON_AddItemToObject(result, "payload", pl)) {
+			cJSON_Delete(pl);
+			cJSON_Delete(result);
+			cJSON_Delete(root);
+			return NULL;
+		}
+	}
+	if (env->correlation_id) {
+		if (!cJSON_AddStringToObject(result, "correlation_id", env->correlation_id)) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+	}
+	if (env->trace_id) {
+		if (!cJSON_AddStringToObject(result, "trace_id", env->trace_id)) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+	}
+	if (env->timestamp) {
+		if (!cJSON_AddStringToObject(result, "timestamp", env->timestamp)) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+	}
+	if (!cJSON_AddItemToObject(root, "result", result)) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+	if (id_src) {
+		cJSON *idcp = cJSON_Duplicate(id_src, 1);
+		if (!idcp) { cJSON_Delete(root); return NULL; }
+		if (!cJSON_AddItemToObject(root, "id", idcp)) { cJSON_Delete(idcp); cJSON_Delete(root); return NULL; }
+	} else {
+		if (!cJSON_AddNullToObject(root, "id")) { cJSON_Delete(root); return NULL; }
+	}
+	return root;
+}
+
+char *asap_envelope_to_jsonrpc_string(const asap_envelope_t *env, cJSON *jsonrpc_id)
+{
+	cJSON *root = asap_envelope_to_jsonrpc(env, jsonrpc_id);
+	if (!root) return NULL;
+	char *s = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	return s;
+}
+
 int asap_envelope_parse(const char *json, asap_envelope_t *out, cJSON **err_out)
 {
 	if (err_out) *err_out = NULL;
@@ -173,51 +265,7 @@ int asap_envelope_parse(const char *json, asap_envelope_t *out, cJSON **err_out)
 		cJSON_Delete(root);
 		return parse_fail(out, rpc_id, err_out, "Invalid Request: params must be an object");
 	}
-	if (require_str_in_params(params, "id", &out->id, rpc_id, out, err_out) != 0) {
-		cJSON_Delete(root);
-		return -1;
-	}
-	if (require_str_in_params(params, "asap_version", &out->asap_version, rpc_id, out, err_out) != 0) {
-		cJSON_Delete(root);
-		return -1;
-	}
-	if (require_str_in_params(params, "sender", &out->sender, rpc_id, out, err_out) != 0) {
-		cJSON_Delete(root);
-		return -1;
-	}
-	if (require_str_in_params(params, "recipient", &out->recipient, rpc_id, out, err_out) != 0) {
-		cJSON_Delete(root);
-		return -1;
-	}
-	if (require_str_in_params(params, "payload_type", &out->payload_type, rpc_id, out, err_out) != 0) {
-		cJSON_Delete(root);
-		return -1;
-	}
-	if (!payload_type_is_allowed(out->payload_type)) {
-		cJSON_Delete(root);
-		return parse_fail(out, rpc_id, err_out, "Invalid params: unknown payload_type");
-	}
-	{
-		cJSON *pl = cJSON_GetObjectItemCaseSensitive(params, "payload");
-		if (pl == NULL || cJSON_IsNull(pl)) {
-			cJSON_Delete(root);
-			return parse_fail(out, rpc_id, err_out, "Invalid params: missing or null 'payload'");
-		}
-		out->payload = cJSON_Duplicate(pl, 1);
-		if (!out->payload) {
-			cJSON_Delete(root);
-			return parse_fail(out, rpc_id, err_out, "Invalid params: allocation failed");
-		}
-	}
-	if (optional_str_in_params(params, "correlation_id", &out->correlation_id, rpc_id, out, err_out) != 0) {
-		cJSON_Delete(root);
-		return -1;
-	}
-	if (optional_str_in_params(params, "trace_id", &out->trace_id, rpc_id, out, err_out) != 0) {
-		cJSON_Delete(root);
-		return -1;
-	}
-	if (optional_str_in_params(params, "timestamp", &out->timestamp, rpc_id, out, err_out) != 0) {
+	if (asap_envelope_from_object(params, rpc_id, out, err_out) != 0) {
 		cJSON_Delete(root);
 		return -1;
 	}

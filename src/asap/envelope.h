@@ -64,6 +64,38 @@ void asap_envelope_clear(asap_envelope_t *env);
 int asap_envelope_parse(const char *json, asap_envelope_t *out, cJSON **err_out);
 
 /**
+ * Load envelope fields from a plain JSON object (same key layout as
+ * JSON-RPC @c params / @c result). Used for result bodies and tests.
+ * On failure clears @p out and may set *err_out to a -32602 JSON-RPC
+ * error. On success, @p out owns strings and payload; does not set
+ * jsonrpc_request_id.
+ *
+ * @param obj     Object with ASAP envelope members (not NULL)
+ * @param rpc_id  Request id for error echo (not consumed)
+ * @param out     Envelope; must be zeroed (#asap_envelope_init) or cleared first
+ *                because the implementation clears the struct on entry.
+ * @param err_out Optional error root
+ * @return        0 on success, -1 on error
+ */
+int asap_envelope_from_object(const cJSON *obj, cJSON *rpc_id, asap_envelope_t *out, cJSON **err_out);
+
+/**
+ * Build a JSON-RPC 2.0 success response: @c { "jsonrpc": "2.0", "result": { ...envelope... }, "id": ... }.
+ * The @a result object mirrors the request @c params shape. If @a jsonrpc_id
+ * is NULL, uses @c env->jsonrpc_request_id. Caller cJSON_Deletes the return
+ * or uses #asap_envelope_to_jsonrpc_string.
+ *
+ * @return Root object, or NULL if required fields are missing/invalid
+ */
+cJSON *asap_envelope_to_jsonrpc(const asap_envelope_t *env, cJSON *jsonrpc_id);
+
+/**
+ * Same as #asap_envelope_to_jsonrpc, then cJSON_PrintUnformatted. Caller must free(3) the string.
+ * @return Allocated string, or NULL
+ */
+char *asap_envelope_to_jsonrpc_string(const asap_envelope_t *env, cJSON *jsonrpc_id);
+
+/**
  * Build a JSON-RPC 2.0 error object (top-level) with a standard error
  * body. The returned root must be freed with cJSON_Delete, or use
  * cJSON_Print and free the string.
