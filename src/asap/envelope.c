@@ -5,6 +5,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "asap/envelope.h"
+#include <stdio.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,6 +27,10 @@ static void str_free(char **p)
 void asap_envelope_clear(asap_envelope_t *env)
 {
 	if (!env) return;
+	if (env->jsonrpc_request_id) {
+		cJSON_Delete(env->jsonrpc_request_id);
+		env->jsonrpc_request_id = NULL;
+	}
 	str_free(&env->id);
 	str_free(&env->asap_version);
 	str_free(&env->sender);
@@ -69,4 +75,153 @@ cJSON *asap_jsonrpc_error(int code, const char *message, cJSON *id)
 		}
 	}
 	return root;
+}
+
+/** ASAP v2.1 payload_type values (PRD §4.1). */
+static int payload_type_is_allowed(const char *t)
+{
+	static const char *const allowed[] = {
+		"task.request", "task.response", "task.cancel",
+		"state.query", "mcp.tool_call", "mcp.tool_result"
+	};
+	if (!t) return 0;
+	for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
+		if (strcmp(t, allowed[i]) == 0) return 1;
+	}
+	return 0;
+}
+
+static int parse_fail(asap_envelope_t *out, cJSON *rpc_id_owned, cJSON **err_out, const char *msg)
+{
+	asap_envelope_clear(out);
+	asap_envelope_init(out);
+	if (err_out && msg) {
+		cJSON *e = asap_jsonrpc_error(-32602, msg, rpc_id_owned);
+		*err_out = e;
+	} else {
+		(void)err_out;
+	}
+	if (rpc_id_owned) cJSON_Delete(rpc_id_owned);
+	return -1;
+}
+
+static cJSON *dup_request_id(cJSON *root)
+{
+	cJSON *id_item = cJSON_GetObjectItemCaseSensitive(root, "id");
+	if (cJSON_HasObjectItem(root, "id")) {
+		cJSON *d = cJSON_Duplicate(id_item, 1);
+		return d ? d : NULL;
+	}
+	return cJSON_CreateNull();
+}
+
+static int require_str_in_params(cJSON *params, const char *key, char **out, cJSON *rpc_id,
+		asap_envelope_t *env, cJSON **err_out)
+{
+	char errbuf[120];
+	cJSON *j = cJSON_GetObjectItemCaseSensitive(params, key);
+	if (!j || !cJSON_IsString(j) || !j->valuestring) {
+		snprintf(errbuf, sizeof errbuf, "Invalid params: missing or bad type for '%.48s'", key);
+		return parse_fail(env, rpc_id, err_out, errbuf);
+	}
+	*out = strdup(j->valuestring);
+	if (!*out) return parse_fail(env, rpc_id, err_out, "Invalid params: allocation failed");
+	return 0;
+}
+
+static int optional_str_in_params(cJSON *params, const char *key, char **out, cJSON *rpc_id,
+		asap_envelope_t *env, cJSON **err_out)
+{
+	*out = NULL;
+	if (!cJSON_HasObjectItem(params, key)) return 0;
+	cJSON *j = cJSON_GetObjectItemCaseSensitive(params, key);
+	if (!cJSON_IsString(j) || !j->valuestring)
+		return parse_fail(env, rpc_id, err_out, "Invalid params: optional field has wrong type");
+	*out = strdup(j->valuestring);
+	if (!*out) return parse_fail(env, rpc_id, err_out, "Invalid params: allocation failed");
+	return 0;
+}
+
+int asap_envelope_parse(const char *json, asap_envelope_t *out, cJSON **err_out)
+{
+	if (err_out) *err_out = NULL;
+	if (!json || !out) return -1;
+	asap_envelope_init(out);
+	cJSON *root = cJSON_Parse(json);
+	if (!root) {
+		if (err_out)
+			*err_out = asap_jsonrpc_error(-32700, "Parse error", cJSON_CreateNull());
+		return -1;
+	}
+	cJSON *rpc_id = dup_request_id(root);
+	if (!rpc_id) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	cJSON *jrpc = cJSON_GetObjectItemCaseSensitive(root, "jsonrpc");
+	if (!cJSON_IsString(jrpc) || !jrpc->valuestring || strcmp(jrpc->valuestring, "2.0") != 0) {
+		cJSON_Delete(root);
+		return parse_fail(out, rpc_id, err_out, "Invalid Request: jsonrpc must be \"2.0\"");
+	}
+	cJSON *meth = cJSON_GetObjectItemCaseSensitive(root, "method");
+	if (!cJSON_IsString(meth) || !meth->valuestring || meth->valuestring[0] == '\0') {
+		cJSON_Delete(root);
+		return parse_fail(out, rpc_id, err_out, "Invalid Request: method must be a non-empty string");
+	}
+	cJSON *params = cJSON_GetObjectItemCaseSensitive(root, "params");
+	if (!params || !cJSON_IsObject(params)) {
+		cJSON_Delete(root);
+		return parse_fail(out, rpc_id, err_out, "Invalid Request: params must be an object");
+	}
+	if (require_str_in_params(params, "id", &out->id, rpc_id, out, err_out) != 0) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	if (require_str_in_params(params, "asap_version", &out->asap_version, rpc_id, out, err_out) != 0) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	if (require_str_in_params(params, "sender", &out->sender, rpc_id, out, err_out) != 0) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	if (require_str_in_params(params, "recipient", &out->recipient, rpc_id, out, err_out) != 0) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	if (require_str_in_params(params, "payload_type", &out->payload_type, rpc_id, out, err_out) != 0) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	if (!payload_type_is_allowed(out->payload_type)) {
+		cJSON_Delete(root);
+		return parse_fail(out, rpc_id, err_out, "Invalid params: unknown payload_type");
+	}
+	{
+		cJSON *pl = cJSON_GetObjectItemCaseSensitive(params, "payload");
+		if (pl == NULL || cJSON_IsNull(pl)) {
+			cJSON_Delete(root);
+			return parse_fail(out, rpc_id, err_out, "Invalid params: missing or null 'payload'");
+		}
+		out->payload = cJSON_Duplicate(pl, 1);
+		if (!out->payload) {
+			cJSON_Delete(root);
+			return parse_fail(out, rpc_id, err_out, "Invalid params: allocation failed");
+		}
+	}
+	if (optional_str_in_params(params, "correlation_id", &out->correlation_id, rpc_id, out, err_out) != 0) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	if (optional_str_in_params(params, "trace_id", &out->trace_id, rpc_id, out, err_out) != 0) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	if (optional_str_in_params(params, "timestamp", &out->timestamp, rpc_id, out, err_out) != 0) {
+		cJSON_Delete(root);
+		return -1;
+	}
+	out->jsonrpc_request_id = rpc_id;
+	cJSON_Delete(root);
+	return 0;
 }
