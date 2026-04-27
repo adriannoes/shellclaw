@@ -68,6 +68,8 @@ int config_asap_enabled(const config_t *c);
 const char *config_asap_agent_urn(const config_t *c);
 const char *config_asap_agent_name(const config_t *c);
 const char *config_asap_registry_url(const config_t *c);
+/** HTTP(S) request timeout in seconds for ASAP client calls (outbound). Default 30. */
+int config_asap_client_timeout_sec(const config_t *c);
 
 int config_heartbeat_enabled(const config_t *c);
 int config_heartbeat_interval_minutes(const config_t *c);

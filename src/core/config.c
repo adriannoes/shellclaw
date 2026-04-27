@@ -73,6 +73,7 @@ struct config {
 	char *asap_agent_urn;
 	char *asap_agent_name;
 	char *asap_registry_url;
+	int asap_client_timeout_sec;
 	int heartbeat_enabled;
 	int heartbeat_interval_minutes;
 	char *heartbeat_default_channel;
@@ -212,6 +213,8 @@ static int parse_asap(const toml_table_t *root, config_t *cfg)
 	if (d.ok) { set_string(&cfg->asap_agent_name, d.u.s); free(d.u.s); }
 	d = toml_string_in(asap, "registry_url");
 	if (d.ok) { set_string(&cfg->asap_registry_url, d.u.s); free(d.u.s); }
+	d = toml_int_in(asap, "client_timeout_sec");
+	if (d.ok && d.u.i > 0) cfg->asap_client_timeout_sec = (int)d.u.i;
 	return 0;
 }
 
@@ -501,6 +504,7 @@ int config_asap_enabled(const config_t *c) { return c ? c->asap_enabled : 0; }
 const char *config_asap_agent_urn(const config_t *c) { return c && c->asap_agent_urn ? c->asap_agent_urn : "urn:asap:agent:shellclaw"; }
 const char *config_asap_agent_name(const config_t *c) { return c && c->asap_agent_name ? c->asap_agent_name : "ShellClaw"; }
 const char *config_asap_registry_url(const config_t *c) { return c ? c->asap_registry_url : NULL; }
+int config_asap_client_timeout_sec(const config_t *c) { if (!c || c->asap_client_timeout_sec <= 0) return 30; return c->asap_client_timeout_sec; }
 int config_heartbeat_enabled(const config_t *c) { return c ? c->heartbeat_enabled : 0; }
 int config_heartbeat_interval_minutes(const config_t *c) { return c && c->heartbeat_interval_minutes > 0 ? c->heartbeat_interval_minutes : 30; }
 const char *config_heartbeat_default_channel(const config_t *c) { return c && c->heartbeat_default_channel ? c->heartbeat_default_channel : "cli"; }
