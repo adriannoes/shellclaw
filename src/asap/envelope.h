@@ -96,6 +96,22 @@ cJSON *asap_envelope_to_jsonrpc(const asap_envelope_t *env, cJSON *jsonrpc_id);
 char *asap_envelope_to_jsonrpc_string(const asap_envelope_t *env, cJSON *jsonrpc_id);
 
 /**
+ * Build JSON-RPC 2.0 @e request: @c { "jsonrpc": "2.0", "method", "params", "id" }.
+ * @param method  e.g. @c "asap.send"; if NULL or empty, uses @c "asap.send"
+ */
+cJSON *asap_envelope_to_jsonrpc_request(const asap_envelope_t *env, cJSON *jsonrpc_id, const char *method);
+
+char *asap_envelope_to_jsonrpc_request_string(const asap_envelope_t *env, cJSON *jsonrpc_id, const char *method);
+
+/**
+ * Parse a JSON-RPC 2.0 @e success response (HTTP body): @c "result" object with envelope fields;
+ * @c "error" present yields failure. Sets @a out as #asap_envelope_from_object on @c result and
+ * copies @c "id" to @a out->jsonrpc_request_id.
+ * @return 0 on success; -1 and optional @a errmsg (truncated) on failure
+ */
+int asap_envelope_parse_jsonrpc_response(const char *json, asap_envelope_t *out, char *errmsg, size_t errlen);
+
+/**
  * Build a JSON-RPC 2.0 error object (top-level) with a standard error
  * body. The returned root must be freed with cJSON_Delete, or use
  * cJSON_Print and free the string.

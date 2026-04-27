@@ -177,44 +177,56 @@ int asap_envelope_from_object(const cJSON *obj, cJSON *rpc_id, asap_envelope_t *
 	return 0;
 }
 
-cJSON *asap_envelope_to_jsonrpc(const asap_envelope_t *env, cJSON *jsonrpc_id)
+/** Envelope key/value object for params or result (same shape). */
+static cJSON *envelope_fields_cjson(const asap_envelope_t *env)
 {
+	cJSON *o;
 	if (!env) return NULL;
 	if (!env->id || !env->asap_version || !env->sender || !env->recipient || !env->payload_type) return NULL;
 	if (!env->payload || cJSON_IsNull(env->payload)) return NULL;
 	if (!payload_type_is_allowed(env->payload_type)) return NULL;
-	cJSON *id_src = jsonrpc_id ? jsonrpc_id : env->jsonrpc_request_id;
-	cJSON *root = cJSON_CreateObject();
-	if (!root) return NULL;
-	cJSON *result = cJSON_CreateObject();
-	if (!result) { cJSON_Delete(root); return NULL; }
-	if (!cJSON_AddStringToObject(root, "jsonrpc", "2.0") || !cJSON_AddStringToObject(result, "id", env->id) ||
-		!cJSON_AddStringToObject(result, "asap_version", env->asap_version) || !cJSON_AddStringToObject(result, "sender", env->sender) ||
-		!cJSON_AddStringToObject(result, "recipient", env->recipient) || !cJSON_AddStringToObject(result, "payload_type", env->payload_type)) {
-		cJSON_Delete(result);
-		cJSON_Delete(root);
+	o = cJSON_CreateObject();
+	if (!o) return NULL;
+	if (!cJSON_AddStringToObject(o, "id", env->id) || !cJSON_AddStringToObject(o, "asap_version", env->asap_version) ||
+		!cJSON_AddStringToObject(o, "sender", env->sender) || !cJSON_AddStringToObject(o, "recipient", env->recipient) ||
+		!cJSON_AddStringToObject(o, "payload_type", env->payload_type)) {
+		cJSON_Delete(o);
 		return NULL;
 	}
 	{
 		cJSON *pl = cJSON_Duplicate(env->payload, 1);
-		if (!pl) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
-		if (!cJSON_AddItemToObject(result, "payload", pl)) {
+		if (!pl) { cJSON_Delete(o); return NULL; }
+		if (!cJSON_AddItemToObject(o, "payload", pl)) {
 			cJSON_Delete(pl);
-			cJSON_Delete(result);
-			cJSON_Delete(root);
+			cJSON_Delete(o);
 			return NULL;
 		}
 	}
 	if (env->correlation_id) {
-		if (!cJSON_AddStringToObject(result, "correlation_id", env->correlation_id)) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+		if (!cJSON_AddStringToObject(o, "correlation_id", env->correlation_id)) { cJSON_Delete(o); return NULL; }
 	}
 	if (env->trace_id) {
-		if (!cJSON_AddStringToObject(result, "trace_id", env->trace_id)) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+		if (!cJSON_AddStringToObject(o, "trace_id", env->trace_id)) { cJSON_Delete(o); return NULL; }
 	}
 	if (env->timestamp) {
-		if (!cJSON_AddStringToObject(result, "timestamp", env->timestamp)) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+		if (!cJSON_AddStringToObject(o, "timestamp", env->timestamp)) { cJSON_Delete(o); return NULL; }
 	}
-	if (!cJSON_AddItemToObject(root, "result", result)) { cJSON_Delete(result); cJSON_Delete(root); return NULL; }
+	return o;
+}
+
+cJSON *asap_envelope_to_jsonrpc(const asap_envelope_t *env, cJSON *jsonrpc_id)
+{
+	cJSON *id_src = jsonrpc_id ? jsonrpc_id : env->jsonrpc_request_id;
+	cJSON *result = envelope_fields_cjson(env);
+	cJSON *root;
+	if (!result) return NULL;
+	root = cJSON_CreateObject();
+	if (!root) { cJSON_Delete(result); return NULL; }
+	if (!cJSON_AddStringToObject(root, "jsonrpc", "2.0") || !cJSON_AddItemToObject(root, "result", result)) {
+		cJSON_Delete(result);
+		cJSON_Delete(root);
+		return NULL;
+	}
 	if (id_src) {
 		cJSON *idcp = cJSON_Duplicate(id_src, 1);
 		if (!idcp) { cJSON_Delete(root); return NULL; }
@@ -232,6 +244,98 @@ char *asap_envelope_to_jsonrpc_string(const asap_envelope_t *env, cJSON *jsonrpc
 	char *s = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
 	return s;
+}
+
+cJSON *asap_envelope_to_jsonrpc_request(const asap_envelope_t *env, cJSON *jsonrpc_id, const char *method)
+{
+	cJSON *params = envelope_fields_cjson(env);
+	cJSON *root;
+	const char *m = (method && method[0] != '\0') ? method : "asap.send";
+	cJSON *id_src = jsonrpc_id ? jsonrpc_id : env->jsonrpc_request_id;
+	if (!params) return NULL;
+	root = cJSON_CreateObject();
+	if (!root) { cJSON_Delete(params); return NULL; }
+	if (!cJSON_AddStringToObject(root, "jsonrpc", "2.0") || !cJSON_AddStringToObject(root, "method", m) ||
+		!cJSON_AddItemToObject(root, "params", params)) {
+		cJSON_Delete(params);
+		cJSON_Delete(root);
+		return NULL;
+	}
+	if (id_src) {
+		cJSON *idcp = cJSON_Duplicate(id_src, 1);
+		if (!idcp) { cJSON_Delete(root); return NULL; }
+		if (!cJSON_AddItemToObject(root, "id", idcp)) { cJSON_Delete(idcp); cJSON_Delete(root); return NULL; }
+	} else {
+		if (!cJSON_AddNullToObject(root, "id")) { cJSON_Delete(root); return NULL; }
+	}
+	return root;
+}
+
+char *asap_envelope_to_jsonrpc_request_string(const asap_envelope_t *env, cJSON *jsonrpc_id, const char *method)
+{
+	cJSON *root = asap_envelope_to_jsonrpc_request(env, jsonrpc_id, method);
+	if (!root) return NULL;
+	char *s = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	return s;
+}
+
+int asap_envelope_parse_jsonrpc_response(const char *json, asap_envelope_t *out, char *errmsg, size_t errlen)
+{
+	if (errmsg && errlen) errmsg[0] = '\0';
+	if (!json || !out) return -1;
+	asap_envelope_init(out);
+	cJSON *root = cJSON_Parse(json);
+	if (!root) {
+		if (errmsg && errlen) (void)snprintf(errmsg, errlen, "Invalid JSON in response");
+		return -1;
+	}
+	cJSON *jrpc = cJSON_GetObjectItemCaseSensitive(root, "jsonrpc");
+	if (!cJSON_IsString(jrpc) || !jrpc->valuestring || strcmp(jrpc->valuestring, "2.0") != 0) {
+		if (errmsg && errlen) (void)snprintf(errmsg, errlen, "Invalid response: jsonrpc");
+		cJSON_Delete(root);
+		return -1;
+	}
+	{
+		cJSON *er = cJSON_GetObjectItemCaseSensitive(root, "error");
+		if (er && cJSON_IsObject(er)) {
+			cJSON *em = cJSON_GetObjectItemCaseSensitive(er, "message");
+			const char *e = cJSON_IsString(em) ? em->valuestring : "JSON-RPC error";
+			if (errmsg && errlen) (void)snprintf(errmsg, errlen, "%s", e);
+			cJSON_Delete(root);
+			return -1;
+		}
+	}
+	{
+		cJSON *res = cJSON_GetObjectItemCaseSensitive(root, "result");
+		cJSON *rpc_id;
+		cJSON *tmp_err = NULL;
+		if (!res || !cJSON_IsObject(res)) {
+			if (errmsg && errlen) (void)snprintf(errmsg, errlen, "Invalid response: missing result");
+			cJSON_Delete(root);
+			return -1;
+		}
+		rpc_id = dup_request_id(root);
+		if (!rpc_id) {
+			cJSON_Delete(root);
+			if (errmsg && errlen) (void)snprintf(errmsg, errlen, "Out of memory");
+			return -1;
+		}
+		if (asap_envelope_from_object(res, rpc_id, out, &tmp_err) != 0) {
+			if (tmp_err) {
+				cJSON *e = cJSON_GetObjectItem(tmp_err, "error");
+				cJSON *m = e ? cJSON_GetObjectItem(e, "message") : NULL;
+				if (errmsg && errlen && cJSON_IsString(m) && m->valuestring) (void)snprintf(errmsg, errlen, "%s", m->valuestring);
+				cJSON_Delete(tmp_err);
+			} else if (errmsg && errlen) (void)snprintf(errmsg, errlen, "Invalid result envelope");
+			cJSON_Delete(rpc_id);
+			cJSON_Delete(root);
+			return -1;
+		}
+		out->jsonrpc_request_id = rpc_id;
+		cJSON_Delete(root);
+		return 0;
+	}
 }
 
 int asap_envelope_parse(const char *json, asap_envelope_t *out, cJSON **err_out)
