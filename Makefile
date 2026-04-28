@@ -176,10 +176,10 @@ src/gateway/ui_assets.h: web/index.html web/css/style.css web/js/app.js scripts/
 src/gateway/static.o: src/gateway/static.c src/gateway/static.h src/gateway/ui_assets.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/gateway/static.c
 
-$(MANIFEST_O): src/asap/manifest.c src/asap/manifest.h src/core/config.h src/core/skill.h
+$(MANIFEST_O): src/asap/manifest.c src/asap/manifest.h src/asap/asap_version.h src/core/config.h src/core/skill.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/manifest.c
 
-$(ENVELOPE_O): src/asap/envelope.c src/asap/envelope.h vendor/cJSON/cJSON.h
+$(ENVELOPE_O): src/asap/envelope.c src/asap/envelope.h src/asap/asap_version.h vendor/cJSON/cJSON.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/envelope.c
 
 $(ULID_O): src/asap/ulid.c src/asap/ulid.h

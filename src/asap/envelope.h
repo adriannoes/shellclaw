@@ -5,6 +5,7 @@
 #ifndef SHELLCLAW_ASAP_ENVELOPE_H
 #define SHELLCLAW_ASAP_ENVELOPE_H
 
+#include "asap/asap_version.h"
 #include "cJSON.h"
 #include <stddef.h>
 

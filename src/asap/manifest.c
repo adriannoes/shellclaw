@@ -5,13 +5,13 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "asap/manifest.h"
+#include "asap/asap_version.h"
 #include "core/config.h"
 #include "core/skill.h"
 #include "cJSON.h"
 #include <stdlib.h>
 #include <string.h>
 
-#define ASAP_VERSION "0.2.0"
 #define MAX_SKILL_NAMES 64
 
 char *manifest_build_json(const config_t *cfg)
@@ -22,7 +22,7 @@ char *manifest_build_json(const config_t *cfg)
 	const char *name = config_asap_agent_name(cfg);
 	cJSON_AddItemToObject(root, "id", cJSON_CreateString(urn));
 	cJSON_AddItemToObject(root, "name", cJSON_CreateString(name));
-	cJSON_AddItemToObject(root, "version", cJSON_CreateString(ASAP_VERSION));
+	cJSON_AddItemToObject(root, "version", cJSON_CreateString(ASAP_PROTOCOL_VERSION));
 	cJSON *skills = cJSON_CreateArray();
 	if (!skills) { cJSON_Delete(root); return NULL; }
 	cJSON_AddItemToObject(root, "skills", skills);

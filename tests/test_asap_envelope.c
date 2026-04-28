@@ -12,6 +12,12 @@
 
 #define ASSERT(c) do { if (!(c)) { fprintf(stderr, "FAIL: %s:%d %s\n", __FILE__, __LINE__, #c); return 1; } } while (0)
 
+static int test_asap_protocol_version_constant(void)
+{
+	ASSERT(strcmp(ASAP_PROTOCOL_VERSION, "2.1") == 0);
+	return 0;
+}
+
 static int test_init_clear_frees_payload(void)
 {
 	asap_envelope_t env;
@@ -307,6 +313,7 @@ int main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 	int failed = 0;
+	if (test_asap_protocol_version_constant() != 0) { fprintf(stderr, "test_asap_protocol_version_constant failed\n"); failed++; }
 	if (test_init_clear_frees_payload() != 0) { fprintf(stderr, "test_init_clear_frees_payload failed\n"); failed++; }
 	if (test_clear_idempotent() != 0) { fprintf(stderr, "test_clear_idempotent failed\n"); failed++; }
 	if (test_jsonrpc_error_shape() != 0) { fprintf(stderr, "test_jsonrpc_error_shape failed\n"); failed++; }
