@@ -42,6 +42,8 @@
 #define ENV_GATEWAY_HOST         "SHELLCLAW_GATEWAY_HOST"
 #define ENV_GATEWAY_PORT         "SHELLCLAW_GATEWAY_PORT"
 #define ENV_GATEWAY_ALLOW_BIND   "SHELLCLAW_GATEWAY_ALLOW_BIND_ALL"
+#define ENV_ASAP_REGISTRY_URL         "SHELLCLAW_ASAP_REGISTRY_URL"
+#define ENV_ASAP_REVOCATION_LIST_URL  "SHELLCLAW_ASAP_REVOCATION_LIST_URL"
 
 struct config {
 	char *agent_model;
@@ -73,6 +75,7 @@ struct config {
 	char *asap_agent_urn;
 	char *asap_agent_name;
 	char *asap_registry_url;
+	char *asap_revocation_list_url;
 	int asap_client_timeout_sec;
 	int heartbeat_enabled;
 	int heartbeat_interval_minutes;
@@ -213,6 +216,8 @@ static int parse_asap(const toml_table_t *root, config_t *cfg)
 	if (d.ok) { set_string(&cfg->asap_agent_name, d.u.s); free(d.u.s); }
 	d = toml_string_in(asap, "registry_url");
 	if (d.ok) { set_string(&cfg->asap_registry_url, d.u.s); free(d.u.s); }
+	d = toml_string_in(asap, "revocation_list_url");
+	if (d.ok) { set_string(&cfg->asap_revocation_list_url, d.u.s); free(d.u.s); }
 	d = toml_int_in(asap, "client_timeout_sec");
 	if (d.ok && d.u.i > 0) cfg->asap_client_timeout_sec = (int)d.u.i;
 	return 0;
@@ -319,6 +324,10 @@ static void apply_env_overrides(config_t *cfg)
 		cfg->gateway_allow_bind_all = 1;
 	else if (v && (strcmp(v, "0") == 0 || strcasecmp(v, "false") == 0 || strcasecmp(v, "no") == 0))
 		cfg->gateway_allow_bind_all = 0;
+	v = getenv(ENV_ASAP_REGISTRY_URL);
+	if (v) set_string(&cfg->asap_registry_url, v);
+	v = getenv(ENV_ASAP_REVOCATION_LIST_URL);
+	if (v) set_string(&cfg->asap_revocation_list_url, v);
 }
 
 static void expand_paths(config_t *cfg)
@@ -467,6 +476,7 @@ void config_free(config_t *cfg)
 	set_string(&cfg->asap_agent_urn, NULL);
 	set_string(&cfg->asap_agent_name, NULL);
 	set_string(&cfg->asap_registry_url, NULL);
+	set_string(&cfg->asap_revocation_list_url, NULL);
 	set_string(&cfg->heartbeat_default_channel, NULL);
 	set_string(&cfg->brave_api_key_env, NULL);
 	free(cfg);
@@ -504,6 +514,7 @@ int config_asap_enabled(const config_t *c) { return c ? c->asap_enabled : 0; }
 const char *config_asap_agent_urn(const config_t *c) { return c && c->asap_agent_urn ? c->asap_agent_urn : "urn:asap:agent:shellclaw"; }
 const char *config_asap_agent_name(const config_t *c) { return c && c->asap_agent_name ? c->asap_agent_name : "ShellClaw"; }
 const char *config_asap_registry_url(const config_t *c) { return c ? c->asap_registry_url : NULL; }
+const char *config_asap_revocation_list_url(const config_t *c) { return c ? c->asap_revocation_list_url : NULL; }
 int config_asap_client_timeout_sec(const config_t *c) { if (!c || c->asap_client_timeout_sec <= 0) return 30; return c->asap_client_timeout_sec; }
 int config_heartbeat_enabled(const config_t *c) { return c ? c->heartbeat_enabled : 0; }
 int config_heartbeat_interval_minutes(const config_t *c) { return c && c->heartbeat_interval_minutes > 0 ? c->heartbeat_interval_minutes : 30; }
