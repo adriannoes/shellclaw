@@ -75,6 +75,7 @@ MANIFEST_O := src/asap/manifest.o
 ENVELOPE_O := src/asap/envelope.o
 ULID_O := src/asap/ulid.o
 CLIENT_O := src/asap/client.o
+ASAP_REGISTRY_O := src/asap/registry.o
 # Provider objects built with SHELLCLAW_TEST for negative/parse tests (CR-21)
 ANTHROPIC_TEST_O := $(BINDIR)/anthropic_test.o
 OPENAI_TEST_O    := $(BINDIR)/openai_test.o
@@ -94,9 +95,9 @@ debug:
 release:
 	$(MAKE) BUILD=release shellclaw
 
-shellclaw: $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O)
+shellclaw: $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O) $(LDLIBS) $(GATEWAY_LDLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O) $(LDLIBS) $(GATEWAY_LDLIBS)
 	$(DSYM_SCRIPT)
 	@if [ "$(BUILD)" = "release" ]; then strip -s $(BINDIR)/$@ 2>/dev/null || true; fi
 
@@ -187,6 +188,9 @@ $(ULID_O): src/asap/ulid.c src/asap/ulid.h
 
 $(CLIENT_O): src/asap/client.c src/asap/client.h src/asap/envelope.h src/asap/ulid.h src/core/config.h src/providers/provider.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/client.c
+
+$(ASAP_REGISTRY_O): src/asap/registry.c src/asap/registry.h src/asap/client.h src/providers/provider.h vendor/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/registry.c
 
 $(HTTP_O): src/gateway/http.c src/gateway/http.h src/gateway/auth.h src/gateway/ws.h src/gateway/static.h src/asap/manifest.h src/core/config.h src/core/memory.h src/core/skill.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/gateway/http.c
@@ -313,6 +317,11 @@ test_asap_client: tests/test_asap_client.c $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -pthread -o $(BINDIR)/$@ tests/test_asap_client.c $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(LDLIBS) -pthread
 	$(DSYM_SCRIPT)
 
+test_asap_registry: tests/test_asap_registry.c $(ASAP_REGISTRY_O) $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_asap_registry.c $(ASAP_REGISTRY_O) $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
 test_gateway_http: tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@if [ "$(GATEWAY)" != "1" ]; then echo "test_gateway_http: skipped (GATEWAY=0)"; exit 0; fi; \
 	mkdir -p $(BINDIR) && \
@@ -336,7 +345,7 @@ static:
 		--suppress=constParameterCallback \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_asap_envelope test_asap_ulid test_asap_client
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_asap_envelope test_asap_ulid test_asap_client test_asap_registry
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -356,6 +365,7 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_asap_envelope
 	$(BINDIR)/test_asap_ulid
 	$(BINDIR)/test_asap_client
+	$(BINDIR)/test_asap_registry
 	$(MAKE) test_auth && $(BINDIR)/test_auth
 	$(MAKE) test_static && $(BINDIR)/test_static
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) test_gateway_http && $(BINDIR)/test_gateway_http; fi
@@ -364,7 +374,7 @@ COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_asap_envelope test_asap_ulid test_asap_client test_auth test_static
+	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_asap_envelope test_asap_ulid test_asap_client test_asap_registry test_auth test_static
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage test_gateway_http; fi
 	@chmod +x scripts/coverage.sh
 	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh
@@ -375,8 +385,8 @@ clean-root-dsym:
 	@rm -f shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_openai test_provider test_router test_shell test_skill test_telegram test_web_search
 
 clean: clean-root-dsym
-	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O)
+	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O)
 	rm -f src/gateway/ui_assets.h
 	find . -name '*.gcno' -o -name '*.gcda' -o -name '*.gcov' | xargs rm -f 2>/dev/null || true
-	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_manifest $(BINDIR)/test_asap_envelope $(BINDIR)/test_asap_ulid $(BINDIR)/test_asap_client $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static
+	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_manifest $(BINDIR)/test_asap_envelope $(BINDIR)/test_asap_ulid $(BINDIR)/test_asap_client $(BINDIR)/test_asap_registry $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static
 	rm -rf $(BINDIR)/*.dSYM $(DSYMDIR)
