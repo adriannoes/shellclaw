@@ -12,6 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#define REGISTRY_DEFAULT_TTL_SEC 300
 
 void registry_index_init(registry_index_t *out)
 {
@@ -271,3 +274,171 @@ out:
 	free(buf.buf);
 	return ret;
 }
+
+static int monotonic_now(struct timespec *tp)
+{
+	if (clock_gettime(CLOCK_MONOTONIC, tp) != 0)
+		return -1;
+	return 0;
+}
+
+static int cache_stale(const registry_cache_t *cache, const struct timespec *now)
+{
+	long long age_sec;
+	if (!cache->has_data) return 1;
+	age_sec = (long long)(now->tv_sec - cache->fetched_at.tv_sec);
+	if (cache->ttl_sec <= 0) return 1;
+	return age_sec >= (long long)cache->ttl_sec;
+}
+
+static int registry_index_clone(const registry_index_t *src, registry_index_t *dst, char *errbuf, size_t errlen)
+{
+	size_t i, j;
+	registry_index_t tmp;
+	if (!src || !dst) {
+		err_copy(errbuf, errlen, "invalid argument");
+		return -1;
+	}
+	if (src->count == 0) {
+		registry_index_clear(dst);
+		return 0;
+	}
+	registry_index_init(&tmp);
+	tmp.agents = calloc(src->count, sizeof(registry_agent_t));
+	if (!tmp.agents) {
+		err_copy(errbuf, errlen, "out of memory");
+		return -1;
+	}
+	tmp.count = src->count;
+	for (i = 0; i < src->count; i++) {
+		registry_agent_t *d = &tmp.agents[i];
+		const registry_agent_t *s = &src->agents[i];
+		d->urn = provider_dup_str(s->urn);
+		d->base_url = provider_dup_str(s->base_url);
+		if (!d->urn || !d->base_url) {
+			registry_index_clear(&tmp);
+			err_copy(errbuf, errlen, "out of memory");
+			return -1;
+		}
+		d->capabilities_count = s->capabilities_count;
+		if (s->capabilities_count > 0) {
+			d->capabilities = calloc(s->capabilities_count, sizeof(char *));
+			if (!d->capabilities) {
+				registry_index_clear(&tmp);
+				err_copy(errbuf, errlen, "out of memory");
+				return -1;
+			}
+			for (j = 0; j < s->capabilities_count; j++) {
+				d->capabilities[j] = provider_dup_str(s->capabilities[j]);
+				if (!d->capabilities[j]) {
+					registry_index_clear(&tmp);
+					err_copy(errbuf, errlen, "out of memory");
+					return -1;
+				}
+			}
+		} else {
+			d->capabilities = NULL;
+		}
+	}
+	registry_index_clear(dst);
+	*dst = tmp;
+	return 0;
+}
+
+void registry_cache_init(registry_cache_t *cache)
+{
+	if (!cache) return;
+	memset(cache, 0, sizeof(*cache));
+	cache->ttl_sec = REGISTRY_DEFAULT_TTL_SEC;
+}
+
+void registry_cache_clear(registry_cache_t *cache)
+{
+	if (!cache) return;
+	registry_index_clear(&cache->index);
+	free(cache->url);
+	cache->url = NULL;
+	cache->has_data = 0;
+}
+
+void registry_cache_set_ttl(registry_cache_t *cache, int ttl_sec)
+{
+	if (!cache) return;
+	cache->ttl_sec = ttl_sec > 0 ? ttl_sec : REGISTRY_DEFAULT_TTL_SEC;
+}
+
+int registry_cache_get(registry_cache_t *cache, const char *url, const asap_client_config_t *client_opt,
+		registry_index_t *out, char *errbuf, size_t errlen)
+{
+	struct timespec now;
+	registry_index_t fresh;
+	int st;
+	if (errbuf && errlen) errbuf[0] = '\0';
+	if (!cache || !url || !out) {
+		err_copy(errbuf, errlen, "invalid argument");
+		return -1;
+	}
+	if (monotonic_now(&now) != 0) {
+		err_copy(errbuf, errlen, "clock_gettime failed");
+		return -1;
+	}
+	if (cache->has_data && cache->url && strcmp(cache->url, url) == 0 && !cache_stale(cache, &now))
+		return registry_index_clone(&cache->index, out, errbuf, errlen);
+	registry_index_init(&fresh);
+	if (registry_fetch(url, client_opt, &fresh, errbuf, errlen) == 0) {
+		free(cache->url);
+		cache->url = provider_dup_str(url);
+		if (!cache->url) {
+			registry_index_clear(&fresh);
+			err_copy(errbuf, errlen, "out of memory");
+			return -1;
+		}
+		registry_index_clear(&cache->index);
+		cache->index = fresh;
+		registry_index_init(&fresh);
+		if (monotonic_now(&cache->fetched_at) != 0)
+			cache->fetched_at = now;
+		cache->has_data = 1;
+		return registry_index_clone(&cache->index, out, errbuf, errlen);
+	}
+	if (cache->has_data && cache->url && strcmp(cache->url, url) == 0) {
+		(void)fprintf(stderr, "registry: refresh failed for %s (%s); using stale cache\n", url,
+				errbuf && errlen && errbuf[0] ? errbuf : "unknown error");
+		st = registry_index_clone(&cache->index, out, errbuf, errlen);
+		return st;
+	}
+	return -1;
+}
+
+#ifdef SHELLCLAW_REGISTRY_TEST
+int registry_cache_test_load_json(registry_cache_t *cache, const char *url, const char *json,
+		char *errbuf, size_t errlen)
+{
+	struct timespec now;
+	if (!cache || !url || !json) {
+		err_copy(errbuf, errlen, "invalid argument");
+		return -1;
+	}
+	if (registry_index_from_json(json, &cache->index, errbuf, errlen) != 0) return -1;
+	free(cache->url);
+	cache->url = provider_dup_str(url);
+	if (!cache->url) {
+		registry_index_clear(&cache->index);
+		err_copy(errbuf, errlen, "out of memory");
+		return -1;
+	}
+	if (monotonic_now(&now) != 0) {
+		err_copy(errbuf, errlen, "clock_gettime failed");
+		return -1;
+	}
+	cache->fetched_at = now;
+	cache->has_data = 1;
+	return 0;
+}
+
+void registry_cache_test_backdate(registry_cache_t *cache, int seconds_ago)
+{
+	if (!cache || seconds_ago < 0) return;
+	cache->fetched_at.tv_sec -= (time_t)seconds_ago;
+}
+#endif

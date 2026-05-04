@@ -98,6 +98,65 @@ static int test_fetch_dead_port(void)
 	return 0;
 }
 
+static int test_cache_fresh_hit(void)
+{
+	static const char *reg_url = "https://registry.example/asap/registry.json";
+	registry_cache_t cache;
+	registry_index_t out;
+	char err[256];
+	registry_cache_init(&cache);
+	registry_cache_set_ttl(&cache, 300);
+	ASSERT(registry_cache_test_load_json(&cache, reg_url, sample_registry, err, sizeof err) == 0);
+	registry_index_init(&out);
+	ASSERT(registry_cache_get(&cache, reg_url, NULL, &out, err, sizeof err) == 0);
+	ASSERT(out.count == 2u);
+	ASSERT(strcmp(out.agents[0].urn, "urn:asap:agent:a") == 0);
+	registry_index_clear(&out);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
+static int test_cache_stale_refresh_fail_uses_stale(void)
+{
+	static const char *reg_url = "http://127.0.0.1:9/registry.json";
+	registry_cache_t cache;
+	registry_index_t out;
+	char err[256];
+	asap_client_config_t c;
+	registry_cache_init(&cache);
+	registry_cache_set_ttl(&cache, 300);
+	ASSERT(registry_cache_test_load_json(&cache, reg_url, sample_registry, err, sizeof err) == 0);
+	registry_cache_test_backdate(&cache, 400);
+	asap_client_config_init(&c);
+	c.timeout_sec = 2L;
+	c.connect_timeout_sec = 2L;
+	registry_index_init(&out);
+	ASSERT(registry_cache_get(&cache, reg_url, &c, &out, err, sizeof err) == 0);
+	ASSERT(out.count == 2u);
+	ASSERT(strcmp(out.agents[0].urn, "urn:asap:agent:a") == 0);
+	registry_index_clear(&out);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
+static int test_cache_first_fetch_fail(void)
+{
+	registry_cache_t cache;
+	registry_index_t out;
+	char err[256];
+	asap_client_config_t c;
+	registry_cache_init(&cache);
+	registry_cache_set_ttl(&cache, 60);
+	asap_client_config_init(&c);
+	c.timeout_sec = 2L;
+	c.connect_timeout_sec = 2L;
+	registry_index_init(&out);
+	ASSERT(registry_cache_get(&cache, "http://127.0.0.1:1/registry.json", &c, &out, err, sizeof err) == -1);
+	registry_index_clear(&out);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_parse_agents_object());
@@ -106,6 +165,9 @@ int main(void)
 	RUN(test_parse_missing_agents());
 	RUN(test_parse_capabilities_not_array());
 	RUN(test_fetch_dead_port());
+	RUN(test_cache_fresh_hit());
+	RUN(test_cache_stale_refresh_fail_uses_stale());
+	RUN(test_cache_first_fetch_fail());
 	printf("test_asap_registry: all tests passed\n");
 	return 0;
 }
