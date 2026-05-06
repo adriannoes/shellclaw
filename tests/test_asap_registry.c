@@ -157,6 +157,79 @@ static int test_cache_first_fetch_fail(void)
 	return 0;
 }
 
+static int test_revocation_no_list_url_not_revoked(void)
+{
+	char err[128];
+	ASSERT(registry_revocation_list_contains(NULL, "urn:asap:agent:x", NULL, err, sizeof err) == 0);
+	ASSERT(registry_revocation_list_contains("", "urn:asap:agent:x", NULL, err, sizeof err) == 0);
+	return 0;
+}
+
+static int test_revocation_empty_urn_invalid(void)
+{
+	char err[128];
+	ASSERT(registry_revocation_list_contains("http://example/revoked.json", "", NULL, err, sizeof err) == -1);
+	ASSERT(err[0] != '\0');
+	return 0;
+}
+
+static int test_revocation_two_calls_two_fetches(void)
+{
+	char err[256];
+	registry_test_revocation_reset();
+	registry_test_revocation_set_body_override("[\"urn:asap:agent:bad\"]");
+	ASSERT(registry_revocation_list_contains("http://unused.invalid/revoked.json", "urn:asap:agent:good", NULL, err,
+				sizeof err)
+			== 0);
+	ASSERT(registry_test_revocation_fetch_count() == 1u);
+	ASSERT(registry_revocation_list_contains("http://unused.invalid/revoked.json", "urn:asap:agent:good", NULL, err,
+				sizeof err)
+			== 0);
+	ASSERT(registry_test_revocation_fetch_count() == 2u);
+	registry_test_revocation_set_body_override(NULL);
+	return 0;
+}
+
+static int test_revocation_detects_urn_in_array(void)
+{
+	char err[256];
+	registry_test_revocation_reset();
+	registry_test_revocation_set_body_override("[\"urn:asap:agent:a\",\"urn:asap:agent:b\"]");
+	ASSERT(registry_revocation_list_contains("http://unused.invalid/r.json", "urn:asap:agent:b", NULL, err, sizeof err)
+			== 1);
+	ASSERT(registry_revocation_list_contains("http://unused.invalid/r.json", "urn:asap:agent:c", NULL, err, sizeof err)
+			== 0);
+	registry_test_revocation_set_body_override(NULL);
+	return 0;
+}
+
+static int test_revocation_object_with_revoked_agents(void)
+{
+	char err[256];
+	const char *json = "{\"revokedAgents\":[{\"id\":\"urn:asap:agent:z\"}]}";
+	registry_test_revocation_reset();
+	registry_test_revocation_set_body_override(json);
+	ASSERT(registry_revocation_list_contains("http://unused.invalid/r.json", "urn:asap:agent:z", NULL, err, sizeof err)
+			== 1);
+	registry_test_revocation_set_body_override(NULL);
+	return 0;
+}
+
+static int test_revocation_fetch_dead_port_counts_fetch(void)
+{
+	char err[256];
+	asap_client_config_t c;
+	registry_test_revocation_reset();
+	asap_client_config_init(&c);
+	c.timeout_sec = 2L;
+	c.connect_timeout_sec = 2L;
+	ASSERT(registry_revocation_list_contains("http://127.0.0.1:1/revoked.json", "urn:asap:agent:x", &c, err,
+				sizeof err)
+			== -1);
+	ASSERT(registry_test_revocation_fetch_count() == 1u);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_parse_agents_object());
@@ -168,6 +241,12 @@ int main(void)
 	RUN(test_cache_fresh_hit());
 	RUN(test_cache_stale_refresh_fail_uses_stale());
 	RUN(test_cache_first_fetch_fail());
+	RUN(test_revocation_no_list_url_not_revoked());
+	RUN(test_revocation_empty_urn_invalid());
+	RUN(test_revocation_two_calls_two_fetches());
+	RUN(test_revocation_detects_urn_in_array());
+	RUN(test_revocation_object_with_revoked_agents());
+	RUN(test_revocation_fetch_dead_port_counts_fetch());
 	printf("test_asap_registry: all tests passed\n");
 	return 0;
 }

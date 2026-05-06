@@ -13,6 +13,11 @@
 extern "C" {
 #endif
 
+/** When #registry_revocation_list_contains is called with NULL @a client_opt, use this total HTTP timeout (seconds). */
+#define REGISTRY_REVOCATION_DEFAULT_TIMEOUT_SEC 10L
+/** Connect timeout paired with #REGISTRY_REVOCATION_DEFAULT_TIMEOUT_SEC when @a client_opt is NULL. */
+#define REGISTRY_REVOCATION_DEFAULT_CONNECT_TIMEOUT_SEC 5L
+
 struct asap_client_config;
 typedef struct asap_client_config asap_client_config_t;
 
@@ -66,6 +71,19 @@ int registry_fetch(const char *url, const asap_client_config_t *client_opt, regi
 		char *errbuf, size_t errlen);
 
 /**
+ * Fetch @a revocation_list_url each time (no cache) and check whether @a urn is listed as revoked.
+ * Supports a JSON array of strings, or an object with @c revoked , @c revoked_agents , or @c revokedAgents
+ * holding an array of strings or objects with @c urn / @c id .
+ *
+ * If @a revocation_list_url is NULL or empty, returns @c 0 (no revocation list configured).
+ *
+ * @return @c 1 if @a urn is revoked, @c 0 if not listed, @c -1 on invalid arguments, HTTP/curl error,
+ * non-200 status, or unparseable JSON body.
+ */
+int registry_revocation_list_contains(const char *revocation_list_url, const char *urn,
+		const asap_client_config_t *client_opt, char *errbuf, size_t errlen);
+
+/**
  * Cached registry for one URL: parsed index, monotonic fetch time, TTL in seconds.
  * Default TTL after #registry_cache_init is five minutes (300 s); override with
  * #registry_cache_set_ttl.
@@ -102,6 +120,14 @@ int registry_cache_test_load_json(registry_cache_t *cache, const char *url, cons
 		char *errbuf, size_t errlen);
 /** Move @a cache fetch time backward by @a seconds_ago (unit tests only). */
 void registry_cache_test_backdate(registry_cache_t *cache, int seconds_ago);
+/** Reset revocation test counters and body override (unit tests only). */
+void registry_test_revocation_reset(void);
+/** Number of revocation list HTTP (or override) fetches since last #registry_test_revocation_reset (unit tests only). */
+size_t registry_test_revocation_fetch_count(void);
+/**
+ * When non-NULL, #registry_revocation_list_contains uses this body instead of curl; fetch counter still increments.
+ */
+void registry_test_revocation_set_body_override(const char *json_or_null);
 #endif
 
 #ifdef __cplusplus

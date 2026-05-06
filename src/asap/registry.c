@@ -207,28 +207,23 @@ fail:
 	return -1;
 }
 
-int registry_fetch(const char *url, const asap_client_config_t *client_opt, registry_index_t *out,
-		char *errbuf, size_t errlen)
+/**
+ * GET @a url ; on HTTP 200 allocates @a *body_out (caller frees). Uses @a sc for TLS and timeouts.
+ */
+static int registry_http_get_body(const char *url, const asap_client_config_t *sc, char **body_out, char *errbuf,
+		size_t errlen)
 {
 	CURL *curl;
 	provider_curl_buf_t buf = { NULL, 0, 0 };
-	asap_client_config_t sc;
 	long code = 0;
 	CURLcode cres;
-	int ret = -1;
 	struct curl_slist *headers = NULL;
 	if (errbuf && errlen) errbuf[0] = '\0';
-	if (!url || !out) {
+	if (!url || !sc || !body_out) {
 		err_copy(errbuf, errlen, "invalid argument");
 		return -1;
 	}
-	registry_index_clear(out);
-	asap_client_config_init(&sc);
-	if (client_opt) {
-		if (client_opt->timeout_sec > 0) sc.timeout_sec = client_opt->timeout_sec;
-		if (client_opt->connect_timeout_sec > 0) sc.connect_timeout_sec = client_opt->connect_timeout_sec;
-		sc.ssl_verifypeer = client_opt->ssl_verifypeer;
-	}
+	*body_out = NULL;
 	buf.buf = malloc(PROVIDER_RESP_BUF_INIT);
 	if (!buf.buf) {
 		err_copy(errbuf, errlen, "out of memory");
@@ -248,31 +243,170 @@ int registry_fetch(const char *url, const asap_client_config_t *client_opt, regi
 		err_copy(errbuf, errlen, "out of memory");
 		return -1;
 	}
-	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, (long)sc.ssl_verifypeer);
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, (long)sc->ssl_verifypeer);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, provider_write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, sc.timeout_sec);
-	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, sc.connect_timeout_sec);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, sc->timeout_sec);
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, sc->connect_timeout_sec);
 	cres = curl_easy_perform(curl);
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-	if (cres != CURLE_OK) {
-		err_copy(errbuf, errlen, curl_easy_strerror(cres));
-		goto out;
-	}
-	if (code != 200L) {
-		if (errbuf && errlen) (void)snprintf(errbuf, errlen, "HTTP %ld", code);
-		goto out;
-	}
-	if (registry_index_from_json(buf.buf, out, errbuf, errlen) == 0)
-		ret = 0;
-out:
 	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
-	free(buf.buf);
+	if (cres != CURLE_OK) {
+		free(buf.buf);
+		err_copy(errbuf, errlen, curl_easy_strerror(cres));
+		return -1;
+	}
+	if (code != 200L) {
+		free(buf.buf);
+		if (errbuf && errlen) (void)snprintf(errbuf, errlen, "HTTP %ld", code);
+		return -1;
+	}
+	*body_out = buf.buf;
+	return 0;
+}
+
+int registry_fetch(const char *url, const asap_client_config_t *client_opt, registry_index_t *out,
+		char *errbuf, size_t errlen)
+{
+	asap_client_config_t sc;
+	char *body = NULL;
+	int ret = -1;
+	if (errbuf && errlen) errbuf[0] = '\0';
+	if (!url || !out) {
+		err_copy(errbuf, errlen, "invalid argument");
+		return -1;
+	}
+	registry_index_clear(out);
+	asap_client_config_init(&sc);
+	if (client_opt) {
+		if (client_opt->timeout_sec > 0) sc.timeout_sec = client_opt->timeout_sec;
+		if (client_opt->connect_timeout_sec > 0) sc.connect_timeout_sec = client_opt->connect_timeout_sec;
+		sc.ssl_verifypeer = client_opt->ssl_verifypeer;
+	}
+	if (registry_http_get_body(url, &sc, &body, errbuf, errlen) != 0) return -1;
+	if (registry_index_from_json(body, out, errbuf, errlen) == 0) ret = 0;
+	free(body);
 	return ret;
+}
+
+static const cJSON *revocation_pick_array(const cJSON *root)
+{
+	const cJSON *arr;
+	if (!root) return NULL;
+	if (cJSON_IsArray(root)) return root;
+	if (!cJSON_IsObject(root)) return NULL;
+	arr = cJSON_GetObjectItemCaseSensitive((cJSON *)root, "revoked");
+	if (arr && cJSON_IsArray(arr)) return arr;
+	arr = cJSON_GetObjectItemCaseSensitive((cJSON *)root, "revoked_agents");
+	if (arr && cJSON_IsArray(arr)) return arr;
+	arr = cJSON_GetObjectItemCaseSensitive((cJSON *)root, "revokedAgents");
+	if (arr && cJSON_IsArray(arr)) return arr;
+	return NULL;
+}
+
+/**
+ * @return 1 if @a urn found, 0 if not, -1 on parse error.
+ */
+static int revocation_json_contains_urn(const char *json, const char *urn, char *errbuf, size_t errlen)
+{
+	cJSON *root;
+	const cJSON *arr;
+	int i, n;
+	root = cJSON_Parse(json);
+	if (!root) {
+		err_copy(errbuf, errlen, "invalid JSON");
+		return -1;
+	}
+	arr = revocation_pick_array(root);
+	if (!arr) {
+		cJSON_Delete(root);
+		err_copy(errbuf, errlen, "revocation list must be array or object with revoked array");
+		return -1;
+	}
+	n = cJSON_GetArraySize(arr);
+	for (i = 0; i < n; i++) {
+		const cJSON *it = cJSON_GetArrayItem(arr, i);
+		const char *u;
+		if (cJSON_IsString(it) && it->valuestring && strcmp(it->valuestring, urn) == 0) {
+			cJSON_Delete(root);
+			return 1;
+		}
+		if (cJSON_IsObject(it)) {
+			u = json_string_cstr((cJSON *)it, "urn");
+			if (!u) u = json_string_cstr((cJSON *)it, "id");
+			if (u && strcmp(u, urn) == 0) {
+				cJSON_Delete(root);
+				return 1;
+			}
+		}
+	}
+	cJSON_Delete(root);
+	return 0;
+}
+
+#ifdef SHELLCLAW_REGISTRY_TEST
+static size_t g_revocation_fetch_count;
+static const char *g_revocation_body_override;
+
+void registry_test_revocation_reset(void)
+{
+	g_revocation_fetch_count = 0;
+	g_revocation_body_override = NULL;
+}
+
+size_t registry_test_revocation_fetch_count(void)
+{
+	return g_revocation_fetch_count;
+}
+
+void registry_test_revocation_set_body_override(const char *json_or_null)
+{
+	g_revocation_body_override = json_or_null;
+}
+#endif
+
+int registry_revocation_list_contains(const char *revocation_list_url, const char *urn,
+		const asap_client_config_t *client_opt, char *errbuf, size_t errlen)
+{
+	char *body = NULL;
+	asap_client_config_t sc;
+	int r;
+	if (errbuf && errlen) errbuf[0] = '\0';
+	if (!revocation_list_url || revocation_list_url[0] == '\0') return 0;
+	if (!urn || urn[0] == '\0') {
+		err_copy(errbuf, errlen, "invalid argument");
+		return -1;
+	}
+#ifdef SHELLCLAW_REGISTRY_TEST
+	g_revocation_fetch_count++;
+	if (g_revocation_body_override) {
+		body = provider_dup_str(g_revocation_body_override);
+		if (!body) {
+			err_copy(errbuf, errlen, "out of memory");
+			return -1;
+		}
+		r = revocation_json_contains_urn(body, urn, errbuf, errlen);
+		free(body);
+		return r;
+	}
+#endif
+	asap_client_config_init(&sc);
+	if (client_opt) {
+		if (client_opt->timeout_sec > 0) sc.timeout_sec = client_opt->timeout_sec;
+		if (client_opt->connect_timeout_sec > 0) sc.connect_timeout_sec = client_opt->connect_timeout_sec;
+		sc.ssl_verifypeer = client_opt->ssl_verifypeer;
+	} else {
+		sc.timeout_sec = REGISTRY_REVOCATION_DEFAULT_TIMEOUT_SEC;
+		sc.connect_timeout_sec = REGISTRY_REVOCATION_DEFAULT_CONNECT_TIMEOUT_SEC;
+	}
+	if (registry_http_get_body(revocation_list_url, &sc, &body, errbuf, errlen) != 0) return -1;
+	r = revocation_json_contains_urn(body, urn, errbuf, errlen);
+	free(body);
+	return r;
 }
 
 static int monotonic_now(struct timespec *tp)
