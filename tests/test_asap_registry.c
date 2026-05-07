@@ -230,6 +230,136 @@ static int test_revocation_fetch_dead_port_counts_fetch(void)
 	return 0;
 }
 
+static int test_resolve_success_from_cache(void)
+{
+	static const char *reg_url = "https://registry.example/asap/registry.json";
+	registry_cache_t cache;
+	registry_resolve_ctx_t ctx;
+	registry_agent_t agent;
+	char err[256];
+	registry_cache_init(&cache);
+	registry_resolve_ctx_init(&ctx);
+	ctx.cache = &cache;
+	ctx.registry_url = reg_url;
+	ASSERT(registry_cache_test_load_json(&cache, reg_url, sample_registry, err, sizeof err) == 0);
+	ASSERT(registry_resolve(&ctx, "urn:asap:agent:a", &agent, err, sizeof err) == 0);
+	ASSERT(strcmp(agent.urn, "urn:asap:agent:a") == 0);
+	ASSERT(strcmp(agent.base_url, "https://a.example/asap") == 0);
+	ASSERT(agent.capabilities_count == 1u);
+	registry_agent_clear(&agent);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
+static int test_resolve_missing_urn(void)
+{
+	static const char *reg_url = "https://registry.example/asap/registry.json";
+	registry_cache_t cache;
+	registry_resolve_ctx_t ctx;
+	registry_agent_t agent;
+	char err[256];
+	registry_cache_init(&cache);
+	registry_resolve_ctx_init(&ctx);
+	ctx.cache = &cache;
+	ctx.registry_url = reg_url;
+	ASSERT(registry_cache_test_load_json(&cache, reg_url, sample_registry, err, sizeof err) == 0);
+	ASSERT(registry_resolve(&ctx, "urn:asap:agent:missing", &agent, err, sizeof err) == -1);
+	ASSERT(strstr(err, "not found") != NULL);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
+static int test_resolve_revoked_urn(void)
+{
+	static const char *reg_url = "https://registry.example/asap/registry.json";
+	registry_cache_t cache;
+	registry_resolve_ctx_t ctx;
+	registry_agent_t agent;
+	char err[256];
+	registry_cache_init(&cache);
+	registry_resolve_ctx_init(&ctx);
+	ctx.cache = &cache;
+	ctx.registry_url = reg_url;
+	ctx.revocation_list_url = "http://unused.invalid/revoked.json";
+	ASSERT(registry_cache_test_load_json(&cache, reg_url, sample_registry, err, sizeof err) == 0);
+	registry_test_revocation_reset();
+	registry_test_revocation_set_body_override("[\"urn:asap:agent:a\"]");
+	ASSERT(registry_resolve(&ctx, "urn:asap:agent:a", &agent, err, sizeof err) == -1);
+	ASSERT(strstr(err, "revoked") != NULL);
+	registry_test_revocation_set_body_override(NULL);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
+static int test_resolve_fresh_cache_skips_registry_fetch(void)
+{
+	static const char *reg_url = "https://registry.example/asap/registry.json";
+	registry_cache_t cache;
+	registry_resolve_ctx_t ctx;
+	registry_agent_t agent;
+	char err[256];
+	registry_cache_init(&cache);
+	registry_resolve_ctx_init(&ctx);
+	ctx.cache = &cache;
+	ctx.registry_url = reg_url;
+	ASSERT(registry_cache_test_load_json(&cache, reg_url, sample_registry, err, sizeof err) == 0);
+	registry_test_registry_fetch_reset();
+	ASSERT(registry_resolve(&ctx, "urn:asap:agent:b", &agent, err, sizeof err) == 0);
+	ASSERT(registry_test_registry_fetch_count() == 0u);
+	registry_agent_clear(&agent);
+	registry_test_registry_fetch_set_body_override(NULL);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
+static int test_registry_refresh_replaces_cache(void)
+{
+	static const char *reg_url = "https://registry.example/asap/registry.json";
+	const char *json_v2 =
+			"{\"agents\":[{\"urn\":\"urn:asap:agent:new\",\"base_url\":\"https://new.example/asap\"}]}";
+	registry_cache_t cache;
+	registry_resolve_ctx_t ctx;
+	registry_agent_t agent;
+	char err[256];
+	registry_cache_init(&cache);
+	registry_resolve_ctx_init(&ctx);
+	ctx.cache = &cache;
+	ctx.registry_url = reg_url;
+	ASSERT(registry_cache_test_load_json(&cache, reg_url, sample_registry, err, sizeof err) == 0);
+	registry_test_registry_fetch_reset();
+	registry_test_registry_fetch_set_body_override(json_v2);
+	ASSERT(registry_refresh(&ctx, err, sizeof err) == 0);
+	ASSERT(registry_test_registry_fetch_count() == 1u);
+	ASSERT(registry_resolve(&ctx, "urn:asap:agent:new", &agent, err, sizeof err) == 0);
+	ASSERT(strcmp(agent.base_url, "https://new.example/asap") == 0);
+	registry_agent_clear(&agent);
+	registry_test_registry_fetch_set_body_override(NULL);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
+static int test_resolve_urn_alias_matches_resolve(void)
+{
+	static const char *reg_url = "https://registry.example/asap/registry.json";
+	registry_cache_t cache;
+	registry_resolve_ctx_t ctx;
+	registry_agent_t a1;
+	registry_agent_t a2;
+	char err[256];
+	registry_cache_init(&cache);
+	registry_resolve_ctx_init(&ctx);
+	ctx.cache = &cache;
+	ctx.registry_url = reg_url;
+	ASSERT(registry_cache_test_load_json(&cache, reg_url, sample_registry, err, sizeof err) == 0);
+	ASSERT(registry_resolve(&ctx, "urn:asap:agent:b", &a1, err, sizeof err) == 0);
+	ASSERT(registry_resolve_urn(&ctx, "urn:asap:agent:b", &a2, err, sizeof err) == 0);
+	ASSERT(strcmp(a1.base_url, a2.base_url) == 0);
+	registry_agent_clear(&a1);
+	registry_agent_clear(&a2);
+	registry_cache_clear(&cache);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_parse_agents_object());
@@ -247,6 +377,12 @@ int main(void)
 	RUN(test_revocation_detects_urn_in_array());
 	RUN(test_revocation_object_with_revoked_agents());
 	RUN(test_revocation_fetch_dead_port_counts_fetch());
+	RUN(test_resolve_success_from_cache());
+	RUN(test_resolve_missing_urn());
+	RUN(test_resolve_revoked_urn());
+	RUN(test_resolve_fresh_cache_skips_registry_fetch());
+	RUN(test_registry_refresh_replaces_cache());
+	RUN(test_resolve_urn_alias_matches_resolve());
 	printf("test_asap_registry: all tests passed\n");
 	return 0;
 }

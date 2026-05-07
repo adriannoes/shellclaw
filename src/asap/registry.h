@@ -58,6 +58,11 @@ void registry_index_clear(registry_index_t *out);
 int registry_index_from_json(const char *json, registry_index_t *out, char *errbuf, size_t errlen);
 
 /**
+ * Free heap fields of one agent (URN, base URL, capability strings). Zeros @a a.
+ */
+void registry_agent_clear(registry_agent_t *a);
+
+/**
  * HTTP GET @a url and parse the response body as a registry document.
  *
  * @param url         Full URL to registry.json (or equivalent).
@@ -112,6 +117,39 @@ void registry_cache_set_ttl(registry_cache_t *cache, int ttl_sec);
 int registry_cache_get(registry_cache_t *cache, const char *url, const asap_client_config_t *client_opt,
 		registry_index_t *out, char *errbuf, size_t errlen);
 
+/** Inputs for #registry_resolve / #registry_refresh ; zero with #registry_resolve_ctx_init then set pointers. */
+typedef struct registry_resolve_ctx {
+	registry_cache_t *cache;
+	const char *registry_url;
+	const char *revocation_list_url;
+	const asap_client_config_t *client_opt;
+} registry_resolve_ctx_t;
+
+void registry_resolve_ctx_init(registry_resolve_ctx_t *ctx);
+
+/**
+ * Resolve @a urn against the cached registry: optional revocation check (fresh fetch each time when URL set),
+ * then #registry_cache_get for @a ctx->registry_url . On success fills @a out (caller frees via #registry_agent_clear).
+ *
+ * @return 0 on success, -1 if revoked, not found, missing config, or transport/parse errors (@a errbuf when provided).
+ */
+int registry_resolve(const registry_resolve_ctx_t *ctx, const char *urn, registry_agent_t *out, char *errbuf,
+		size_t errlen);
+
+/**
+ * Force HTTP GET of @a ctx->registry_url and replace @a ctx->cache contents (ignores TTL).
+ *
+ * @return 0 on success, -1 on failure.
+ */
+int registry_refresh(registry_resolve_ctx_t *ctx, char *errbuf, size_t errlen);
+
+/** Same as #registry_resolve (alternate name). */
+static inline int registry_resolve_urn(const registry_resolve_ctx_t *ctx, const char *urn, registry_agent_t *out,
+		char *errbuf, size_t errlen)
+{
+	return registry_resolve(ctx, urn, out, errbuf, errlen);
+}
+
 #ifdef SHELLCLAW_REGISTRY_TEST
 /**
  * Load registry JSON into the cache without HTTP (unit tests only). Sets @a has_data.
@@ -128,6 +166,12 @@ size_t registry_test_revocation_fetch_count(void);
  * When non-NULL, #registry_revocation_list_contains uses this body instead of curl; fetch counter still increments.
  */
 void registry_test_revocation_set_body_override(const char *json_or_null);
+/** Reset #registry_fetch test override and counter (unit tests only). */
+void registry_test_registry_fetch_reset(void);
+/** HTTP/registry_fetch attempts via override since last #registry_test_registry_fetch_reset (unit tests only). */
+size_t registry_test_registry_fetch_count(void);
+/** When non-NULL, #registry_fetch parses this body instead of curl; increments #registry_test_registry_fetch_count. */
+void registry_test_registry_fetch_set_body_override(const char *json_or_null);
 #endif
 
 #ifdef __cplusplus

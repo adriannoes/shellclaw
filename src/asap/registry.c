@@ -16,6 +16,13 @@
 
 #define REGISTRY_DEFAULT_TTL_SEC 300
 
+#ifdef SHELLCLAW_REGISTRY_TEST
+static const char *g_registry_fetch_body_override;
+static size_t g_registry_fetch_count;
+static size_t g_revocation_fetch_count;
+static const char *g_revocation_body_override;
+#endif
+
 void registry_index_init(registry_index_t *out)
 {
 	if (!out) return;
@@ -37,6 +44,21 @@ void registry_index_clear(registry_index_t *out)
 	free(out->agents);
 	out->agents = NULL;
 	out->count = 0;
+}
+
+void registry_agent_clear(registry_agent_t *a)
+{
+	size_t j;
+	if (!a) return;
+	free(a->urn);
+	free(a->base_url);
+	for (j = 0; j < a->capabilities_count; j++)
+		free(a->capabilities[j]);
+	free(a->capabilities);
+	a->urn = NULL;
+	a->base_url = NULL;
+	a->capabilities = NULL;
+	a->capabilities_count = 0;
 }
 
 static void err_copy(char *errbuf, size_t errlen, const char *msg)
@@ -281,6 +303,12 @@ int registry_fetch(const char *url, const asap_client_config_t *client_opt, regi
 		return -1;
 	}
 	registry_index_clear(out);
+#ifdef SHELLCLAW_REGISTRY_TEST
+	if (g_registry_fetch_body_override) {
+		g_registry_fetch_count++;
+		return registry_index_from_json(g_registry_fetch_body_override, out, errbuf, errlen);
+	}
+#endif
 	asap_client_config_init(&sc);
 	if (client_opt) {
 		if (client_opt->timeout_sec > 0) sc.timeout_sec = client_opt->timeout_sec;
@@ -349,8 +377,21 @@ static int revocation_json_contains_urn(const char *json, const char *urn, char 
 }
 
 #ifdef SHELLCLAW_REGISTRY_TEST
-static size_t g_revocation_fetch_count;
-static const char *g_revocation_body_override;
+void registry_test_registry_fetch_reset(void)
+{
+	g_registry_fetch_body_override = NULL;
+	g_registry_fetch_count = 0;
+}
+
+size_t registry_test_registry_fetch_count(void)
+{
+	return g_registry_fetch_count;
+}
+
+void registry_test_registry_fetch_set_body_override(const char *json_or_null)
+{
+	g_registry_fetch_body_override = json_or_null;
+}
 
 void registry_test_revocation_reset(void)
 {
@@ -542,6 +583,124 @@ int registry_cache_get(registry_cache_t *cache, const char *url, const asap_clie
 		return st;
 	}
 	return -1;
+}
+
+static int registry_agent_clone(const registry_agent_t *src, registry_agent_t *dst, char *errbuf, size_t errlen)
+{
+	size_t j;
+	memset(dst, 0, sizeof(*dst));
+	dst->urn = provider_dup_str(src->urn);
+	dst->base_url = provider_dup_str(src->base_url);
+	if (!dst->urn || !dst->base_url) {
+		registry_agent_clear(dst);
+		err_copy(errbuf, errlen, "out of memory");
+		return -1;
+	}
+	dst->capabilities_count = src->capabilities_count;
+	if (src->capabilities_count > 0) {
+		dst->capabilities = calloc(src->capabilities_count, sizeof(char *));
+		if (!dst->capabilities) {
+			registry_agent_clear(dst);
+			err_copy(errbuf, errlen, "out of memory");
+			return -1;
+		}
+		for (j = 0; j < src->capabilities_count; j++) {
+			dst->capabilities[j] = provider_dup_str(src->capabilities[j]);
+			if (!dst->capabilities[j]) {
+				registry_agent_clear(dst);
+				err_copy(errbuf, errlen, "out of memory");
+				return -1;
+			}
+		}
+	}
+	return 0;
+}
+
+static const registry_agent_t *registry_index_find_urn(const registry_index_t *idx, const char *urn)
+{
+	size_t i;
+	if (!idx || !urn) return NULL;
+	for (i = 0; i < idx->count; i++) {
+		if (idx->agents[i].urn && strcmp(idx->agents[i].urn, urn) == 0) return &idx->agents[i];
+	}
+	return NULL;
+}
+
+void registry_resolve_ctx_init(registry_resolve_ctx_t *ctx)
+{
+	if (!ctx) return;
+	memset(ctx, 0, sizeof(*ctx));
+}
+
+int registry_resolve(const registry_resolve_ctx_t *ctx, const char *urn, registry_agent_t *out, char *errbuf,
+		size_t errlen)
+{
+	registry_index_t idx;
+	const registry_agent_t *found;
+	int rev;
+	if (errbuf && errlen) errbuf[0] = '\0';
+	if (!ctx || !ctx->cache || !ctx->registry_url || ctx->registry_url[0] == '\0' || !urn || urn[0] == '\0'
+			|| !out) {
+		err_copy(errbuf, errlen, "invalid argument");
+		return -1;
+	}
+	memset(out, 0, sizeof(*out));
+	if (ctx->revocation_list_url && ctx->revocation_list_url[0] != '\0') {
+		rev = registry_revocation_list_contains(ctx->revocation_list_url, urn, ctx->client_opt, errbuf, errlen);
+		if (rev == 1) {
+			err_copy(errbuf, errlen, "agent URN is revoked");
+			return -1;
+		}
+		if (rev == -1) return -1;
+	}
+	registry_index_init(&idx);
+	if (registry_cache_get(ctx->cache, ctx->registry_url, ctx->client_opt, &idx, errbuf, errlen) != 0) {
+		registry_index_clear(&idx);
+		return -1;
+	}
+	found = registry_index_find_urn(&idx, urn);
+	if (!found) {
+		registry_index_clear(&idx);
+		err_copy(errbuf, errlen, "URN not found in registry");
+		return -1;
+	}
+	if (registry_agent_clone(found, out, errbuf, errlen) != 0) {
+		registry_index_clear(&idx);
+		return -1;
+	}
+	registry_index_clear(&idx);
+	return 0;
+}
+
+int registry_refresh(registry_resolve_ctx_t *ctx, char *errbuf, size_t errlen)
+{
+	struct timespec now;
+	registry_index_t fresh;
+	if (errbuf && errlen) errbuf[0] = '\0';
+	if (!ctx || !ctx->cache || !ctx->registry_url || ctx->registry_url[0] == '\0') {
+		err_copy(errbuf, errlen, "invalid argument");
+		return -1;
+	}
+	registry_index_init(&fresh);
+	if (registry_fetch(ctx->registry_url, ctx->client_opt, &fresh, errbuf, errlen) != 0) {
+		registry_index_clear(&fresh);
+		return -1;
+	}
+	free(ctx->cache->url);
+	ctx->cache->url = provider_dup_str(ctx->registry_url);
+	if (!ctx->cache->url) {
+		registry_index_clear(&fresh);
+		err_copy(errbuf, errlen, "out of memory");
+		return -1;
+	}
+	registry_index_clear(&ctx->cache->index);
+	ctx->cache->index = fresh;
+	registry_index_init(&fresh);
+	if (monotonic_now(&now) != 0)
+		now = ctx->cache->fetched_at;
+	ctx->cache->fetched_at = now;
+	ctx->cache->has_data = 1;
+	return 0;
 }
 
 #ifdef SHELLCLAW_REGISTRY_TEST
