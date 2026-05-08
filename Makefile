@@ -77,6 +77,8 @@ ULID_O := src/asap/ulid.o
 CLIENT_O := src/asap/client.o
 ASAP_REGISTRY_O := src/asap/registry.o
 ASAP_REGISTRY_TEST_O := $(BINDIR)/asap_registry_test.o
+# Phase 3 ASAP unit binaries: keep in sync with `test`, `coverage`, and scripts/coverage.sh TESTS list.
+ASAP_UNIT_TESTS := test_asap_envelope test_asap_ulid test_asap_client test_asap_registry
 # Provider objects built with SHELLCLAW_TEST for negative/parse tests (CR-21)
 ANTHROPIC_TEST_O := $(BINDIR)/anthropic_test.o
 OPENAI_TEST_O    := $(BINDIR)/openai_test.o
@@ -350,7 +352,7 @@ static:
 		--suppress=constParameterCallback \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_asap_envelope test_asap_ulid test_asap_client test_asap_registry
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest $(ASAP_UNIT_TESTS)
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -367,10 +369,7 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_web_search
 	$(BINDIR)/test_cron
 	$(BINDIR)/test_manifest
-	$(BINDIR)/test_asap_envelope
-	$(BINDIR)/test_asap_ulid
-	$(BINDIR)/test_asap_client
-	$(BINDIR)/test_asap_registry
+	@for t in $(ASAP_UNIT_TESTS); do $(BINDIR)/$$t || exit 1; done
 	$(MAKE) test_auth && $(BINDIR)/test_auth
 	$(MAKE) test_static && $(BINDIR)/test_static
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) test_gateway_http && $(BINDIR)/test_gateway_http; fi
@@ -379,7 +378,7 @@ COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_asap_envelope test_asap_ulid test_asap_client test_asap_registry test_auth test_static
+	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest $(ASAP_UNIT_TESTS) test_auth test_static
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage test_gateway_http; fi
 	@chmod +x scripts/coverage.sh
 	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh

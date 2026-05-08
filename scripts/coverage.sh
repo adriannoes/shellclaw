@@ -11,6 +11,7 @@ mkdir -p "$COVERAGE_DIR"
 rm -f "$COVERAGE_DIR"/*.info
 
 TESTS="test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_asap_envelope test_asap_ulid test_asap_client test_asap_registry test_auth test_static"
+# ASAP tests must stay aligned with ASAP_UNIT_TESTS in the top-level Makefile.
 if [ "$(GATEWAY 2>/dev/null)" = "1" ]; then
 	TESTS="$TESTS test_gateway_http"
 fi
