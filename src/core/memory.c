@@ -443,3 +443,31 @@ void memory_cleanup(void)
 		g_db = NULL;
 	}
 }
+
+static int count_table(const char *sql, int *out_count)
+{
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	if (sqlite3_step(stmt) != SQLITE_ROW) {
+		sqlite3_finalize(stmt);
+		return -1;
+	}
+	*out_count = sqlite3_column_int(stmt, 0);
+	sqlite3_finalize(stmt);
+	return 0;
+}
+
+int memory_get_row_counts(int *sessions_out, int *memories_out, int *cron_jobs_out)
+{
+	if (!g_db) return -1;
+	if (sessions_out) {
+		if (count_table("SELECT COUNT(*) FROM sessions", sessions_out) != 0) return -1;
+	}
+	if (memories_out) {
+		if (count_table("SELECT COUNT(*) FROM memories", memories_out) != 0) return -1;
+	}
+	if (cron_jobs_out) {
+		if (count_table("SELECT COUNT(*) FROM cron_jobs", cron_jobs_out) != 0) return -1;
+	}
+	return 0;
+}
