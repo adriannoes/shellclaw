@@ -77,6 +77,8 @@ struct config {
 	char *asap_registry_url;
 	char *asap_revocation_list_url;
 	int asap_client_timeout_sec;
+	char **asap_trusted_senders;
+	int asap_trusted_senders_count;
 	int heartbeat_enabled;
 	int heartbeat_interval_minutes;
 	char *heartbeat_default_channel;
@@ -204,9 +206,25 @@ static int parse_gateway(const toml_table_t *root, config_t *cfg)
 	return 0;
 }
 
-static int parse_asap(const toml_table_t *root, config_t *cfg)
+static void free_asap_trusted_senders(config_t *cfg)
+{
+	int i;
+	if (!cfg || !cfg->asap_trusted_senders) return;
+	for (i = 0; i < cfg->asap_trusted_senders_count; i++)
+		free(cfg->asap_trusted_senders[i]);
+	free(cfg->asap_trusted_senders);
+	cfg->asap_trusted_senders = NULL;
+	cfg->asap_trusted_senders_count = 0;
+}
+
+static int parse_asap(const toml_table_t *root, config_t *cfg, char *errbuf, size_t errbufsz)
 {
 	const toml_table_t *asap = toml_table_in(root, "asap");
+	const toml_array_t *arr;
+	char **senders;
+	int n;
+	int i;
+	int count;
 	if (!asap) return 0;
 	toml_datum_t d = toml_bool_in(asap, "enabled");
 	if (d.ok) cfg->asap_enabled = d.u.b;
@@ -220,6 +238,39 @@ static int parse_asap(const toml_table_t *root, config_t *cfg)
 	if (d.ok) { set_string(&cfg->asap_revocation_list_url, d.u.s); free(d.u.s); }
 	d = toml_int_in(asap, "client_timeout_sec");
 	if (d.ok && d.u.i > 0) cfg->asap_client_timeout_sec = (int)d.u.i;
+	arr = toml_array_in(asap, "trusted_senders");
+	if (!arr) return 0;
+	n = toml_array_nelem(arr);
+	if (n <= 0) return 0;
+	senders = calloc((size_t)n, sizeof(char *));
+	if (!senders) {
+		ERRBUF_COPY(errbuf, errbufsz, "out of memory allocating asap trusted_senders");
+		return -1;
+	}
+	count = 0;
+	for (i = 0; i < n; i++) {
+		toml_datum_t s = toml_string_at(arr, i);
+		char *copy;
+		if (!s.ok || !s.u.s) continue;
+		copy = strdup(s.u.s);
+		free(s.u.s);
+		if (!copy) {
+			int j;
+			for (j = 0; j < count; j++)
+				free(senders[j]);
+			free(senders);
+			ERRBUF_COPY(errbuf, errbufsz, "out of memory copying asap trusted_senders");
+			return -1;
+		}
+		senders[count++] = copy;
+	}
+	if (count == 0) {
+		free(senders);
+		return 0;
+	}
+	free_asap_trusted_senders(cfg);
+	cfg->asap_trusted_senders = senders;
+	cfg->asap_trusted_senders_count = count;
 	return 0;
 }
 
@@ -433,7 +484,8 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	if (err) goto fail;
 	parse_memory_skills_sandbox(tab, cfg);
 	parse_gateway(tab, cfg);
-	parse_asap(tab, cfg);
+	err = parse_asap(tab, cfg, errbuf, errbufsz);
+	if (err) goto fail;
 	parse_heartbeat(tab, cfg);
 	parse_web_search(tab, cfg);
 	toml_free(tab);
@@ -477,6 +529,7 @@ void config_free(config_t *cfg)
 	set_string(&cfg->asap_agent_name, NULL);
 	set_string(&cfg->asap_registry_url, NULL);
 	set_string(&cfg->asap_revocation_list_url, NULL);
+	free_asap_trusted_senders(cfg);
 	set_string(&cfg->heartbeat_default_channel, NULL);
 	set_string(&cfg->brave_api_key_env, NULL);
 	free(cfg);
@@ -516,6 +569,16 @@ const char *config_asap_agent_name(const config_t *c) { return c && c->asap_agen
 const char *config_asap_registry_url(const config_t *c) { return c ? c->asap_registry_url : NULL; }
 const char *config_asap_revocation_list_url(const config_t *c) { return c ? c->asap_revocation_list_url : NULL; }
 int config_asap_client_timeout_sec(const config_t *c) { if (!c || c->asap_client_timeout_sec <= 0) return 30; return c->asap_client_timeout_sec; }
+int config_asap_trusted_senders_count(const config_t *c)
+{
+	return c ? c->asap_trusted_senders_count : 0;
+}
+const char *config_asap_trusted_sender(const config_t *c, int index)
+{
+	if (!c || !c->asap_trusted_senders || index < 0 || index >= c->asap_trusted_senders_count)
+		return NULL;
+	return c->asap_trusted_senders[index];
+}
 int config_heartbeat_enabled(const config_t *c) { return c ? c->heartbeat_enabled : 0; }
 int config_heartbeat_interval_minutes(const config_t *c) { return c && c->heartbeat_interval_minutes > 0 ? c->heartbeat_interval_minutes : 30; }
 const char *config_heartbeat_default_channel(const config_t *c) { return c && c->heartbeat_default_channel ? c->heartbeat_default_channel : "cli"; }

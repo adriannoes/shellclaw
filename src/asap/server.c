@@ -25,6 +25,21 @@ static void set_err(char *buf, size_t sz, const char *msg)
 	buf[sz - 1] = '\0';
 }
 
+static int sender_is_trusted(const config_t *cfg, const char *sender)
+{
+	int i;
+	int n;
+	if (!cfg) return 1;
+	n = config_asap_trusted_senders_count(cfg);
+	if (n <= 0) return 1;
+	if (!sender || sender[0] == '\0') return 0;
+	for (i = 0; i < n; i++) {
+		const char *t = config_asap_trusted_sender(cfg, i);
+		if (t && strcmp(t, sender) == 0) return 1;
+	}
+	return 0;
+}
+
 static const char *payload_pick_string(const cJSON *payload, const char *key)
 {
 	const cJSON *j = cJSON_GetObjectItemCaseSensitive(payload, key);
@@ -304,6 +319,12 @@ int asap_server_handle(const asap_envelope_t *in, asap_envelope_t *out,
 	if (!in->payload_type || !in->payload) {
 		set_err(err_message, err_message_size, "missing envelope fields");
 		return -32602;
+	}
+	if (!sender_is_trusted(ctx->cfg, in->sender)) {
+		fprintf(stderr, "asap: rejecting untrusted sender '%s'\n",
+			in->sender ? in->sender : "(null)");
+		set_err(err_message, err_message_size, "sender not trusted");
+		return ASAP_SERVER_RPC_SENDER_UNTRUSTED;
 	}
 	asap_envelope_init(out);
 	if (strcmp(in->payload_type, "task.response") == 0 ||

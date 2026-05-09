@@ -37,6 +37,9 @@ typedef struct asap_server_ctx {
 	int (*state_query_hook)(const struct asap_server_ctx *ctx, cJSON **payload_out);
 } asap_server_ctx_t;
 
+/** Application-defined JSON-RPC error when inbound sender URN is not on the trust list. */
+#define ASAP_SERVER_RPC_SENDER_UNTRUSTED (-32002)
+
 /** Application-defined JSON-RPC error when an MCP tool name is unknown. */
 #define ASAP_SERVER_RPC_TOOL_NOT_FOUND (-32001)
 

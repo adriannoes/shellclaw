@@ -6,6 +6,7 @@
 
 #include "asap/server.h"
 #include "asap/envelope.h"
+#include "core/config.h"
 #include "core/memory.h"
 #include "cJSON.h"
 #include <stdio.h>
@@ -52,7 +53,8 @@ static agent_tool_t s_echo_tool = {
 	.execute = echo_tool_execute,
 };
 
-static int build_in(asap_envelope_t *e, const char *ptype, cJSON *payload)
+static int build_in_custom(asap_envelope_t *e, const char *ptype, const char *sender,
+	const char *recipient, cJSON *payload)
 {
 	cJSON *root;
 	cJSON *dup_payload;
@@ -67,8 +69,8 @@ static int build_in(asap_envelope_t *e, const char *ptype, cJSON *payload)
 	}
 	if (!cJSON_AddStringToObject(root, "id", "e1") ||
 	    !cJSON_AddStringToObject(root, "asap_version", "2.1") ||
-	    !cJSON_AddStringToObject(root, "sender", "urn:from") ||
-	    !cJSON_AddStringToObject(root, "recipient", "urn:to") ||
+	    !cJSON_AddStringToObject(root, "sender", sender) ||
+	    !cJSON_AddStringToObject(root, "recipient", recipient) ||
 	    !cJSON_AddStringToObject(root, "payload_type", ptype) ||
 	    !cJSON_AddItemToObject(root, "payload", dup_payload)) {
 		cJSON_Delete(root);
@@ -77,6 +79,11 @@ static int build_in(asap_envelope_t *e, const char *ptype, cJSON *payload)
 	rc = asap_envelope_from_object(root, NULL, e, NULL);
 	cJSON_Delete(root);
 	return rc;
+}
+
+static int build_in(asap_envelope_t *e, const char *ptype, cJSON *payload)
+{
+	return build_in_custom(e, ptype, "urn:from", "urn:to", payload);
 }
 
 static int wrap_build(asap_envelope_t *e, const char *ptype, cJSON *payload)
@@ -319,6 +326,72 @@ static int test_task_request_no_agent_config(void)
 	return 0;
 }
 
+static int test_trust_list_allows_listed_sender(void)
+{
+	const char *path = "/tmp/shellclaw_test_asap_trust_ok.toml";
+	FILE *f;
+	config_t *cfg;
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	f = fopen(path, "w");
+	ASSERT(f != NULL);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[asap]\ntrusted_senders = [\"urn:from\"]\n");
+	fclose(f);
+	ASSERT(config_load(path, &cfg, NULL, 0) == 0);
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "input", "hi") != NULL);
+	ASSERT(wrap_build(&in, "task.request", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.cfg = cfg;
+	ctx.task_request_hook = test_hook_task;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == 0);
+	config_free(cfg);
+	remove(path);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_trust_list_rejects_unknown_sender(void)
+{
+	const char *path = "/tmp/shellclaw_test_asap_trust_deny.toml";
+	FILE *f;
+	config_t *cfg;
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	f = fopen(path, "w");
+	ASSERT(f != NULL);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[asap]\ntrusted_senders = [\"urn:other-only\"]\n");
+	fclose(f);
+	ASSERT(config_load(path, &cfg, NULL, 0) == 0);
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "input", "hi") != NULL);
+	ASSERT(wrap_build(&in, "task.request", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.cfg = cfg;
+	ctx.task_request_hook = test_hook_task;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == ASAP_SERVER_RPC_SENDER_UNTRUSTED);
+	config_free(cfg);
+	remove(path);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
 int main(void)
 {
 	int r = 0;
@@ -331,5 +404,7 @@ int main(void)
 	r |= test_reject_task_response_inbound();
 	r |= test_task_request_missing_input();
 	r |= test_task_request_no_agent_config();
+	r |= test_trust_list_allows_listed_sender();
+	r |= test_trust_list_rejects_unknown_sender();
 	return r;
 }

@@ -75,6 +75,13 @@ const char *config_asap_registry_url(const config_t *c);
 const char *config_asap_revocation_list_url(const config_t *c);
 /** HTTP(S) request timeout in seconds for ASAP client calls (outbound). Default 30. */
 int config_asap_client_timeout_sec(const config_t *c);
+/**
+ * Inbound ASAP trust list size from `[asap].trusted_senders`.
+ * If zero, any sender is accepted; if non-zero, only listed URNs pass #asap_server_handle.
+ */
+int config_asap_trusted_senders_count(const config_t *c);
+/** Trusted sender URN at index, or NULL if out of range. */
+const char *config_asap_trusted_sender(const config_t *c, int index);
 
 int config_heartbeat_enabled(const config_t *c);
 int config_heartbeat_interval_minutes(const config_t *c);
