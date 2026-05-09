@@ -1,0 +1,17 @@
+# Minimal config for CI asap-compliance check.
+# Used by the asap-compliance harness step in .github/workflows/ci.yml.
+
+[agent]
+model = "claude-3-5-sonnet-20241022"
+max_tokens = 512
+max_tool_iterations = 5
+
+[gateway]
+enabled = true
+host = "127.0.0.1"
+port = 19999
+
+[asap]
+enabled = true
+agent_urn = "urn:asap:agent:shellclaw-ci"
+agent_name = "ShellClaw-CI"
