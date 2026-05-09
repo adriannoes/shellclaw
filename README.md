@@ -40,6 +40,7 @@ ShellClaw is **not another OpenClaw clone** in a different language. It is a **h
 - `make static` — cppcheck on `src/` (requires cppcheck)
 - `make coverage` — coverage report; fails if core < 80% (requires lcov)
 - CI enforces release binary < 2 MB; optional `asap-compliance` when the Python package is available
+- **Before opening a PR:** run `CI=true make clean && CI=true make test` (matches Linux CI with `-Werror`), or on a machine with the same apt deps as [.github/workflows/ci.yml](.github/workflows/ci.yml): `chmod +x scripts/ci-local.sh && ./scripts/ci-local.sh`
 
 **Phase 3 configuration (optional):** registry and revocation URLs, Tavily API key name, and sandbox-related keys are documented in [`.env.example`](.env.example). Install **libwebsockets** (`pkg-config` must find it) to build the gateway and run `GATEWAY=1 make test_gateway_http`.
 

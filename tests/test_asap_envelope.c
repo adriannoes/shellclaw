@@ -247,7 +247,12 @@ static int test_to_jsonrpc_round_trip(void)
 	ASSERT(res != NULL);
 	asap_envelope_init(&env2);
 	err = NULL;
-	ASSERT(asap_envelope_from_object(res, cJSON_CreateNull(), &env2, NULL) == 0);
+	{
+		cJSON *req_null = cJSON_CreateNull();
+		ASSERT(req_null != NULL);
+		ASSERT(asap_envelope_from_object(res, req_null, &env2, NULL) == 0);
+		cJSON_Delete(req_null);
+	}
 	ASSERT(strcmp(env2.id, env.id) == 0);
 	ASSERT(strcmp(env2.asap_version, env.asap_version) == 0);
 	ASSERT(strcmp(env2.sender, env.sender) == 0);

@@ -151,7 +151,7 @@ static void setup_child_process(int pipe_wr, const char *workspace)
     prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
 #endif
     if (workspace && workspace[0])
-        (void)chdir(workspace);
+        if (chdir(workspace) != 0) _exit(124);
 }
 
 /* ------------------------------------------------------------------ */

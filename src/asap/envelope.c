@@ -345,8 +345,13 @@ int asap_envelope_parse(const char *json, asap_envelope_t *out, cJSON **err_out)
 	asap_envelope_init(out);
 	cJSON *root = cJSON_Parse(json);
 	if (!root) {
-		if (err_out)
-			*err_out = asap_jsonrpc_error(-32700, "Parse error", cJSON_CreateNull());
+		if (err_out) {
+			cJSON *null_id = cJSON_CreateNull();
+			if (null_id) {
+				*err_out = asap_jsonrpc_error(-32700, "Parse error", null_id);
+				cJSON_Delete(null_id);
+			}
+		}
 		return -1;
 	}
 	cJSON *rpc_id = dup_request_id(root);

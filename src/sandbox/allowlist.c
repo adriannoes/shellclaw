@@ -2,6 +2,7 @@
  * @file allowlist.c
  * @brief Shell-command allowlist: built-in blocklist + workspace realpath checks.
  */
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
 #include "sandbox/allowlist.h"
