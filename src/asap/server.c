@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 enum { ASAP_SERVER_AGENT_RESPONSE_CAP = 256 * 1024 };
 
@@ -143,8 +144,12 @@ static int handle_task_request(const asap_envelope_t *in, asap_envelope_t *out,
 			set_err(err_message, err_message_size, "task.request: server missing cfg or provider");
 			return -32603;
 		}
+		/* Acquire the global agent mutex: prevents concurrent session/memory
+		 * access from multiple HTTP/WS threads (PRD §7, CR-5, option a). */
+		agent_lock();
 		ar = agent_run(ctx->cfg, sid, prompt, ctx->provider, ctx->tools, ctx->tool_count,
 				resp_buf, (size_t)ASAP_SERVER_AGENT_RESPONSE_CAP);
+		agent_unlock();
 	}
 	free(prompt);
 	if (ar != 0) {

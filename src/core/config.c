@@ -67,6 +67,10 @@ struct config {
 	int workspace_only;
 	char *workspace_path;
 	int shell_timeout_sec;
+	int sandbox_enabled;
+	size_t sandbox_memory_max_bytes;
+	char *sandbox_cpu_max;
+	char *sandbox_cgroup_base;
 	int gateway_enabled;
 	char *gateway_host;
 	int gateway_port;
@@ -83,6 +87,7 @@ struct config {
 	int heartbeat_interval_minutes;
 	char *heartbeat_default_channel;
 	char *brave_api_key_env;
+	char *tavily_api_key_env;
 };
 
 static void set_string(char **dst, const char *src)
@@ -293,6 +298,8 @@ static int parse_web_search(const toml_table_t *root, config_t *cfg)
 	if (!ws) return 0;
 	toml_datum_t d = toml_string_in(ws, "brave_api_key_env");
 	if (d.ok) { set_string(&cfg->brave_api_key_env, d.u.s); free(d.u.s); }
+	d = toml_string_in(ws, "tavily_api_key_env");
+	if (d.ok) { set_string(&cfg->tavily_api_key_env, d.u.s); free(d.u.s); }
 	return 0;
 }
 
@@ -316,6 +323,14 @@ static int parse_memory_skills_sandbox(const toml_table_t *root, config_t *cfg)
 		if (d.ok) { set_string(&cfg->workspace_path, d.u.s); free(d.u.s); }
 		d = toml_int_in(sandbox, "shell_timeout_sec");
 		if (d.ok) cfg->shell_timeout_sec = (int)d.u.i;
+		d = toml_bool_in(sandbox, "enabled");
+		if (d.ok) cfg->sandbox_enabled = d.u.b;
+		d = toml_int_in(sandbox, "memory_max_bytes");
+		if (d.ok && d.u.i > 0) cfg->sandbox_memory_max_bytes = (size_t)d.u.i;
+		d = toml_string_in(sandbox, "cpu_max");
+		if (d.ok) { set_string(&cfg->sandbox_cpu_max, d.u.s); free(d.u.s); }
+		d = toml_string_in(sandbox, "cgroup_base");
+		if (d.ok) { set_string(&cfg->sandbox_cgroup_base, d.u.s); free(d.u.s); }
 	}
 	return 0;
 }
@@ -476,6 +491,7 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	cfg->heartbeat_interval_minutes = 30;
 	set_string(&cfg->heartbeat_default_channel, "cli");
 	set_string(&cfg->brave_api_key_env, "BRAVE_API_KEY");
+	set_string(&cfg->tavily_api_key_env, "TAVILY_API_KEY");
 	cfg->shell_timeout_sec = DEFAULT_SHELL_TIMEOUT_SEC;
 	int err = parse_agent(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
@@ -532,6 +548,9 @@ void config_free(config_t *cfg)
 	free_asap_trusted_senders(cfg);
 	set_string(&cfg->heartbeat_default_channel, NULL);
 	set_string(&cfg->brave_api_key_env, NULL);
+	set_string(&cfg->tavily_api_key_env, NULL);
+	set_string(&cfg->sandbox_cpu_max, NULL);
+	set_string(&cfg->sandbox_cgroup_base, NULL);
 	free(cfg);
 }
 
@@ -583,3 +602,8 @@ int config_heartbeat_enabled(const config_t *c) { return c ? c->heartbeat_enable
 int config_heartbeat_interval_minutes(const config_t *c) { return c && c->heartbeat_interval_minutes > 0 ? c->heartbeat_interval_minutes : 30; }
 const char *config_heartbeat_default_channel(const config_t *c) { return c && c->heartbeat_default_channel ? c->heartbeat_default_channel : "cli"; }
 const char *config_brave_api_key_env(const config_t *c) { return c && c->brave_api_key_env ? c->brave_api_key_env : "BRAVE_API_KEY"; }
+const char *config_tavily_api_key_env(const config_t *c) { return c && c->tavily_api_key_env ? c->tavily_api_key_env : "TAVILY_API_KEY"; }
+int config_sandbox_enabled(const config_t *c) { return c ? c->sandbox_enabled : 0; }
+size_t config_sandbox_memory_max_bytes(const config_t *c) { return c ? c->sandbox_memory_max_bytes : 0; }
+const char *config_sandbox_cpu_max(const config_t *c) { return c ? c->sandbox_cpu_max : NULL; }
+const char *config_sandbox_cgroup_base(const config_t *c) { return c ? c->sandbox_cgroup_base : NULL; }

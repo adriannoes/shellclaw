@@ -48,6 +48,22 @@ int agent_run(const config_t *cfg, const char *session_id, const char *user_mess
               const provider_t *provider, const agent_tool_t *tools, size_t tool_count,
               char *response_buf, size_t response_size);
 
+/**
+ * Acquire the global agent mutex before calling agent_run() from a non-main thread.
+ *
+ * Ordering rule: threads that call agent_run() (e.g. the inbound ASAP HTTP
+ * thread and the WebSocket dispatcher) must acquire this mutex first to
+ * prevent concurrent re-entrant access to shared session/memory state.
+ * The main-loop thread is the canonical owner; all other callers must use
+ * agent_lock() / agent_unlock() around every agent_run() invocation.
+ */
+void agent_lock(void);
+
+/**
+ * Release the global agent mutex after agent_run() returns.
+ */
+void agent_unlock(void);
+
 #ifdef __cplusplus
 }
 #endif

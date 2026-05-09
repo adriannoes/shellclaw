@@ -99,6 +99,36 @@ static void test_query_number_type(void)
 	MU_ASSERT(strstr(buf, "query") != NULL, "error mentions query");
 }
 
+static void test_tavily_description_mentions_tavily(void)
+{
+	const tool_t *t = tool_web_search_get();
+	MU_ASSERT(strstr(t->description, "Tavily") != NULL, "description mentions Tavily");
+}
+
+static void test_tavily_skipped_without_key(void)
+{
+	/* When TAVILY_API_KEY is unset search_tavily returns -1 and falls through.
+	 * We verify the tool never crashes and still produces output via DDG. */
+	const char *saved = getenv("TAVILY_API_KEY");
+	unsetenv("TAVILY_API_KEY");
+	const tool_t *t = tool_web_search_get();
+	char buf[4096];
+	/* Result can be 0 (DDG) or -1 (network) — both are acceptable. */
+	int r = t->execute("{\"query\":\"shellclaw test\"}", buf, sizeof(buf));
+	MU_ASSERT(r == 0 || r == -1, "no crash when Tavily key absent");
+	if (saved) setenv("TAVILY_API_KEY", saved, 1);
+}
+
+static void test_tavily_config_set(void)
+{
+	/* Verify tool_web_search_set_config accepts NULL without crashing and that
+	 * the tool still provides a valid vtable afterwards. */
+	tool_web_search_set_config(NULL);
+	const tool_t *t = tool_web_search_get();
+	MU_ASSERT(t != NULL, "tool not null after NULL config");
+	MU_ASSERT(t->execute != NULL, "execute not null after NULL config");
+}
+
 int main(void)
 {
 	MU_RUN(test_vtable_fields);
@@ -109,6 +139,9 @@ int main(void)
 	MU_RUN(test_null_result_buf);
 	MU_RUN(test_zero_max_len);
 	MU_RUN(test_query_number_type);
+	MU_RUN(test_tavily_description_mentions_tavily);
+	MU_RUN(test_tavily_skipped_without_key);
+	MU_RUN(test_tavily_config_set);
 	printf("%d tests run, %d failed\n", tests_run, tests_failed);
 	return tests_failed ? 1 : 0;
 }

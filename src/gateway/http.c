@@ -8,7 +8,11 @@
 #include "gateway/auth.h"
 #include "gateway/ws.h"
 #include "gateway/static.h"
+#include "gateway/rate_limit.h"
 #include "asap/manifest.h"
+#include "asap/envelope.h"
+#include "asap/server.h"
+#include "asap/log.h"
 #include "core/config.h"
 #include "core/memory.h"
 #include "core/skill.h"
@@ -46,6 +50,9 @@ typedef struct http_server_ctx {
 
 #define BODY_BUF_SIZE 32768
 
+/** Maximum allowed body size for /asap POST requests (1 MiB). */
+#define ASAP_BODY_MAX (1024 * 1024)
+
 typedef struct http_conn {
 	char *response;
 	size_t response_len;
@@ -60,6 +67,11 @@ typedef struct http_conn {
 	size_t static_len;
 	const char *static_content_type;
 	size_t static_sent;
+	/* Dynamic body buffer used when the /asap path needs more than BODY_BUF_SIZE. */
+	char *body_dyn;
+	size_t body_dyn_len;
+	size_t body_dyn_cap;
+	int use_dyn_body;
 } http_conn_t;
 
 static http_server_ctx_t *g_ctx;
@@ -514,9 +526,142 @@ static void handle_cron_toggle(const char *id, char *buf, size_t size, int *stat
 	json_response(buf, size, status, "{\"ok\":true}");
 }
 
-static void handle_asap_stub(char *buf, size_t size, int *status)
+/** Build a minimal JSON-RPC 2.0 error response into @p buf. */
+static void jsonrpc_error(char *buf, size_t size, int *status,
+	int http_code, int rpc_code, const char *msg)
 {
-	json_error(buf, size, status, 501, "Not Implemented");
+	cJSON *obj;
+	cJSON *err;
+	char *s;
+	if (!buf || size == 0 || !status) return;
+	*status = http_code;
+	obj = cJSON_CreateObject();
+	if (!obj) { snprintf(buf, size, "{\"error\":{\"code\":%d}}", rpc_code); return; }
+	cJSON_AddStringToObject(obj, "jsonrpc", "2.0");
+	cJSON_AddNullToObject(obj, "id");
+	err = cJSON_CreateObject();
+	if (err) {
+		cJSON_AddNumberToObject(err, "code", (double)rpc_code);
+		cJSON_AddStringToObject(err, "message", msg ? msg : "error");
+		cJSON_AddItemToObject(obj, "error", err);
+	}
+	s = cJSON_PrintUnformatted(obj);
+	cJSON_Delete(obj);
+	if (s) {
+		size_t len = strlen(s);
+		if (len >= size) len = size - 1;
+		memcpy(buf, s, len);
+		buf[len] = '\0';
+		free(s);
+	}
+}
+
+static void handle_asap_log_get(char *buf, size_t size, int *status)
+{
+	asap_log_entry_t entries[ASAP_LOG_RING_SIZE];
+	int n;
+	int i;
+	cJSON *root;
+	cJSON *arr;
+	char *s;
+	struct tm tm;
+	char tsbuf[40];
+	if (!buf || size == 0 || !status) return;
+	n = asap_log_get_snapshot(entries, ASAP_LOG_RING_SIZE);
+	root = cJSON_CreateObject();
+	if (!root) {
+		json_error(buf, size, status, 500, "Internal error");
+		return;
+	}
+	arr = cJSON_CreateArray();
+	if (!arr) {
+		cJSON_Delete(root);
+		json_error(buf, size, status, 500, "Internal error");
+		return;
+	}
+	cJSON_AddItemToObject(root, "entries", arr);
+	for (i = 0; i < n; i++) {
+		cJSON *e = cJSON_CreateObject();
+		if (!e) continue;
+		gmtime_r(&entries[i].ts, &tm);
+		strftime(tsbuf, sizeof tsbuf, "%Y-%m-%dT%H:%M:%SZ", &tm);
+		cJSON_AddStringToObject(e, "timestamp", tsbuf);
+		cJSON_AddStringToObject(e, "direction",
+			entries[i].direction == ASAP_LOG_DIR_IN ? "in" : "out");
+		cJSON_AddStringToObject(e, "payload_type", entries[i].payload_type);
+		cJSON_AddStringToObject(e, "id", entries[i].id);
+		if (entries[i].json_snippet[0])
+			cJSON_AddStringToObject(e, "snippet", entries[i].json_snippet);
+		cJSON_AddItemToArray(arr, e);
+	}
+	s = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!s) {
+		json_error(buf, size, status, 500, "Internal error");
+		return;
+	}
+	json_response(buf, size, status, s);
+	free(s);
+}
+
+static void handle_asap(http_server_ctx_t *ctx, const char *client_ip,
+	const char *body, size_t body_len, char *buf, size_t size, int *status)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t asap_ctx;
+	cJSON *parse_err = NULL;
+	char err_msg[256];
+	char *resp_json;
+	char *snippet;
+	int rc;
+	(void)body_len;
+	/* TODO (Task 6.0): tighten rate limit with X-Forwarded-For proxy awareness. */
+	if (rate_limit_asap(client_ip, time(NULL))) {
+		jsonrpc_error(buf, size, status, 429, -32000, "rate limit exceeded");
+		return;
+	}
+	asap_envelope_init(&in);
+	rc = asap_envelope_parse(body, &in, &parse_err);
+	if (rc != 0) {
+		char *err_str = parse_err ? cJSON_PrintUnformatted(parse_err) : NULL;
+		cJSON_Delete(parse_err);
+		asap_envelope_clear(&in);
+		jsonrpc_error(buf, size, status, 400, -32700, err_str ? err_str : "parse error");
+		free(err_str);
+		return;
+	}
+	snippet = in.payload ? cJSON_PrintUnformatted(in.payload) : NULL;
+	asap_log_append_in(in.payload_type, in.id, snippet);
+	free(snippet);
+	memset(&asap_ctx, 0, sizeof asap_ctx);
+	asap_ctx.cfg = ctx ? ctx->cfg : NULL;
+	err_msg[0] = '\0';
+	asap_envelope_init(&out);
+	rc = asap_server_handle(&in, &out, &asap_ctx, err_msg, sizeof err_msg);
+	asap_envelope_clear(&in);
+	if (rc != 0) {
+		asap_envelope_clear(&out);
+		jsonrpc_error(buf, size, status, 400, rc, err_msg[0] ? err_msg : "handler error");
+		return;
+	}
+	resp_json = asap_envelope_to_jsonrpc_string(&out, NULL);
+	snippet = out.payload ? cJSON_PrintUnformatted(out.payload) : NULL;
+	asap_log_append_out(out.payload_type, out.id, snippet);
+	free(snippet);
+	asap_envelope_clear(&out);
+	if (!resp_json) {
+		jsonrpc_error(buf, size, status, 500, -32603, "failed to serialize response");
+		return;
+	}
+	*status = 200;
+	{
+		size_t rlen = strlen(resp_json);
+		if (rlen >= size) rlen = size - 1;
+		memcpy(buf, resp_json, rlen);
+		buf[rlen] = '\0';
+	}
+	free(resp_json);
 }
 
 static void handle_well_known(http_server_ctx_t *ctx, const char *uri, int uri_len,
@@ -564,7 +709,19 @@ static int dispatch_route(http_server_ctx_t *ctx, struct lws *wsi, int method,
 		return 0;
 	}
 	if (path_eq(uri, uri_len, "/pair") && method == HTTP_POST) {
+		char client_ip[64] = {0};
+		lws_get_peer_simple(wsi, client_ip, sizeof client_ip);
+		if (ctx && ctx->auth && auth_pair_check_lockout(ctx->auth, client_ip, time(NULL))) {
+			json_error(buf, size, status, 429, "Too many failed attempts");
+			return 0;
+		}
 		handle_pair(ctx, wsi, body, body_len, buf, size, status);
+		if (ctx && ctx->auth) {
+			if (*status == 200)
+				auth_pair_clear_ip(ctx->auth, client_ip);
+			else
+				auth_pair_record_failure(ctx->auth, client_ip, time(NULL));
+		}
 		return 0;
 	}
 	if (path_match(uri, uri_len, "/.well-known/")) {
@@ -644,8 +801,15 @@ static int dispatch_route(http_server_ctx_t *ctx, struct lws *wsi, int method,
 		}
 		return 0;
 	}
+	if (path_eq(uri, uri_len, "/api/asap/log")) {
+		if (method == HTTP_GET) handle_asap_log_get(buf, size, status);
+		else json_error(buf, size, status, 405, "Method not allowed");
+		return 0;
+	}
 	if (path_eq(uri, uri_len, "/asap") && method == HTTP_POST) {
-		handle_asap_stub(buf, size, status);
+		char client_ip[64] = {0};
+		lws_get_peer_simple(wsi, client_ip, sizeof client_ip);
+		handle_asap(ctx, client_ip, body, body_len, buf, size, status);
 		return 0;
 	}
 	json_error(buf, size, status, 404, "Not found");
@@ -711,6 +875,35 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 		}
 		conn->status = 200;
 		conn->has_body = (method == HTTP_POST || method == HTTP_PUT);
+		/* For /asap POST: enforce 1 MB body cap via Content-Length and allocate
+		 * a dynamic buffer so large envelopes are not silently truncated. */
+		if (conn->has_body && path_eq(uri, uri_len, "/asap")) {
+			char cl_buf[32] = {0};
+			long cl = 0;
+			if (lws_hdr_copy(wsi, cl_buf, sizeof cl_buf,
+			                  WSI_TOKEN_HTTP_CONTENT_LENGTH) > 0)
+				cl = atol(cl_buf);
+			if (cl > ASAP_BODY_MAX) {
+				free(conn->response);
+				free(conn);
+				lws_return_http_status(wsi, 413, "{\"error\":\"body too large\"}");
+				lws_http_transaction_completed(wsi);
+				return 0;
+			}
+			size_t cap = (cl > 0) ? (size_t)cl : (size_t)ASAP_BODY_MAX;
+			conn->body_dyn = malloc(cap + 1);
+			if (!conn->body_dyn) {
+				free(conn->response);
+				free(conn);
+				lws_return_http_status(wsi, 500, "Internal error");
+				lws_http_transaction_completed(wsi);
+				return 0;
+			}
+			conn->body_dyn[0] = '\0';
+			conn->body_dyn_len = 0;
+			conn->body_dyn_cap = cap;
+			conn->use_dyn_body = 1;
+		}
 		if (!conn->has_body && is_static_path(uri, uri_len, method)) {
 			const unsigned char *data = NULL;
 			size_t data_len = 0;
@@ -747,11 +940,19 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 	case LWS_CALLBACK_HTTP_BODY: {
 		http_conn_t *conn = lws_get_wsi_user(wsi);
 		if (conn && in && len > 0) {
-			size_t remain = BODY_BUF_SIZE - conn->body_len - 1;
-			if (len < remain) remain = len;
-			memcpy(conn->body + conn->body_len, in, remain);
-			conn->body_len += remain;
-			conn->body[conn->body_len] = '\0';
+			if (conn->use_dyn_body) {
+				size_t remain = conn->body_dyn_cap - conn->body_dyn_len;
+				if (len < remain) remain = len;
+				memcpy(conn->body_dyn + conn->body_dyn_len, in, remain);
+				conn->body_dyn_len += remain;
+				conn->body_dyn[conn->body_dyn_len] = '\0';
+			} else {
+				size_t remain = BODY_BUF_SIZE - conn->body_len - 1;
+				if (len < remain) remain = len;
+				memcpy(conn->body + conn->body_len, in, remain);
+				conn->body_len += remain;
+				conn->body[conn->body_len] = '\0';
+			}
 		}
 		return 0;
 	}
@@ -769,8 +970,15 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 					else if (strcmp(mb, "DELETE") == 0) method = HTTP_DELETE;
 				}
 			}
-			dispatch_route(ctx, wsi, method, uri, uri_len, conn->body, conn->body_len,
-			               conn->response, RESP_BUF_SIZE, &conn->status);
+			if (conn->use_dyn_body) {
+				dispatch_route(ctx, wsi, method, uri, uri_len,
+				               conn->body_dyn, conn->body_dyn_len,
+				               conn->response, RESP_BUF_SIZE, &conn->status);
+			} else {
+				dispatch_route(ctx, wsi, method, uri, uri_len,
+				               conn->body, conn->body_len,
+				               conn->response, RESP_BUF_SIZE, &conn->status);
+			}
 			conn->response_len = strlen(conn->response);
 			conn->has_body = 0;
 		}
@@ -855,6 +1063,7 @@ static int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void
 		http_conn_t *conn = lws_get_wsi_user(wsi);
 		if (conn) {
 			if (conn->response) free(conn->response);
+			if (conn->body_dyn) free(conn->body_dyn);
 			free(conn);
 			lws_set_wsi_user(wsi, NULL);
 		}

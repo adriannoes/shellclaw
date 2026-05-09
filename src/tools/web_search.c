@@ -1,6 +1,6 @@
 /**
  * @file web_search.c
- * @brief Web search tool: Brave Search (when API key set) or DuckDuckGo fallback.
+ * @brief Web search tool: Tavily (key set) > Brave Search (key set) > DuckDuckGo fallback.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -16,6 +16,7 @@
 
 #define DDG_URL "https://api.duckduckgo.com/?q=%s&format=json"
 #define BRAVE_URL "https://api.search.brave.com/res/v1/web/search?q=%s&count=10"
+#define TAVILY_URL "https://api.tavily.com/search"
 #define RESP_BUF_SIZE (64 * 1024)
 #define RESP_BUF_MAX (256 * 1024)
 
@@ -69,6 +70,76 @@ static void append_result(char *out, size_t max_len, size_t *used, const char *t
 	}
 	memcpy(out + *used, text, len + 1);
 	*used += len;
+}
+
+static int search_tavily(const char *query, char *result_buf, size_t max_len)
+{
+	const char *env_name = g_web_search_cfg ? config_tavily_api_key_env(g_web_search_cfg) : "TAVILY_API_KEY";
+	const char *api_key = getenv(env_name);
+	if (!api_key || !api_key[0]) return -1;
+	CURL *curl = curl_easy_init();
+	if (!curl) return -1;
+	cJSON *body = cJSON_CreateObject();
+	if (!body) { curl_easy_cleanup(curl); return -1; }
+	cJSON_AddStringToObject(body, "api_key", api_key);
+	cJSON_AddStringToObject(body, "query", query);
+	cJSON_AddNumberToObject(body, "max_results", 10);
+	char *body_str = cJSON_PrintUnformatted(body);
+	cJSON_Delete(body);
+	if (!body_str) { curl_easy_cleanup(curl); return -1; }
+	struct curl_slist *headers = NULL;
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	curl_buf_t resp = { .buf = malloc(RESP_BUF_SIZE), .len = 0, .cap = RESP_BUF_SIZE };
+	if (!resp.buf) {
+		free(body_str);
+		curl_slist_free_all(headers);
+		curl_easy_cleanup(curl);
+		return -1;
+	}
+	resp.buf[0] = '\0';
+	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+	curl_easy_setopt(curl, CURLOPT_URL, TAVILY_URL);
+	curl_easy_setopt(curl, CURLOPT_POST, 1L);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+	CURLcode res = curl_easy_perform(curl);
+	free(body_str);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	if (res != CURLE_OK || resp.len == 0) {
+		free(resp.buf);
+		return -1;
+	}
+	cJSON *root = cJSON_Parse(resp.buf);
+	free(resp.buf);
+	if (!root || !cJSON_IsObject(root)) {
+		if (root) cJSON_Delete(root);
+		return -1;
+	}
+	cJSON *results = cJSON_GetObjectItem(root, "results");
+	size_t used = 0;
+	result_buf[0] = '\0';
+	if (results && cJSON_IsArray(results)) {
+		int n = cJSON_GetArraySize(results);
+		for (int i = 0; i < n && i < 10; i++) {
+			cJSON *item = cJSON_GetArrayItem(results, i);
+			if (!item || !cJSON_IsObject(item)) continue;
+			cJSON *title = cJSON_GetObjectItem(item, "title");
+			cJSON *content = cJSON_GetObjectItem(item, "content");
+			cJSON *url_obj = cJSON_GetObjectItem(item, "url");
+			if (title && cJSON_IsString(title) && title->valuestring[0])
+				append_result(result_buf, max_len, &used, title->valuestring);
+			if (content && cJSON_IsString(content) && content->valuestring[0])
+				append_result(result_buf, max_len, &used, content->valuestring);
+			if (url_obj && cJSON_IsString(url_obj) && url_obj->valuestring[0])
+				append_result(result_buf, max_len, &used, url_obj->valuestring);
+		}
+	}
+	cJSON_Delete(root);
+	return (used > 0) ? 0 : -1;
 }
 
 static int search_brave(const char *query, char *result_buf, size_t max_len)
@@ -217,7 +288,9 @@ static int web_search_execute(const char *args_json, char *result_buf, size_t ma
 		snprintf(result_buf, max_len, "{\"error\":\"out of memory\"}");
 		return -1;
 	}
-	int r = search_brave(query, result_buf, max_len);
+	int r = search_tavily(query, result_buf, max_len);
+	if (r != 0)
+		r = search_brave(query, result_buf, max_len);
 	if (r != 0)
 		r = search_duckduckgo(query, result_buf, max_len);
 	if (r != 0 && result_buf[0] == '\0')
@@ -228,7 +301,7 @@ static int web_search_execute(const char *args_json, char *result_buf, size_t ma
 
 static const tool_t WEB_SEARCH_TOOL = {
 	.name = "web_search",
-	.description = "Search the web. Uses Brave Search when BRAVE_API_KEY is set, else DuckDuckGo. Returns snippets and links.",
+	.description = "Search the web. Priority: Tavily (TAVILY_API_KEY) > Brave (BRAVE_API_KEY) > DuckDuckGo. Returns snippets and links.",
 	.parameters_json = WEB_SEARCH_PARAMS,
 	.execute = web_search_execute,
 };
