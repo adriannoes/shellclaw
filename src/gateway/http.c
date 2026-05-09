@@ -169,6 +169,10 @@ static void handle_pair(http_server_ctx_t *ctx, struct lws *wsi, const char *bod
                         char *buf, size_t size, int *status)
 {
 	char code[16] = {0};
+	if (!ctx || !ctx->auth) {
+		json_error(buf, size, status, 500, "Internal error");
+		return;
+	}
 	if (body_len > 0 && body) {
 		cJSON *root = cJSON_ParseWithLength(body, body_len);
 		if (root) {

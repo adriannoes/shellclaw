@@ -193,10 +193,9 @@ int sandbox_exec(const char *cmd, char *out, size_t out_cap,
     size_t total;
     int timed_out = 0;
     const char *workspace = cfg ? cfg->workspace_path : NULL;
-    char cgroup_name[80];
     int used_cgroup = 0;
-    cgroup_name[0] = '\0';
 #ifdef __linux__
+    char cgroup_name[80];
     const char *cgroup_base = (cfg && cfg->cgroup_base && cfg->cgroup_base[0])
                                ? cfg->cgroup_base : DEFAULT_CGROUP_BASE;
     size_t memory_max = cfg ? cfg->memory_max_bytes : 0;

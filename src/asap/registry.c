@@ -358,13 +358,12 @@ static int revocation_json_contains_urn(const char *json, const char *urn, char 
 	n = cJSON_GetArraySize(arr);
 	for (i = 0; i < n; i++) {
 		const cJSON *it = cJSON_GetArrayItem(arr, i);
-		const char *u;
 		if (cJSON_IsString(it) && it->valuestring && strcmp(it->valuestring, urn) == 0) {
 			cJSON_Delete(root);
 			return 1;
 		}
 		if (cJSON_IsObject(it)) {
-			u = json_string_cstr((cJSON *)it, "urn");
+			const char *u = json_string_cstr((cJSON *)it, "urn");
 			if (!u) u = json_string_cstr((cJSON *)it, "id");
 			if (u && strcmp(u, urn) == 0) {
 				cJSON_Delete(root);
@@ -547,7 +546,6 @@ int registry_cache_get(registry_cache_t *cache, const char *url, const asap_clie
 {
 	struct timespec now;
 	registry_index_t fresh;
-	int st;
 	if (errbuf && errlen) errbuf[0] = '\0';
 	if (!cache || !url || !out) {
 		err_copy(errbuf, errlen, "invalid argument");
@@ -577,6 +575,7 @@ int registry_cache_get(registry_cache_t *cache, const char *url, const asap_clie
 		return registry_index_clone(&cache->index, out, errbuf, errlen);
 	}
 	if (cache->has_data && cache->url && strcmp(cache->url, url) == 0) {
+		int st;
 		(void)fprintf(stderr, "registry: refresh failed for %s (%s); using stale cache\n", url,
 				errbuf && errlen && errbuf[0] ? errbuf : "unknown error");
 		st = registry_index_clone(&cache->index, out, errbuf, errlen);
@@ -587,7 +586,6 @@ int registry_cache_get(registry_cache_t *cache, const char *url, const asap_clie
 
 static int registry_agent_clone(const registry_agent_t *src, registry_agent_t *dst, char *errbuf, size_t errlen)
 {
-	size_t j;
 	memset(dst, 0, sizeof(*dst));
 	dst->urn = provider_dup_str(src->urn);
 	dst->base_url = provider_dup_str(src->base_url);
@@ -604,7 +602,7 @@ static int registry_agent_clone(const registry_agent_t *src, registry_agent_t *d
 			err_copy(errbuf, errlen, "out of memory");
 			return -1;
 		}
-		for (j = 0; j < src->capabilities_count; j++) {
+		for (size_t j = 0; j < src->capabilities_count; j++) {
 			dst->capabilities[j] = provider_dup_str(src->capabilities[j]);
 			if (!dst->capabilities[j]) {
 				registry_agent_clear(dst);
@@ -637,7 +635,6 @@ int registry_resolve(const registry_resolve_ctx_t *ctx, const char *urn, registr
 {
 	registry_index_t idx;
 	const registry_agent_t *found;
-	int rev;
 	if (errbuf && errlen) errbuf[0] = '\0';
 	if (!ctx || !ctx->cache || !ctx->registry_url || ctx->registry_url[0] == '\0' || !urn || urn[0] == '\0'
 			|| !out) {
@@ -646,7 +643,7 @@ int registry_resolve(const registry_resolve_ctx_t *ctx, const char *urn, registr
 	}
 	memset(out, 0, sizeof(*out));
 	if (ctx->revocation_list_url && ctx->revocation_list_url[0] != '\0') {
-		rev = registry_revocation_list_contains(ctx->revocation_list_url, urn, ctx->client_opt, errbuf, errlen);
+		int rev = registry_revocation_list_contains(ctx->revocation_list_url, urn, ctx->client_opt, errbuf, errlen);
 		if (rev == 1) {
 			err_copy(errbuf, errlen, "agent URN is revoked");
 			return -1;

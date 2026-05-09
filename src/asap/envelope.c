@@ -118,9 +118,9 @@ static cJSON *dup_request_id(cJSON *root)
 static int require_str_in_params(cJSON *params, const char *key, char **out, cJSON *rpc_id,
 		asap_envelope_t *env, cJSON **err_out)
 {
-	char errbuf[120];
 	cJSON *j = cJSON_GetObjectItemCaseSensitive(params, key);
 	if (!j || !cJSON_IsString(j) || !j->valuestring) {
+		char errbuf[120];
 		snprintf(errbuf, sizeof errbuf, "Invalid params: missing or bad type for '%.48s'", key);
 		return parse_fail(env, rpc_id, err_out, errbuf);
 	}
