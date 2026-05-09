@@ -59,6 +59,15 @@ int config_workspace_only(const config_t *c);
 const char *config_workspace_path(const config_t *c);
 int config_shell_timeout_sec(const config_t *c);
 
+/** Non-zero when the process sandbox (namespace isolation) is enabled. Default 0. */
+int config_sandbox_enabled(const config_t *c);
+/** Memory ceiling in bytes for the sandbox cgroup memory.max limit. Default 64 MiB. */
+size_t config_sandbox_memory_max_bytes(const config_t *c);
+/** CPU quota string for cgroups v2 "cpu.max" (e.g. "50000 100000"). NULL = unlimited. */
+const char *config_sandbox_cpu_max(const config_t *c);
+/** Base directory for the cgroup hierarchy. NULL = "/sys/fs/cgroup". */
+const char *config_sandbox_cgroup_base(const config_t *c);
+
 int config_gateway_enabled(const config_t *c);
 const char *config_gateway_host(const config_t *c);
 int config_gateway_port(const config_t *c);
@@ -68,12 +77,28 @@ int config_asap_enabled(const config_t *c);
 const char *config_asap_agent_urn(const config_t *c);
 const char *config_asap_agent_name(const config_t *c);
 const char *config_asap_registry_url(const config_t *c);
+/**
+ * Optional URL for the revoked-agents list (e.g. GET revoked_agents.json).
+ * When NULL, the registry module may derive a default from #config_asap_registry_url.
+ */
+const char *config_asap_revocation_list_url(const config_t *c);
+/** HTTP(S) request timeout in seconds for ASAP client calls (outbound). Default 30. */
+int config_asap_client_timeout_sec(const config_t *c);
+/**
+ * Inbound ASAP trust list size from `[asap].trusted_senders`.
+ * If zero, any sender is accepted; if non-zero, only listed URNs pass #asap_server_handle.
+ */
+int config_asap_trusted_senders_count(const config_t *c);
+/** Trusted sender URN at index, or NULL if out of range. */
+const char *config_asap_trusted_sender(const config_t *c, int index);
 
 int config_heartbeat_enabled(const config_t *c);
 int config_heartbeat_interval_minutes(const config_t *c);
 const char *config_heartbeat_default_channel(const config_t *c);
 
 const char *config_brave_api_key_env(const config_t *c);
+/** Name of the env var holding the Tavily API key. Default "TAVILY_API_KEY". */
+const char *config_tavily_api_key_env(const config_t *c);
 
 /** Expand ~ prefix to $HOME in path. Returns malloc'd string. Caller must free. */
 char *config_expand_tilde(const char *path);

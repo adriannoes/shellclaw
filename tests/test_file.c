@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -126,11 +127,82 @@ static void test_file_outside_workspace_rejected(void)
 	unlink(config_path);
 }
 
+/* Build a config with workspace_path=tmpdir; return allocated path; caller must config_free + unlink. */
+static config_t *make_ws_config(const char *workspace, char *config_path_out, size_t path_cap)
+{
+	char cwd[PATH_MAX];
+	if (!getcwd(cwd, sizeof(cwd))) return NULL;
+	snprintf(config_path_out, path_cap, "%s/build/test_file_ws2.toml", cwd);
+	FILE *f = fopen(config_path_out, "w");
+	if (!f) return NULL;
+	fprintf(f, "[agent]\nmodel=\"x\"\n[memory]\ndb_path=\"/tmp/db\"\n[sandbox]\nworkspace_only=true\nworkspace_path=\"%s\"\n", workspace);
+	fclose(f);
+	config_t *cfg = NULL;
+	config_load(config_path_out, &cfg, NULL, 0);
+	return cfg;
+}
+
+static void test_path_traversal_rejected(void)
+{
+	char tmpdir[PATH_MAX];
+	snprintf(tmpdir, sizeof(tmpdir), "/tmp/sc_test_trav_%d", (int)getpid());
+	if (mkdir(tmpdir, 0755) != 0 && errno != EEXIST) return;
+	char config_path[PATH_MAX];
+	config_t *cfg = make_ws_config(tmpdir, config_path, sizeof(config_path));
+	MU_ASSERT(cfg != NULL, "traversal: load config");
+	tool_file_set_config(cfg);
+	const tool_t *t = tool_file_get();
+	char args[PATH_MAX + 64];
+	char buf[256];
+	/* Classic ../ traversal attempting to reach /etc/passwd */
+	snprintf(args, sizeof(args), "{\"operation\":\"read_file\",\"path\":\"%s/../../../etc/passwd\"}", tmpdir);
+	int r = t->execute(args, buf, sizeof(buf));
+	MU_ASSERT(r == -1, "traversal path rejected");
+	MU_ASSERT(strstr(buf, "outside") != NULL || strstr(buf, "error") != NULL,
+		"traversal rejected with error");
+	config_free(cfg);
+	unlink(config_path);
+	rmdir(tmpdir);
+}
+
+static void test_symlink_escape_rejected(void)
+{
+	char tmpdir[PATH_MAX];
+	snprintf(tmpdir, sizeof(tmpdir), "/tmp/sc_test_sym_%d", (int)getpid());
+	if (mkdir(tmpdir, 0755) != 0 && errno != EEXIST) return;
+	/* Create a symlink inside the workspace pointing outside */
+	char symlink_path[PATH_MAX];
+	snprintf(symlink_path, sizeof(symlink_path), "%s/escape_link", tmpdir);
+	unlink(symlink_path);
+	if (symlink("/etc", symlink_path) != 0) {
+		rmdir(tmpdir);
+		return; /* Skip if symlink creation fails */
+	}
+	char config_path[PATH_MAX];
+	config_t *cfg = make_ws_config(tmpdir, config_path, sizeof(config_path));
+	MU_ASSERT(cfg != NULL, "symlink: load config");
+	tool_file_set_config(cfg);
+	const tool_t *t = tool_file_get();
+	char args[PATH_MAX + 64];
+	char buf[256];
+	snprintf(args, sizeof(args), "{\"operation\":\"read_file\",\"path\":\"%s/escape_link/passwd\"}", tmpdir);
+	int r = t->execute(args, buf, sizeof(buf));
+	MU_ASSERT(r == -1, "symlink escape rejected");
+	MU_ASSERT(strstr(buf, "outside") != NULL || strstr(buf, "error") != NULL,
+		"symlink escape rejected with error");
+	config_free(cfg);
+	unlink(config_path);
+	unlink(symlink_path);
+	rmdir(tmpdir);
+}
+
 int main(void)
 {
 	MU_RUN(test_file_read_write_list);
 	MU_RUN(test_file_empty_workspace_denies_all);
 	MU_RUN(test_file_outside_workspace_rejected);
+	MU_RUN(test_path_traversal_rejected);
+	MU_RUN(test_symlink_escape_rejected);
 	printf("%d tests run, %d failed\n", tests_run, tests_failed);
 	return tests_failed ? 1 : 0;
 }

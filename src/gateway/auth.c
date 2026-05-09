@@ -1,6 +1,6 @@
 /**
  * @file auth.c
- * @brief Pairing code generation and bearer token store (JSON array).
+ * @brief Pairing code generation, bearer token store, and /pair brute-force lockout.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -21,9 +21,19 @@
 #define PAIRING_CODE_LEN 6
 #define TOKEN_LEN 32
 
+#define LOCKOUT_TABLE_SIZE 32
+#define LOCKOUT_IP_SIZE 48
+
+typedef struct pair_lockout_entry {
+	char ip[LOCKOUT_IP_SIZE];
+	int fail_count;
+	time_t locked_until;
+} pair_lockout_entry_t;
+
 struct auth_ctx {
 	char *tokens_path;
 	char *pending_pairing_code;
+	pair_lockout_entry_t lockout[LOCKOUT_TABLE_SIZE];
 };
 
 static int is_file_empty_or_missing(const char *path)
@@ -233,4 +243,71 @@ int auth_validate_token(auth_ctx_t *ctx, const char *token)
 	}
 	cJSON_Delete(root);
 	return found ? 1 : 0;
+}
+
+static pair_lockout_entry_t *lockout_find_or_create(auth_ctx_t *ctx, const char *ip)
+{
+	int i;
+	int free_slot = -1;
+	for (i = 0; i < LOCKOUT_TABLE_SIZE; i++) {
+		if (ctx->lockout[i].ip[0] == '\0') {
+			if (free_slot < 0) free_slot = i;
+			continue;
+		}
+		if (strncmp(ctx->lockout[i].ip, ip, LOCKOUT_IP_SIZE - 1) == 0)
+			return &ctx->lockout[i];
+	}
+	if (free_slot >= 0) {
+		pair_lockout_entry_t *e = &ctx->lockout[free_slot];
+		strncpy(e->ip, ip, LOCKOUT_IP_SIZE - 1);
+		e->ip[LOCKOUT_IP_SIZE - 1] = '\0';
+		e->fail_count = 0;
+		e->locked_until = 0;
+		return e;
+	}
+	/* Table full: reuse slot 0 (evict oldest without LRU overhead). */
+	pair_lockout_entry_t *e = &ctx->lockout[0];
+	strncpy(e->ip, ip, LOCKOUT_IP_SIZE - 1);
+	e->ip[LOCKOUT_IP_SIZE - 1] = '\0';
+	e->fail_count = 0;
+	e->locked_until = 0;
+	return e;
+}
+
+int auth_pair_check_lockout(auth_ctx_t *ctx, const char *ip, time_t now)
+{
+	const char *safe_ip;
+	pair_lockout_entry_t *e;
+	if (!ctx) return 0;
+	safe_ip = (ip && ip[0] != '\0') ? ip : "unknown";
+	e = lockout_find_or_create(ctx, safe_ip);
+	if (e->locked_until > 0 && now < e->locked_until) return 1;
+	if (e->locked_until > 0 && now >= e->locked_until) {
+		e->fail_count = 0;
+		e->locked_until = 0;
+	}
+	return 0;
+}
+
+void auth_pair_record_failure(auth_ctx_t *ctx, const char *ip, time_t now)
+{
+	const char *safe_ip;
+	pair_lockout_entry_t *e;
+	if (!ctx) return;
+	safe_ip = (ip && ip[0] != '\0') ? ip : "unknown";
+	e = lockout_find_or_create(ctx, safe_ip);
+	e->fail_count++;
+	if (e->fail_count >= PAIR_LOCKOUT_MAX_FAILS)
+		e->locked_until = now + PAIR_LOCKOUT_WINDOW_SECS;
+}
+
+void auth_pair_clear_ip(auth_ctx_t *ctx, const char *ip)
+{
+	const char *safe_ip;
+	pair_lockout_entry_t *e;
+	if (!ctx) return;
+	safe_ip = (ip && ip[0] != '\0') ? ip : "unknown";
+	e = lockout_find_or_create(ctx, safe_ip);
+	e->fail_count = 0;
+	e->locked_until = 0;
 }

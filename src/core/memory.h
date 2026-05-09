@@ -160,6 +160,14 @@ int cron_job_get_next_due(long long now, cron_job_row_t *out);
  */
 void memory_cleanup(void);
 
+/**
+ * SQLite row counts for ASAP @c state.query (sessions, memories, cron_jobs).
+ * Any of @p sessions_out, @p memories_out, @p cron_jobs_out may be NULL to skip.
+ *
+ * @return 0 on success, -1 if the database is not open or a query fails.
+ */
+int memory_get_row_counts(int *sessions_out, int *memories_out, int *cron_jobs_out);
+
 #ifdef __cplusplus
 }
 #endif

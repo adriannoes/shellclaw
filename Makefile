@@ -70,8 +70,23 @@ SHELL_O    := src/tools/shell.o
 WEBSEARCH_O := src/tools/web_search.o
 FILE_O     := src/tools/file.o
 REGISTRY_O := src/tools/registry.o
-CRON_O     := src/tools/cron.o
+CRON_O         := src/tools/cron.o
+ASAP_INVOKE_O  := src/tools/asap_invoke.o
+ASAP_INVOKE_TEST_O := $(BINDIR)/asap_invoke_test.o
+# Sandbox (Phase 3 §5)
+SANDBOX_O  := src/sandbox/sandbox.o
+ALLOWLIST_O := src/sandbox/allowlist.o
 MANIFEST_O := src/asap/manifest.o
+ENVELOPE_O := src/asap/envelope.o
+ULID_O := src/asap/ulid.o
+CLIENT_O := src/asap/client.o
+ASAP_REGISTRY_O := src/asap/registry.o
+SERVER_O := src/asap/server.o
+ASAP_LOG_O := src/asap/log.o
+RATE_LIMIT_O := $(if $(filter 1,$(GATEWAY)),src/gateway/rate_limit.o,)
+ASAP_REGISTRY_TEST_O := $(BINDIR)/asap_registry_test.o
+# Phase 3 ASAP unit binaries: keep in sync with `test`, `coverage`, and scripts/coverage.sh TESTS list.
+ASAP_UNIT_TESTS := test_asap_envelope test_asap_ulid test_asap_client test_asap_registry test_asap_server test_asap_invoke test_asap_log
 # Provider objects built with SHELLCLAW_TEST for negative/parse tests (CR-21)
 ANTHROPIC_TEST_O := $(BINDIR)/anthropic_test.o
 OPENAI_TEST_O    := $(BINDIR)/openai_test.o
@@ -91,9 +106,9 @@ debug:
 release:
 	$(MAKE) BUILD=release shellclaw
 
-shellclaw: $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O)
+shellclaw: $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SERVER_O) $(ASAP_LOG_O) $(RATE_LIMIT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O) $(ASAP_INVOKE_O) $(SANDBOX_O) $(ALLOWLIST_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O) $(LDLIBS) $(GATEWAY_LDLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_O) $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SERVER_O) $(ASAP_LOG_O) $(RATE_LIMIT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O) $(ASAP_INVOKE_O) $(SANDBOX_O) $(ALLOWLIST_O) $(LDLIBS) $(GATEWAY_LDLIBS) -pthread
 	$(DSYM_SCRIPT)
 	@if [ "$(BUILD)" = "release" ]; then strip -s $(BINDIR)/$@ 2>/dev/null || true; fi
 
@@ -173,17 +188,49 @@ src/gateway/ui_assets.h: web/index.html web/css/style.css web/js/app.js scripts/
 src/gateway/static.o: src/gateway/static.c src/gateway/static.h src/gateway/ui_assets.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/gateway/static.c
 
-$(MANIFEST_O): src/asap/manifest.c src/asap/manifest.h src/core/config.h src/core/skill.h
+$(MANIFEST_O): src/asap/manifest.c src/asap/manifest.h src/asap/asap_version.h src/core/config.h src/core/skill.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/manifest.c
 
-$(HTTP_O): src/gateway/http.c src/gateway/http.h src/gateway/auth.h src/gateway/ws.h src/gateway/static.h src/asap/manifest.h src/core/config.h src/core/memory.h src/core/skill.h
-	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/gateway/http.c
+$(ENVELOPE_O): src/asap/envelope.c src/asap/envelope.h src/asap/asap_version.h vendor/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/envelope.c
+
+$(ULID_O): src/asap/ulid.c src/asap/ulid.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/ulid.c
+
+$(CLIENT_O): src/asap/client.c src/asap/client.h src/asap/envelope.h src/asap/ulid.h src/core/config.h src/providers/provider.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/client.c
+
+$(ASAP_REGISTRY_O): src/asap/registry.c src/asap/registry.h src/asap/client.h src/providers/provider.h vendor/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/asap/registry.c
+
+$(SERVER_O): src/asap/server.c src/asap/server.h src/asap/envelope.h src/asap/asap_version.h src/asap/ulid.h src/core/agent.h src/core/config.h src/core/memory.h src/providers/provider.h vendor/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INC) -pthread -c -o $@ src/asap/server.c
+
+$(ASAP_LOG_O): src/asap/log.c src/asap/log.h
+	$(CC) $(CFLAGS) $(INC) -pthread -c -o $@ src/asap/log.c
+
+$(ASAP_REGISTRY_TEST_O): src/asap/registry.c src/asap/registry.h src/asap/client.h src/providers/provider.h vendor/cJSON/cJSON.h
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(INC) -DSHELLCLAW_REGISTRY_TEST -c -o $@ src/asap/registry.c
+
+$(RATE_LIMIT_O): src/gateway/rate_limit.c src/gateway/rate_limit.h
+	$(CC) $(CFLAGS) $(INC) -pthread -c -o $@ src/gateway/rate_limit.c
+
+$(HTTP_O): src/gateway/http.c src/gateway/http.h src/gateway/auth.h src/gateway/ws.h src/gateway/static.h src/gateway/rate_limit.h src/asap/manifest.h src/asap/envelope.h src/asap/server.h src/asap/log.h src/core/config.h src/core/memory.h src/core/skill.h
+	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -pthread -c -o $@ src/gateway/http.c
 
 $(WS_O): src/gateway/ws.c src/gateway/ws.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/gateway/ws.c
 
-$(SHELL_O): src/tools/shell.c src/tools/tool.h src/tools/shell.h src/core/config.h
+$(SHELL_O): src/tools/shell.c src/tools/tool.h src/tools/shell.h src/core/config.h \
+            src/sandbox/sandbox.h src/sandbox/allowlist.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/shell.c
+
+$(SANDBOX_O): src/sandbox/sandbox.c src/sandbox/sandbox.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/sandbox/sandbox.c
+
+$(ALLOWLIST_O): src/sandbox/allowlist.c src/sandbox/allowlist.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/sandbox/allowlist.c
 
 $(WEBSEARCH_O): src/tools/web_search.c src/tools/tool.h src/tools/web_search.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/web_search.c
@@ -191,11 +238,18 @@ $(WEBSEARCH_O): src/tools/web_search.c src/tools/tool.h src/tools/web_search.h s
 $(FILE_O): src/tools/file.c src/tools/tool.h src/tools/file.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/file.c
 
-$(REGISTRY_O): src/tools/registry.c src/tools/tool.h src/tools/shell.h src/tools/web_search.h src/tools/file.h src/core/config.h
+$(REGISTRY_O): src/tools/registry.c src/tools/tool.h src/tools/shell.h src/tools/web_search.h src/tools/file.h src/tools/asap_invoke.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/registry.c
 
 $(CRON_O): src/tools/cron.c src/tools/cron.h src/core/memory.h src/channels/channel.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/cron.c
+
+$(ASAP_INVOKE_O): src/tools/asap_invoke.c src/tools/asap_invoke.h src/tools/tool.h src/asap/envelope.h src/asap/client.h src/asap/registry.h src/asap/ulid.h src/asap/asap_version.h src/core/config.h vendor/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/asap_invoke.c
+
+$(ASAP_INVOKE_TEST_O): src/tools/asap_invoke.c src/tools/asap_invoke.h src/tools/tool.h src/asap/envelope.h src/asap/client.h src/asap/registry.h src/asap/ulid.h src/asap/asap_version.h src/core/config.h vendor/cJSON/cJSON.h
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(INC) -DSHELLCLAW_ASAP_INVOKE_TEST -DSHELLCLAW_REGISTRY_TEST -c -o $@ src/tools/asap_invoke.c
 
 test_config: tests/test_config.c $(CONFIG_O) $(TOML_O)
 	@mkdir -p $(BINDIR)
@@ -247,9 +301,9 @@ test_cli: tests/test_cli.c $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_cli.c $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
-test_shell: tests/test_shell.c $(SHELL_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+test_shell: tests/test_shell.c $(SHELL_O) $(SANDBOX_O) $(ALLOWLIST_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_shell.c $(SHELL_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_shell.c $(SHELL_O) $(SANDBOX_O) $(ALLOWLIST_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
 test_file: tests/test_file.c $(FILE_O) $(REGISTRY_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
@@ -286,6 +340,41 @@ test_manifest: tests/test_manifest.c $(MANIFEST_O) $(CONFIG_O) $(TOML_O) $(SKILL
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_manifest.c $(MANIFEST_O) $(CONFIG_O) $(TOML_O) $(SKILL_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
+test_asap_envelope: tests/test_asap_envelope.c $(ENVELOPE_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_asap_envelope.c $(ENVELOPE_O) $(CJSON_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_asap_ulid: tests/test_asap_ulid.c $(ULID_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -pthread -o $(BINDIR)/$@ tests/test_asap_ulid.c $(ULID_O) -pthread
+	$(DSYM_SCRIPT)
+
+test_asap_client: tests/test_asap_client.c $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -pthread -o $(BINDIR)/$@ tests/test_asap_client.c $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(LDLIBS) -pthread
+	$(DSYM_SCRIPT)
+
+test_asap_registry: tests/test_asap_registry.c $(ASAP_REGISTRY_TEST_O) $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_REGISTRY_TEST -o $(BINDIR)/$@ tests/test_asap_registry.c $(ASAP_REGISTRY_TEST_O) $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_asap_server: tests/test_asap_server.c $(SERVER_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(AGENT_O) $(STUB_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -pthread -o $(BINDIR)/$@ tests/test_asap_server.c $(SERVER_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(AGENT_O) $(STUB_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(LDLIBS) -pthread
+	$(DSYM_SCRIPT)
+
+test_asap_log: tests/test_asap_log.c $(ASAP_LOG_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -pthread -o $(BINDIR)/$@ tests/test_asap_log.c $(ASAP_LOG_O) -pthread
+	$(DSYM_SCRIPT)
+
+test_asap_invoke: tests/test_asap_invoke.c $(ASAP_INVOKE_TEST_O) $(ASAP_REGISTRY_TEST_O) $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_ASAP_INVOKE_TEST -DSHELLCLAW_REGISTRY_TEST -o $(BINDIR)/$@ tests/test_asap_invoke.c $(ASAP_INVOKE_TEST_O) $(ASAP_REGISTRY_TEST_O) $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
 test_gateway_http: tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@if [ "$(GATEWAY)" != "1" ]; then echo "test_gateway_http: skipped (GATEWAY=0)"; exit 0; fi; \
 	mkdir -p $(BINDIR) && \
@@ -296,6 +385,21 @@ test_static: tests/test_static.c src/gateway/ui_assets.h src/gateway/static.o
 	@mkdir -p $(BINDIR)
 	./scripts/embed_ui.sh
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_static.c src/gateway/static.o $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_sandbox: tests/test_sandbox.c $(SANDBOX_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_sandbox.c $(SANDBOX_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_allowlist: tests/test_allowlist.c $(ALLOWLIST_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_allowlist.c $(ALLOWLIST_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_rate_limit: tests/test_rate_limit.c src/gateway/rate_limit.c src/gateway/rate_limit.h
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -pthread -o $(BINDIR)/$@ tests/test_rate_limit.c src/gateway/rate_limit.c -pthread
 	$(DSYM_SCRIPT)
 
 static:
@@ -309,7 +413,7 @@ static:
 		--suppress=constParameterCallback \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -326,6 +430,10 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_web_search
 	$(BINDIR)/test_cron
 	$(BINDIR)/test_manifest
+	@for t in $(ASAP_UNIT_TESTS); do $(BINDIR)/$$t || exit 1; done
+	$(BINDIR)/test_sandbox
+	$(BINDIR)/test_allowlist
+	$(BINDIR)/test_rate_limit
 	$(MAKE) test_auth && $(BINDIR)/test_auth
 	$(MAKE) test_static && $(BINDIR)/test_static
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) test_gateway_http && $(BINDIR)/test_gateway_http; fi
@@ -334,7 +442,7 @@ COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest test_auth test_static
+	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_router test_agent test_channel test_cli test_shell test_file test_telegram test_web_search test_cron test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_auth test_static
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage test_gateway_http; fi
 	@chmod +x scripts/coverage.sh
 	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh
@@ -345,8 +453,8 @@ clean-root-dsym:
 	@rm -f shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_openai test_provider test_router test_shell test_skill test_telegram test_web_search
 
 clean: clean-root-dsym
-	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O)
+	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SERVER_O) $(ASAP_LOG_O) $(RATE_LIMIT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CRON_O) $(ASAP_INVOKE_O) $(SANDBOX_O) $(ALLOWLIST_O)
 	rm -f src/gateway/ui_assets.h
 	find . -name '*.gcno' -o -name '*.gcda' -o -name '*.gcov' | xargs rm -f 2>/dev/null || true
-	rm -f $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_manifest $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static
+	rm -f $(BINDIR)/asap_registry_test.o $(BINDIR)/asap_invoke_test.o $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_router $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_manifest $(BINDIR)/test_asap_envelope $(BINDIR)/test_asap_ulid $(BINDIR)/test_asap_client $(BINDIR)/test_asap_registry $(BINDIR)/test_asap_server $(BINDIR)/test_asap_invoke $(BINDIR)/test_asap_log $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static $(BINDIR)/test_sandbox $(BINDIR)/test_allowlist $(BINDIR)/test_rate_limit
 	rm -rf $(BINDIR)/*.dSYM $(DSYMDIR)

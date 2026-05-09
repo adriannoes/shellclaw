@@ -225,6 +225,83 @@ static int test_web_search_brave_defaults(void)
 	return 0;
 }
 
+static int test_asap_registry_and_revocation_urls(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_asap_urls.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[asap]\nenabled = true\n");
+	fprintf(f, "registry_url = \"https://registry.example/asap/registry.json\"\n");
+	fprintf(f, "revocation_list_url = \"https://registry.example/asap/revoked_agents.json\"\n");
+	fclose(f);
+	unsetenv("SHELLCLAW_ASAP_REGISTRY_URL");
+	unsetenv("SHELLCLAW_ASAP_REVOCATION_LIST_URL");
+	config_t *cfg = NULL;
+	char errbuf[256];
+	int ret = config_load(path, &cfg, errbuf, sizeof(errbuf));
+	ASSERT(ret == 0);
+	ASSERT(cfg != NULL);
+	ASSERT(config_asap_registry_url(cfg) != NULL);
+	ASSERT(strcmp(config_asap_registry_url(cfg),
+			"https://registry.example/asap/registry.json") == 0);
+	ASSERT(config_asap_revocation_list_url(cfg) != NULL);
+	ASSERT(strcmp(config_asap_revocation_list_url(cfg),
+			"https://registry.example/asap/revoked_agents.json") == 0);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_asap_urls_env_override(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_asap_env.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[asap]\n");
+	fprintf(f, "registry_url = \"https://file.example/registry.json\"\n");
+	fprintf(f, "revocation_list_url = \"https://file.example/revoked.json\"\n");
+	fclose(f);
+	setenv("SHELLCLAW_ASAP_REGISTRY_URL", "https://env.example/registry.json", 1);
+	setenv("SHELLCLAW_ASAP_REVOCATION_LIST_URL", "https://env.example/revoked.json", 1);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	int ret = config_load(path, &cfg, errbuf, sizeof(errbuf));
+	unsetenv("SHELLCLAW_ASAP_REGISTRY_URL");
+	unsetenv("SHELLCLAW_ASAP_REVOCATION_LIST_URL");
+	ASSERT(ret == 0);
+	ASSERT(cfg != NULL);
+	ASSERT(strcmp(config_asap_registry_url(cfg), "https://env.example/registry.json") == 0);
+	ASSERT(strcmp(config_asap_revocation_list_url(cfg), "https://env.example/revoked.json") == 0);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_asap_trusted_senders(void)
+{
+	const char *path = "/tmp/shellclaw_test_config_asap_trusted.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[asap]\ntrusted_senders = [ \"urn:alpha\", \"urn:beta\" ]\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	int ret = config_load(path, &cfg, errbuf, sizeof(errbuf));
+	ASSERT(ret == 0);
+	ASSERT(cfg != NULL);
+	ASSERT(config_asap_trusted_senders_count(cfg) == 2);
+	ASSERT(strcmp(config_asap_trusted_sender(cfg, 0), "urn:alpha") == 0);
+	ASSERT(strcmp(config_asap_trusted_sender(cfg, 1), "urn:beta") == 0);
+	ASSERT(config_asap_trusted_sender(cfg, 2) == NULL);
+	ASSERT(config_asap_trusted_sender(cfg, -1) == NULL);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_load_valid_minimal());
@@ -238,6 +315,9 @@ int main(void)
 	RUN(test_heartbeat_defaults());
 	RUN(test_web_search_brave_config());
 	RUN(test_web_search_brave_defaults());
+	RUN(test_asap_registry_and_revocation_urls());
+	RUN(test_asap_urls_env_override());
+	RUN(test_asap_trusted_senders());
 	printf("test_config: all tests passed\n");
 	return 0;
 }

@@ -42,6 +42,8 @@
 #define ENV_GATEWAY_HOST         "SHELLCLAW_GATEWAY_HOST"
 #define ENV_GATEWAY_PORT         "SHELLCLAW_GATEWAY_PORT"
 #define ENV_GATEWAY_ALLOW_BIND   "SHELLCLAW_GATEWAY_ALLOW_BIND_ALL"
+#define ENV_ASAP_REGISTRY_URL         "SHELLCLAW_ASAP_REGISTRY_URL"
+#define ENV_ASAP_REVOCATION_LIST_URL  "SHELLCLAW_ASAP_REVOCATION_LIST_URL"
 
 struct config {
 	char *agent_model;
@@ -65,6 +67,10 @@ struct config {
 	int workspace_only;
 	char *workspace_path;
 	int shell_timeout_sec;
+	int sandbox_enabled;
+	size_t sandbox_memory_max_bytes;
+	char *sandbox_cpu_max;
+	char *sandbox_cgroup_base;
 	int gateway_enabled;
 	char *gateway_host;
 	int gateway_port;
@@ -73,10 +79,15 @@ struct config {
 	char *asap_agent_urn;
 	char *asap_agent_name;
 	char *asap_registry_url;
+	char *asap_revocation_list_url;
+	int asap_client_timeout_sec;
+	char **asap_trusted_senders;
+	int asap_trusted_senders_count;
 	int heartbeat_enabled;
 	int heartbeat_interval_minutes;
 	char *heartbeat_default_channel;
 	char *brave_api_key_env;
+	char *tavily_api_key_env;
 };
 
 static void set_string(char **dst, const char *src)
@@ -200,9 +211,25 @@ static int parse_gateway(const toml_table_t *root, config_t *cfg)
 	return 0;
 }
 
-static int parse_asap(const toml_table_t *root, config_t *cfg)
+static void free_asap_trusted_senders(config_t *cfg)
+{
+	int i;
+	if (!cfg || !cfg->asap_trusted_senders) return;
+	for (i = 0; i < cfg->asap_trusted_senders_count; i++)
+		free(cfg->asap_trusted_senders[i]);
+	free(cfg->asap_trusted_senders);
+	cfg->asap_trusted_senders = NULL;
+	cfg->asap_trusted_senders_count = 0;
+}
+
+static int parse_asap(const toml_table_t *root, config_t *cfg, char *errbuf, size_t errbufsz)
 {
 	const toml_table_t *asap = toml_table_in(root, "asap");
+	const toml_array_t *arr;
+	char **senders;
+	int n;
+	int i;
+	int count;
 	if (!asap) return 0;
 	toml_datum_t d = toml_bool_in(asap, "enabled");
 	if (d.ok) cfg->asap_enabled = d.u.b;
@@ -212,6 +239,43 @@ static int parse_asap(const toml_table_t *root, config_t *cfg)
 	if (d.ok) { set_string(&cfg->asap_agent_name, d.u.s); free(d.u.s); }
 	d = toml_string_in(asap, "registry_url");
 	if (d.ok) { set_string(&cfg->asap_registry_url, d.u.s); free(d.u.s); }
+	d = toml_string_in(asap, "revocation_list_url");
+	if (d.ok) { set_string(&cfg->asap_revocation_list_url, d.u.s); free(d.u.s); }
+	d = toml_int_in(asap, "client_timeout_sec");
+	if (d.ok && d.u.i > 0) cfg->asap_client_timeout_sec = (int)d.u.i;
+	arr = toml_array_in(asap, "trusted_senders");
+	if (!arr) return 0;
+	n = toml_array_nelem(arr);
+	if (n <= 0) return 0;
+	senders = calloc((size_t)n, sizeof(char *));
+	if (!senders) {
+		ERRBUF_COPY(errbuf, errbufsz, "out of memory allocating asap trusted_senders");
+		return -1;
+	}
+	count = 0;
+	for (i = 0; i < n; i++) {
+		toml_datum_t s = toml_string_at(arr, i);
+		char *copy;
+		if (!s.ok || !s.u.s) continue;
+		copy = strdup(s.u.s);
+		free(s.u.s);
+		if (!copy) {
+			int j;
+			for (j = 0; j < count; j++)
+				free(senders[j]);
+			free(senders);
+			ERRBUF_COPY(errbuf, errbufsz, "out of memory copying asap trusted_senders");
+			return -1;
+		}
+		senders[count++] = copy;
+	}
+	if (count == 0) {
+		free(senders);
+		return 0;
+	}
+	free_asap_trusted_senders(cfg);
+	cfg->asap_trusted_senders = senders;
+	cfg->asap_trusted_senders_count = count;
 	return 0;
 }
 
@@ -234,6 +298,8 @@ static int parse_web_search(const toml_table_t *root, config_t *cfg)
 	if (!ws) return 0;
 	toml_datum_t d = toml_string_in(ws, "brave_api_key_env");
 	if (d.ok) { set_string(&cfg->brave_api_key_env, d.u.s); free(d.u.s); }
+	d = toml_string_in(ws, "tavily_api_key_env");
+	if (d.ok) { set_string(&cfg->tavily_api_key_env, d.u.s); free(d.u.s); }
 	return 0;
 }
 
@@ -257,6 +323,14 @@ static int parse_memory_skills_sandbox(const toml_table_t *root, config_t *cfg)
 		if (d.ok) { set_string(&cfg->workspace_path, d.u.s); free(d.u.s); }
 		d = toml_int_in(sandbox, "shell_timeout_sec");
 		if (d.ok) cfg->shell_timeout_sec = (int)d.u.i;
+		d = toml_bool_in(sandbox, "enabled");
+		if (d.ok) cfg->sandbox_enabled = d.u.b;
+		d = toml_int_in(sandbox, "memory_max_bytes");
+		if (d.ok && d.u.i > 0) cfg->sandbox_memory_max_bytes = (size_t)d.u.i;
+		d = toml_string_in(sandbox, "cpu_max");
+		if (d.ok) { set_string(&cfg->sandbox_cpu_max, d.u.s); free(d.u.s); }
+		d = toml_string_in(sandbox, "cgroup_base");
+		if (d.ok) { set_string(&cfg->sandbox_cgroup_base, d.u.s); free(d.u.s); }
 	}
 	return 0;
 }
@@ -316,6 +390,10 @@ static void apply_env_overrides(config_t *cfg)
 		cfg->gateway_allow_bind_all = 1;
 	else if (v && (strcmp(v, "0") == 0 || strcasecmp(v, "false") == 0 || strcasecmp(v, "no") == 0))
 		cfg->gateway_allow_bind_all = 0;
+	v = getenv(ENV_ASAP_REGISTRY_URL);
+	if (v) set_string(&cfg->asap_registry_url, v);
+	v = getenv(ENV_ASAP_REVOCATION_LIST_URL);
+	if (v) set_string(&cfg->asap_revocation_list_url, v);
 }
 
 static void expand_paths(config_t *cfg)
@@ -413,6 +491,7 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	cfg->heartbeat_interval_minutes = 30;
 	set_string(&cfg->heartbeat_default_channel, "cli");
 	set_string(&cfg->brave_api_key_env, "BRAVE_API_KEY");
+	set_string(&cfg->tavily_api_key_env, "TAVILY_API_KEY");
 	cfg->shell_timeout_sec = DEFAULT_SHELL_TIMEOUT_SEC;
 	int err = parse_agent(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
@@ -421,7 +500,8 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	if (err) goto fail;
 	parse_memory_skills_sandbox(tab, cfg);
 	parse_gateway(tab, cfg);
-	parse_asap(tab, cfg);
+	err = parse_asap(tab, cfg, errbuf, errbufsz);
+	if (err) goto fail;
 	parse_heartbeat(tab, cfg);
 	parse_web_search(tab, cfg);
 	toml_free(tab);
@@ -464,8 +544,13 @@ void config_free(config_t *cfg)
 	set_string(&cfg->asap_agent_urn, NULL);
 	set_string(&cfg->asap_agent_name, NULL);
 	set_string(&cfg->asap_registry_url, NULL);
+	set_string(&cfg->asap_revocation_list_url, NULL);
+	free_asap_trusted_senders(cfg);
 	set_string(&cfg->heartbeat_default_channel, NULL);
 	set_string(&cfg->brave_api_key_env, NULL);
+	set_string(&cfg->tavily_api_key_env, NULL);
+	set_string(&cfg->sandbox_cpu_max, NULL);
+	set_string(&cfg->sandbox_cgroup_base, NULL);
 	free(cfg);
 }
 
@@ -501,7 +586,24 @@ int config_asap_enabled(const config_t *c) { return c ? c->asap_enabled : 0; }
 const char *config_asap_agent_urn(const config_t *c) { return c && c->asap_agent_urn ? c->asap_agent_urn : "urn:asap:agent:shellclaw"; }
 const char *config_asap_agent_name(const config_t *c) { return c && c->asap_agent_name ? c->asap_agent_name : "ShellClaw"; }
 const char *config_asap_registry_url(const config_t *c) { return c ? c->asap_registry_url : NULL; }
+const char *config_asap_revocation_list_url(const config_t *c) { return c ? c->asap_revocation_list_url : NULL; }
+int config_asap_client_timeout_sec(const config_t *c) { if (!c || c->asap_client_timeout_sec <= 0) return 30; return c->asap_client_timeout_sec; }
+int config_asap_trusted_senders_count(const config_t *c)
+{
+	return c ? c->asap_trusted_senders_count : 0;
+}
+const char *config_asap_trusted_sender(const config_t *c, int index)
+{
+	if (!c || !c->asap_trusted_senders || index < 0 || index >= c->asap_trusted_senders_count)
+		return NULL;
+	return c->asap_trusted_senders[index];
+}
 int config_heartbeat_enabled(const config_t *c) { return c ? c->heartbeat_enabled : 0; }
 int config_heartbeat_interval_minutes(const config_t *c) { return c && c->heartbeat_interval_minutes > 0 ? c->heartbeat_interval_minutes : 30; }
 const char *config_heartbeat_default_channel(const config_t *c) { return c && c->heartbeat_default_channel ? c->heartbeat_default_channel : "cli"; }
 const char *config_brave_api_key_env(const config_t *c) { return c && c->brave_api_key_env ? c->brave_api_key_env : "BRAVE_API_KEY"; }
+const char *config_tavily_api_key_env(const config_t *c) { return c && c->tavily_api_key_env ? c->tavily_api_key_env : "TAVILY_API_KEY"; }
+int config_sandbox_enabled(const config_t *c) { return c ? c->sandbox_enabled : 0; }
+size_t config_sandbox_memory_max_bytes(const config_t *c) { return c ? c->sandbox_memory_max_bytes : 0; }
+const char *config_sandbox_cpu_max(const config_t *c) { return c ? c->sandbox_cpu_max : NULL; }
+const char *config_sandbox_cgroup_base(const config_t *c) { return c ? c->sandbox_cgroup_base : NULL; }

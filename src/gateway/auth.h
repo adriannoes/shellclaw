@@ -7,6 +7,7 @@
 #define SHELLCLAW_GATEWAY_AUTH_H
 
 #include <stddef.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +60,43 @@ int auth_pair(auth_ctx_t *ctx, const char *code, char *token_out, size_t token_s
  * @return 1 if valid, 0 otherwise.
  */
 int auth_validate_token(auth_ctx_t *ctx, const char *token);
+
+/* --- Brute-force lockout for /pair (Task 6.4 / PRD CR-7) --- */
+
+/** Maximum failed pairing attempts before an IP is locked out. */
+#define PAIR_LOCKOUT_MAX_FAILS 5
+
+/** Lockout duration in seconds after exceeding PAIR_LOCKOUT_MAX_FAILS. */
+#define PAIR_LOCKOUT_WINDOW_SECS 300
+
+/**
+ * Check whether @p ip is currently locked out from attempting to pair.
+ *
+ * @param ctx  Auth context.
+ * @param ip   Client IP string (NULL treated as "unknown").
+ * @param now  Current time (injectable for tests; use time(NULL) in production).
+ * @return     1 if the IP is locked out, 0 if pairing may proceed.
+ */
+int auth_pair_check_lockout(auth_ctx_t *ctx, const char *ip, time_t now);
+
+/**
+ * Record a failed pairing attempt for @p ip.
+ * After PAIR_LOCKOUT_MAX_FAILS consecutive failures the IP is locked out
+ * for PAIR_LOCKOUT_WINDOW_SECS seconds.
+ *
+ * @param ctx  Auth context.
+ * @param ip   Client IP string (NULL treated as "unknown").
+ * @param now  Current time.
+ */
+void auth_pair_record_failure(auth_ctx_t *ctx, const char *ip, time_t now);
+
+/**
+ * Clear the failure counter for @p ip (call on successful pairing).
+ *
+ * @param ctx  Auth context.
+ * @param ip   Client IP string (NULL treated as "unknown").
+ */
+void auth_pair_clear_ip(auth_ctx_t *ctx, const char *ip);
 
 #ifdef __cplusplus
 }

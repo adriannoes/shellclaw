@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "asap/manifest.h"
+#include "asap/asap_version.h"
 #include "core/config.h"
 #include "cJSON.h"
 #include <stdio.h>
@@ -47,6 +48,7 @@ static int test_manifest_json_null_config(void)
 	cJSON *version = cJSON_GetObjectItem(parsed, "version");
 	ASSERT(version != NULL);
 	ASSERT(cJSON_IsString(version));
+	ASSERT(strcmp(version->valuestring, ASAP_PROTOCOL_VERSION) == 0);
 	cJSON *skills = cJSON_GetObjectItem(parsed, "skills");
 	ASSERT(skills != NULL);
 	ASSERT(cJSON_IsArray(skills));

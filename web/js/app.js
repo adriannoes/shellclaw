@@ -63,10 +63,20 @@
     const token = getToken();
     if (!token) { window.location.hash = '#/pair'; return; }
     api('GET', '/health').then(d => {
+      const sandboxEnabled = d.sandbox_enabled != null ? d.sandbox_enabled : false;
+      const asapEnabled = d.asap_enabled != null ? d.asap_enabled : false;
+      const asapError = d.asap_last_error || '';
+      const registryTs = d.registry_last_fetch || '';
       render(app, '<h1>Dashboard</h1>' +
-        '<p><span class="status-ok">Status:</span> ' + escapeHtml(d.status || 'ok') + '</p>' +
-        '<p>Uptime: ' + escapeHtml(d.uptime != null ? d.uptime + 's' : '-') + '</p>' +
-        '<p>Version: ' + escapeHtml(d.version || '-') + '</p>');
+        '<div class="dashboard-cards">' +
+        '<div class="card"><div class="card-label">Status</div><div class="card-value status-ok">' + escapeHtml(d.status || 'ok') + '</div></div>' +
+        '<div class="card"><div class="card-label">Uptime</div><div class="card-value">' + escapeHtml(d.uptime != null ? d.uptime + 's' : '-') + '</div></div>' +
+        '<div class="card"><div class="card-label">Version</div><div class="card-value">' + escapeHtml(d.version || '-') + '</div></div>' +
+        '<div class="card"><div class="card-label">Sandbox</div><div class="card-value ' + (sandboxEnabled ? 'status-ok' : 'status-warn') + '">' + (sandboxEnabled ? 'enabled' : 'disabled') + '</div></div>' +
+        '<div class="card"><div class="card-label">ASAP</div><div class="card-value ' + (asapEnabled ? 'status-ok' : 'status-warn') + '">' + (asapEnabled ? 'connected' : 'disabled') + '</div></div>' +
+        '<div class="card"><div class="card-label">Registry</div><div class="card-value">' + escapeHtml(registryTs || 'never') + '</div></div>' +
+        (asapError ? '<div class="card card-full"><div class="card-label status-err">Last ASAP Error</div><div class="card-value">' + escapeHtml(asapError) + '</div></div>' : '') +
+        '</div>');
     }).catch(e => {
       render(app, '<h1>Dashboard</h1><p class="status-err">Failed to fetch: ' + escapeHtml(e || 'Unknown') + '</p>');
     });
@@ -216,10 +226,47 @@
   }
 
   function renderAsap() {
-    fetch(API_BASE + '/.well-known/asap/manifest.json').then(r => r.json()).then(d => {
-      render(app, '<h1>ASAP</h1><pre class="pre-wrap">' + escapeHtml(JSON.stringify(d, null, 2)) + '</pre>');
-    }).catch(e => {
-      render(app, '<h1>ASAP</h1><p class="status-err">Failed: ' + escapeHtml(e) + '</p>');
+    const token = getToken();
+    if (!token) { window.location.hash = '#/pair'; return; }
+    render(app, '<h1>ASAP</h1><div id="asap-content"><p class="status-warn">Loading...</p></div>');
+    const content = document.getElementById('asap-content');
+    const manifestP = fetch(API_BASE + '/.well-known/asap/manifest.json')
+      .then(r => r.ok ? r.json() : Promise.reject('HTTP ' + r.status))
+      .catch(() => null);
+    const logP = api('GET', '/api/asap/log').catch(() => null);
+    Promise.all([manifestP, logP]).then(function (results) {
+      const manifest = results[0];
+      const logData = results[1];
+      let html = '';
+      /* Dashboard cards */
+      html += '<div class="dashboard-cards">';
+      if (manifest) {
+        html += '<div class="card"><div class="card-label">Agent URN</div><div class="card-value">' + escapeHtml(manifest.urn || manifest.agent_urn || '-') + '</div></div>';
+        html += '<div class="card"><div class="card-label">ASAP Version</div><div class="card-value status-ok">' + escapeHtml(manifest.asap_version || '-') + '</div></div>';
+        html += '<div class="card"><div class="card-label">Agent Name</div><div class="card-value">' + escapeHtml(manifest.name || '-') + '</div></div>';
+      } else {
+        html += '<div class="card"><div class="card-label">Manifest</div><div class="card-value status-err">unavailable</div></div>';
+      }
+      html += '</div>';
+      /* Manifest detail */
+      if (manifest) {
+        html += '<h2>Manifest</h2><pre class="pre-wrap">' + escapeHtml(JSON.stringify(manifest, null, 2)) + '</pre>';
+      }
+      /* Envelope log table */
+      html += '<h2>Envelope Log</h2>';
+      if (logData && Array.isArray(logData.entries) && logData.entries.length > 0) {
+        html += '<table class="asap-log-table"><thead><tr><th>Time</th><th>Dir</th><th>Type</th><th>ID</th></tr></thead><tbody>';
+        logData.entries.forEach(function (e) {
+          const dir = e.direction === 'in' ? '&larr; in' : '&rarr; out';
+          html += '<tr><td>' + escapeHtml(e.timestamp || '-') + '</td><td>' + dir + '</td><td>' + escapeHtml(e.payload_type || '-') + '</td><td class="mono">' + escapeHtml((e.id || '-').substring(0, 26)) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      } else if (logData && Array.isArray(logData.entries)) {
+        html += '<p class="status-note">No envelope events recorded yet.</p>';
+      } else {
+        html += '<p class="status-warn">Could not load envelope log (unauthorized or server error).</p>';
+      }
+      content.innerHTML = html;
     });
   }
 

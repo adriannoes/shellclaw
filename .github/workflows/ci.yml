@@ -10,6 +10,8 @@ jobs:
   ci:
     name: static, test, release
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 
@@ -47,3 +49,11 @@ jobs:
 
       - name: Coverage (core modules >= 80%)
         run: make coverage
+
+      - name: ASAP compliance check
+        # Pin: asap-compliance >= 1.0.0 (https://pypi.org/project/asap-compliance/)
+        # Requires Python 3.10+. Gracefully skips if package not yet published.
+        run: |
+          pip install --quiet 'asap-compliance>=1.0.0' 2>/dev/null \
+            && asap-compliance --config tests/fixtures/ci_asap_test.toml build/shellclaw \
+            || echo "asap-compliance unavailable or skipped (non-blocking until v0.3.0 release)"

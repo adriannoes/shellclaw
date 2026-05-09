@@ -221,16 +221,28 @@ static int test_api_config_401(void)
 	return 0;
 }
 
-static int test_asap_501(void)
+static int test_asap_invalid_body(void)
 {
 	long code;
 	char *body = NULL;
-	int r = http_post(BASE_URL "/asap", "{}", &code, &body);
+	int r = http_post(BASE_URL "/asap", "not-json", &code, &body);
 	ASSERT(r == 0);
-	ASSERT(code == 501);
+	ASSERT(code == 400);
 	ASSERT(body != NULL);
 	ASSERT(strstr(body, "error") != NULL);
-	ASSERT(strstr(body, "Not Implemented") != NULL);
+	free(body);
+	return 0;
+}
+
+static int test_asap_missing_fields(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_post(BASE_URL "/asap", "{\"jsonrpc\":\"2.0\"}", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 400);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "error") != NULL);
 	free(body);
 	return 0;
 }
@@ -372,6 +384,35 @@ static int test_api_sessions(const char *token)
 	return 0;
 }
 
+static int test_api_asap_log_401(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get(BASE_URL "/api/asap/log", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
+static int test_api_asap_log(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(BASE_URL "/api/asap/log", token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"entries\"") != NULL);
+	cJSON *root = cJSON_Parse(body);
+	ASSERT(root != NULL);
+	cJSON *ent = cJSON_GetObjectItem(root, "entries");
+	ASSERT(ent != NULL && cJSON_IsArray(ent));
+	cJSON_Delete(root);
+	free(body);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -456,7 +497,9 @@ int main(int argc, char **argv)
 	if (test_api_config_401() != 0) { fprintf(stderr, "test_api_config_401 failed\n"); failed++; }
 	if (test_manifest() != 0) { fprintf(stderr, "test_manifest failed\n"); failed++; }
 	if (test_health_wellknown() != 0) { fprintf(stderr, "test_health_wellknown failed\n"); failed++; }
-	if (test_asap_501() != 0) { fprintf(stderr, "test_asap_501 failed\n"); failed++; }
+	if (test_asap_invalid_body() != 0) { fprintf(stderr, "test_asap_invalid_body failed\n"); failed++; }
+	if (test_asap_missing_fields() != 0) { fprintf(stderr, "test_asap_missing_fields failed\n"); failed++; }
+	if (test_api_asap_log_401() != 0) { fprintf(stderr, "test_api_asap_log_401 failed\n"); failed++; }
 	if (token[0]) {
 		if (test_api_config_get(token) != 0) { fprintf(stderr, "test_api_config_get failed\n"); failed++; }
 		if (test_api_skills_list(token) != 0) { fprintf(stderr, "test_api_skills_list failed\n"); failed++; }
@@ -465,6 +508,7 @@ int main(int argc, char **argv)
 		if (test_api_cron_list(token) != 0) { fprintf(stderr, "test_api_cron_list failed\n"); failed++; }
 		if (test_api_cron_create_delete(token) != 0) { fprintf(stderr, "test_api_cron_create_delete failed\n"); failed++; }
 		if (test_api_sessions(token) != 0) { fprintf(stderr, "test_api_sessions failed\n"); failed++; }
+		if (test_api_asap_log(token) != 0) { fprintf(stderr, "test_api_asap_log failed\n"); failed++; }
 	}
 	kill(pid, SIGTERM);
 	waitpid(pid, NULL, 0);

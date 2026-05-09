@@ -10,9 +10,22 @@
 #include "core/skill.h"
 #include "providers/provider.h"
 #include "cJSON.h"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static pthread_mutex_t g_agent_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void agent_lock(void)
+{
+	pthread_mutex_lock(&g_agent_mutex);
+}
+
+void agent_unlock(void)
+{
+	pthread_mutex_unlock(&g_agent_mutex);
+}
 
 #define SYSTEM_PROMPT_MAX      65536
 #define SKILLS_BUF_SIZE        32768
