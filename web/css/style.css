@@ -87,3 +87,29 @@ button.danger { background: #f85149; border-color: #f85149; }
 .log-warn { color: #d29922; }
 .log-error { color: #f85149; }
 .pre-wrap { white-space: pre-wrap; font-size: 0.85rem; }
+.status-warn { color: #d29922; }
+.status-note { color: #8b949e; }
+.dashboard-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+.card {
+  background: #161b22;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.75rem;
+}
+.card-full { grid-column: 1 / -1; }
+.card-label { font-size: 0.75rem; color: var(--dim); margin-bottom: 0.25rem; }
+.card-value { font-size: 0.9rem; font-weight: bold; }
+.asap-log-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.asap-log-table th {
+  text-align: left;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0.5rem;
+}
+.asap-log-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid #21262d; }
+.asap-log-table .mono { font-family: monospace; color: var(--dim); font-size: 0.78rem; }
