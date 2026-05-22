@@ -616,7 +616,7 @@ COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_auth test_static
+	$(MAKE) BUILD=coverage test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_auth test_static
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage test_gateway_http; fi
 	@chmod +x scripts/coverage.sh
 	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh

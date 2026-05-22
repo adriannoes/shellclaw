@@ -1,6 +1,8 @@
 #!/bin/sh
-# Run each test in isolation and merge lcov coverage to avoid gcda corruption
-# when multiple executables share the same object files.
+# Run all coverage-instrumented tests sequentially, accumulate .gcda, capture once.
+# Per-test isolation loses hits when executables share object files (e.g. shellclaw
+# subprocess from test_gateway_http writing gcda for http_lws.o while unit tests
+# cover config.o in the same run).
 set -e
 BINDIR="${BINDIR:-build}"
 COVERAGE_DIR="${COVERAGE_DIR:-build/coverage}"
@@ -10,49 +12,29 @@ LCOV_RC="lcov_branch_coverage=0"
 mkdir -p "$COVERAGE_DIR"
 rm -f "$COVERAGE_DIR"/*.info
 
-TESTS="test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_manifest test_asap_envelope test_asap_ulid test_asap_client test_asap_registry test_asap_server test_asap_invoke test_asap_log test_sandbox test_allowlist test_rate_limit test_auth test_static"
+TESTS="test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest test_asap_envelope test_asap_ulid test_asap_client test_asap_registry test_asap_server test_asap_invoke test_asap_log test_sandbox test_allowlist test_rate_limit test_auth test_static"
 # ASAP tests must stay aligned with ASAP_UNIT_TESTS in the top-level Makefile.
 if [ "${GATEWAY:-}" = "1" ]; then
 	TESTS="$TESTS test_gateway_http"
 fi
 
+find . -name '*.gcda' -delete 2>/dev/null || true
 for t in $TESTS; do
 	exe="$BINDIR/$t"
 	if [ ! -f "$exe" ]; then
 		echo "coverage: skip $t (not built)"
 		continue
 	fi
-	find . -name '*.gcda' -delete 2>/dev/null || true
 	if ! "$exe"; then
 		echo "coverage: $t failed"
 		exit 1
 	fi
-	info="$COVERAGE_DIR/${t}.info"
-	lcov --capture --directory src --output-file "$info" --rc "$LCOV_RC" 2>/dev/null || \
-		lcov --capture --directory . --output-file "$info" --rc "$LCOV_RC" 2>/dev/null || true
 done
 
 ALL_INFO="$COVERAGE_DIR/all.info"
-FIRST=""
-for f in "$COVERAGE_DIR"/*.info; do
-	[ -f "$f" ] || continue
-	[ "$f" = "$ALL_INFO" ] && continue
-	if [ ! -s "$f" ]; then
-		echo "coverage: skip empty $f"
-		continue
-	fi
-	if [ -z "$FIRST" ]; then
-		cp "$f" "$ALL_INFO"
-		FIRST=1
-	else
-		if lcov -a "$ALL_INFO" -a "$f" -o "${ALL_INFO}.tmp" --rc "$LCOV_RC" 2>/dev/null; then
-			mv "${ALL_INFO}.tmp" "$ALL_INFO"
-		else
-			rm -f "${ALL_INFO}.tmp"
-			echo "coverage: warning: failed to merge $(basename "$f") (skipping)"
-		fi
-	fi
-done
+if ! lcov --capture --directory src --output-file "$ALL_INFO" --rc "$LCOV_RC" 2>/dev/null; then
+	lcov --capture --directory . --output-file "$ALL_INFO" --rc "$LCOV_RC" 2>/dev/null || true
+fi
 
 if [ ! -s "$ALL_INFO" ]; then
 	echo "Could not collect coverage data"
