@@ -46,6 +46,8 @@ static int is_file_empty_or_missing(const char *path)
 	return (c == EOF);
 }
 
+static int ensure_tokens_dir(const char *path);
+
 static int generate_random_hex(char *out, size_t len)
 {
 	if (!out || len == 0) return -1;
