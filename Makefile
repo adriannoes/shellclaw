@@ -517,7 +517,7 @@ test_asap_invoke: tests/test_asap_invoke.c $(ASAP_INVOKE_TEST_O) $(ASAP_REGISTRY
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_ASAP_INVOKE_TEST -DSHELLCLAW_REGISTRY_TEST -o $(BINDIR)/$@ tests/test_asap_invoke.c $(ASAP_INVOKE_TEST_O) $(ASAP_REGISTRY_TEST_O) $(CLIENT_O) $(ENVELOPE_O) $(ULID_O) $(CRYPTO_O) $(CJSON_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
-test_gateway_http: tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+test_gateway_http: shellclaw tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@if [ "$(GATEWAY)" != "1" ]; then \
 		if [ "$(CI)" = "true" ]; then echo "test_gateway_http: GATEWAY=0 in CI — install libwebsockets-dev"; exit 1; fi; \
 		echo "test_gateway_http: skipped (GATEWAY=0)"; exit 0; \

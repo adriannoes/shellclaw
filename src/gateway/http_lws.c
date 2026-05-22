@@ -45,6 +45,84 @@ static int http_parse_method(struct lws *wsi)
 	return HTTP_GET;
 }
 
+static void http_append_body(http_conn_t *conn, const void *in, size_t len)
+{
+	if (!conn || !in || len == 0)
+		return;
+	if (conn->use_dyn_body) {
+		size_t remain = conn->body_dyn_cap - conn->body_dyn_len;
+		if (len < remain)
+			remain = len;
+		memcpy(conn->body_dyn + conn->body_dyn_len, in, remain);
+		conn->body_dyn_len += remain;
+		conn->body_dyn[conn->body_dyn_len] = '\0';
+		return;
+	}
+	{
+		size_t remain = BODY_BUF_SIZE - conn->body_len - 1;
+		if (len > remain) {
+			conn->body_too_large = 1;
+			remain = 0;
+		} else if (len < remain) {
+			remain = len;
+		}
+		if (remain > 0) {
+			memcpy(conn->body + conn->body_len, in, remain);
+			conn->body_len += remain;
+			conn->body[conn->body_len] = '\0';
+		}
+	}
+}
+
+static int http_body_content_length(struct lws *wsi, long *cl_out)
+{
+	char cl_buf[32] = {0};
+	if (!cl_out || lws_hdr_copy(wsi, cl_buf, sizeof cl_buf,
+	                           WSI_TOKEN_HTTP_CONTENT_LENGTH) <= 0)
+		return -1;
+	*cl_out = atol(cl_buf);
+	return 0;
+}
+
+static int http_body_is_complete(struct lws *wsi, const http_conn_t *conn)
+{
+	long cl = 0;
+	if (!conn || conn->body_too_large)
+		return conn != NULL && conn->body_too_large;
+	if (http_body_content_length(wsi, &cl) != 0 || cl < 0)
+		return 0;
+	if (conn->use_dyn_body)
+		return (long)conn->body_dyn_len >= cl;
+	return (long)conn->body_len >= cl;
+}
+
+static void http_dispatch_body(http_server_ctx_t *ctx, struct lws *wsi, http_conn_t *conn)
+{
+	char uri[256];
+	int uri_len;
+	int method;
+	if (!conn || !conn->has_body)
+		return;
+	uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI);
+	if (uri_len <= 0)
+		uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_POST_URI);
+	method = http_parse_method(wsi);
+	if (conn->body_too_large) {
+		json_error(conn->response, RESP_BUF_SIZE, &conn->status, 413,
+		           "Request body too large");
+	} else if (conn->use_dyn_body) {
+		dispatch_route(ctx, wsi, method, uri, uri_len,
+		               conn->body_dyn, conn->body_dyn_len,
+		               conn->response, RESP_BUF_SIZE, &conn->status);
+	} else {
+		dispatch_route(ctx, wsi, method, uri, uri_len,
+		               conn->body, conn->body_len,
+		               conn->response, RESP_BUF_SIZE, &conn->status);
+	}
+	conn->response_len = strlen(conn->response);
+	conn->has_body = 0;
+}
+
 typedef struct http_conn {
 	char *response;
 	size_t response_len;
@@ -241,73 +319,33 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			lws_set_wsi_user(wsi, conn);
 			lws_callback_on_writable(wsi);
 		} else {
-			char cl_buf[32] = {0};
 			long cl = 0;
-			if (lws_hdr_copy(wsi, cl_buf, sizeof cl_buf,
-			                  WSI_TOKEN_HTTP_CONTENT_LENGTH) > 0)
-				cl = atol(cl_buf);
-			if (cl > (long)BODY_BUF_SIZE)
+			if (http_body_content_length(wsi, &cl) == 0 && cl > (long)BODY_BUF_SIZE)
 				conn->body_too_large = 1;
 			conn->body[0] = '\0';
 			conn->body_len = 0;
 			lws_set_wsi_user(wsi, conn);
+			if (in && len > 0)
+				http_append_body(conn, in, len);
+			if (http_body_is_complete(wsi, conn)) {
+				http_dispatch_body(ctx, wsi, conn);
+				lws_callback_on_writable(wsi);
+			}
 		}
 		return 0;
 	}
 	case LWS_CALLBACK_HTTP_BODY: {
 		http_conn_t *conn = lws_wsi_user(wsi);
-		if (conn && in && len > 0) {
-			if (conn->use_dyn_body) {
-				size_t remain = conn->body_dyn_cap - conn->body_dyn_len;
-				if (len < remain) remain = len;
-				memcpy(conn->body_dyn + conn->body_dyn_len, in, remain);
-				conn->body_dyn_len += remain;
-				conn->body_dyn[conn->body_dyn_len] = '\0';
-			} else {
-				size_t remain = BODY_BUF_SIZE - conn->body_len - 1;
-				if (len > remain) {
-					conn->body_too_large = 1;
-					remain = 0;
-				} else if (len < remain) {
-					remain = len;
-				}
-				if (remain > 0) {
-					memcpy(conn->body + conn->body_len, in, remain);
-					conn->body_len += remain;
-					conn->body[conn->body_len] = '\0';
-				}
-			}
-		}
+		if (conn && conn->has_body && in && len > 0)
+			http_append_body(conn, in, len);
 		return 0;
 	}
 	case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
 		http_conn_t *conn = lws_wsi_user(wsi);
 		if (conn && conn->has_body) {
-			char uri[256];
-			int uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI);
-			if (uri_len <= 0) uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_POST_URI);
-			int method = http_parse_method(wsi);
-			if (conn->body_too_large) {
-				json_error(conn->response, RESP_BUF_SIZE, &conn->status, 413,
-				           "Request body too large");
-				conn->response_len = strlen(conn->response);
-				conn->has_body = 0;
-				lws_callback_on_writable(wsi);
-				return 0;
-			}
-			if (conn->use_dyn_body) {
-				dispatch_route(ctx, wsi, method, uri, uri_len,
-				               conn->body_dyn, conn->body_dyn_len,
-				               conn->response, RESP_BUF_SIZE, &conn->status);
-			} else {
-				dispatch_route(ctx, wsi, method, uri, uri_len,
-				               conn->body, conn->body_len,
-				               conn->response, RESP_BUF_SIZE, &conn->status);
-			}
-			conn->response_len = strlen(conn->response);
-			conn->has_body = 0;
+			http_dispatch_body(ctx, wsi, conn);
+			lws_callback_on_writable(wsi);
 		}
-		lws_callback_on_writable(wsi);
 		return 0;
 	}
 	case LWS_CALLBACK_HTTP_WRITEABLE: {
