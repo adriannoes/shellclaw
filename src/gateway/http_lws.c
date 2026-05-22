@@ -116,18 +116,6 @@ static int http_body_content_length(struct lws *wsi, long *cl_out)
 	return 0;
 }
 
-static int http_body_is_complete(struct lws *wsi, const http_conn_t *conn)
-{
-	long cl = 0;
-	if (!conn || conn->body_too_large)
-		return conn != NULL && conn->body_too_large;
-	if (http_body_content_length(wsi, &cl) != 0 || cl <= 0)
-		return 0;
-	if (conn->use_dyn_body)
-		return (long)conn->body_dyn_len >= cl;
-	return (long)conn->body_len >= cl;
-}
-
 static void http_dispatch_body(http_server_ctx_t *ctx, struct lws *wsi, http_conn_t *conn)
 {
 	char uri[256];
@@ -337,9 +325,12 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			conn->body[0] = '\0';
 			conn->body_len = 0;
 			lws_set_wsi_user(wsi, conn);
-			if (in && len > 0)
-				http_append_body(conn, in, len);
-			if (conn->body_len > 0 && http_body_is_complete(wsi, conn)) {
+			/* In LWS_CALLBACK_HTTP, `in` is the URI string, never the body
+			 * (the body arrives via LWS_CALLBACK_HTTP_BODY /
+			 * LWS_CALLBACK_HTTP_BODY_COMPLETION). For zero-length POSTs we
+			 * still dispatch from BODY_COMPLETION; if it never arrives the
+			 * connection closes via LWS_CALLBACK_CLOSED_HTTP. */
+			if (conn->body_too_large) {
 				http_dispatch_body(ctx, wsi, conn);
 				lws_callback_on_writable(wsi);
 			}
