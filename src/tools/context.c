@@ -146,11 +146,7 @@ static int exec_tool(const char *args_json, char *result_buf, size_t max_len)
 	}
 	pn = strlen(ctx_g_last_json);
 	if (pn >= max_len) {
-		if (max_len >= 256u && result_buf != NULL) {
-			memcpy(result_buf, "{\"error\":\"get_context payload too large for buffer\"}",
-			       (size_t)max_len - 1u);
-			result_buf[max_len - 1u] = '\0';
-		}
+		snprintf(result_buf, max_len, "{\"error\":\"get_context payload too large for buffer\"}");
 		return -1;
 	}
 	memcpy(result_buf, ctx_g_last_json, pn + 1u);
