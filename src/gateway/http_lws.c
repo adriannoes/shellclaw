@@ -46,33 +46,27 @@ typedef struct http_conn {
 
 static int http_parse_method(struct lws *wsi)
 {
-	char uri_probe[8];
-	if (lws_hdr_copy(wsi, uri_probe, sizeof(uri_probe), WSI_TOKEN_POST_URI) > 0)
+	/* Detect method by checking which URI-method header token is present.
+	 * lws_hdr_total_length returns the length without copying, which
+	 * avoids the bug where lws_hdr_copy returns 0 when the destination
+	 * buffer is too small to hold the URI (breaks routes with long paths
+	 * like /api/skills, /api/cron, etc.). */
+	if (lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI) > 0)
 		return HTTP_POST;
-	if (lws_hdr_copy(wsi, uri_probe, sizeof(uri_probe), WSI_TOKEN_PUT_URI) > 0)
+	if (lws_hdr_total_length(wsi, WSI_TOKEN_PUT_URI) > 0)
 		return HTTP_PUT;
-	if (lws_hdr_copy(wsi, uri_probe, sizeof(uri_probe), WSI_TOKEN_DELETE_URI) > 0)
+	if (lws_hdr_total_length(wsi, WSI_TOKEN_DELETE_URI) > 0)
 		return HTTP_DELETE;
-	if (lws_hdr_copy(wsi, uri_probe, sizeof(uri_probe), WSI_TOKEN_PATCH_URI) > 0)
+	if (lws_hdr_total_length(wsi, WSI_TOKEN_PATCH_URI) > 0)
 		return HTTP_PUT;
-	char meth_buf[32] = {0};
-	char req[32] = {0};
-	if (lws_hdr_custom_copy(wsi, meth_buf, sizeof(meth_buf), ":method", 7) > 0) {
+	/* HTTP/2 / fallbacks: ask for the explicit :method pseudo-header. */
+	char meth_buf[16] = {0};
+	if (lws_hdr_custom_copy(wsi, meth_buf, sizeof(meth_buf), ":method", 7) > 0 ||
+	    lws_hdr_copy(wsi, meth_buf, sizeof(meth_buf), WSI_TOKEN_HTTP_COLON_METHOD) > 0) {
 		if (strcmp(meth_buf, "POST") == 0) return HTTP_POST;
 		if (strcmp(meth_buf, "PUT") == 0) return HTTP_PUT;
 		if (strcmp(meth_buf, "DELETE") == 0) return HTTP_DELETE;
-		return HTTP_GET;
-	}
-	if (lws_hdr_copy(wsi, meth_buf, sizeof(meth_buf), WSI_TOKEN_HTTP_COLON_METHOD) > 0) {
-		if (strcmp(meth_buf, "POST") == 0) return HTTP_POST;
-		if (strcmp(meth_buf, "PUT") == 0) return HTTP_PUT;
-		if (strcmp(meth_buf, "DELETE") == 0) return HTTP_DELETE;
-		return HTTP_GET;
-	}
-	if (lws_hdr_copy(wsi, req, sizeof(req), WSI_TOKEN_HTTP) > 0) {
-		if (strncmp(req, "POST", 4) == 0) return HTTP_POST;
-		if (strncmp(req, "PUT", 3) == 0) return HTTP_PUT;
-		if (strncmp(req, "DELETE", 6) == 0) return HTTP_DELETE;
+		if (strcmp(meth_buf, "PATCH") == 0) return HTTP_PUT;
 	}
 	return HTTP_GET;
 }
@@ -244,9 +238,6 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	case LWS_CALLBACK_HTTP: {
 		char uri[256];
 		int uri_len = http_copy_request_uri(wsi, uri, sizeof(uri));
-		if (getenv("SHELLCLAW_HTTP_TRACE"))
-			fprintf(stderr, "[trace] HTTP cb reason=%d uri_len=%d uri=%.*s in_len=%zu\n",
-				reason, uri_len, uri_len > 0 ? uri_len : 0, uri_len > 0 ? uri : "", len);
 		if (uri_len <= 0 || uri_len >= (int)sizeof(uri)) {
 			lws_return_http_status(wsi, 400, "Bad request");
 			http_lws_tx_completed(wsi);
@@ -278,9 +269,6 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		conn->response[0] = '\0';
 		conn->status = 200;
 		conn->has_body = (method == HTTP_POST || method == HTTP_PUT);
-		if (getenv("SHELLCLAW_HTTP_TRACE"))
-			fprintf(stderr, "[trace]   alloc conn=%p method=%d has_body=%d uri=%.*s\n",
-				(void *)conn, method, conn->has_body, uri_len, uri);
 		/* For /asap POST: enforce 1 MB body cap via Content-Length and allocate
 		 * a dynamic buffer so large envelopes are not silently truncated. */
 		if (conn->has_body && path_eq(uri, uri_len, "/asap")) {
@@ -359,9 +347,6 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		http_conn_t *conn = lws_wsi_user(wsi);
 		long cl;
 		size_t received;
-		if (getenv("SHELLCLAW_HTTP_TRACE"))
-			fprintf(stderr, "[trace] HTTP_BODY conn=%p has_body=%d in_len=%zu\n",
-				(void *)conn, conn ? conn->has_body : -1, len);
 		if (!conn || !conn->has_body || !in || len == 0)
 			return 0;
 		http_append_body(conn, in, len);
@@ -379,10 +364,6 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	}
 	case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
 		http_conn_t *conn = lws_wsi_user(wsi);
-		if (getenv("SHELLCLAW_HTTP_TRACE"))
-			fprintf(stderr, "[trace] HTTP_BODY_COMPLETION conn=%p has_body=%d body_len=%zu\n",
-				(void *)conn, conn ? conn->has_body : -1,
-				conn ? (conn->use_dyn_body ? conn->body_dyn_len : conn->body_len) : 0);
 		if (conn && conn->has_body) {
 			http_dispatch_body(ctx, wsi, conn);
 			lws_callback_on_writable(wsi);
@@ -456,9 +437,6 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			conn->response_sent += (size_t)m;
 		}
 		if (conn->response_sent >= conn->response_len) {
-			if (getenv("SHELLCLAW_HTTP_TRACE"))
-				fprintf(stderr, "[trace]   free conn=%p (writable complete)\n",
-					(void *)conn);
 			free(conn->response);
 			if (conn->body_dyn)
 				free(conn->body_dyn);

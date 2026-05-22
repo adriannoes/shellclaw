@@ -634,7 +634,6 @@ int main(int argc, char **argv)
 	fclose(f);
 	setenv("HOME", g_test_home, 1);
 	setenv("SHELLCLAW_TEST_MODE", "1", 1);
-	setenv("SHELLCLAW_HTTP_TRACE", "1", 1);
 	pid_t pid = fork();
 	if (pid < 0) {
 		fprintf(stderr, "test_gateway_http: fork failed\n");
@@ -644,6 +643,7 @@ int main(int argc, char **argv)
 		int devnull = open("/dev/null", O_WRONLY);
 		if (devnull >= 0) {
 			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
 			close(devnull);
 		}
 		execl("./build/shellclaw", "shellclaw", "--config", config_path, (char *)NULL);
