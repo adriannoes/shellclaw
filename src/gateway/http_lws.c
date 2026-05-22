@@ -15,13 +15,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if !defined(WSI_TOKEN_HTTP_COLON_PROTOCOL) && defined(WSI_TOKEN_COLON_PROTOCOL)
-#define WSI_TOKEN_HTTP_COLON_PROTOCOL WSI_TOKEN_COLON_PROTOCOL
-#endif
-
 static void http_lws_tx_completed(struct lws *wsi)
 {
-	(void)lws_http_transaction_completed(wsi);
+	int rc = lws_http_transaction_completed(wsi);
+	(void)rc;
 }
 
 typedef struct http_conn {
@@ -87,7 +84,7 @@ static int ws_copy_upgrade_token(struct lws *wsi, char *token_out, size_t token_
 	}
 	{
 		char proto[512];
-		int n = lws_hdr_copy(wsi, proto, sizeof(proto), WSI_TOKEN_HTTP_COLON_PROTOCOL);
+		int n = lws_hdr_copy(wsi, proto, sizeof(proto), WSI_TOKEN_COLON_PROTOCOL);
 		if (n <= 0)
 			n = lws_hdr_custom_copy(wsi, proto, sizeof(proto), "sec-websocket-protocol", 22);
 		if (n > 7 && strncmp(proto, "bearer.", 7) == 0) {
