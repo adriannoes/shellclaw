@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libcurl4-openssl-dev cppcheck lcov
+          sudo apt-get install -y build-essential libcurl4-openssl-dev libwebsockets-dev cppcheck lcov nodejs
 
       - name: Static analysis (cppcheck)
         run: make static
@@ -27,13 +27,14 @@ jobs:
         run: make clean && make test
         env:
           CI: true
+          GATEWAY: "1"
 
       - name: AddressSanitizer + UBSan
         run: |
           make clean
           CFLAGS="-std=c11 -Wall -Wextra -Werror -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer" \
           LDFLAGS="-fsanitize=address,undefined" \
-          make test
+          GATEWAY=1 make test
 
       - name: Release build
         run: make clean && make release
@@ -48,7 +49,7 @@ jobs:
           echo "Binary size: $size bytes (OK)"
 
       - name: Coverage (core modules >= 80%)
-        run: make coverage
+        run: GATEWAY=1 make coverage
 
       - name: ASAP compliance check
         # Pin: asap-compliance >= 1.0.0 (https://pypi.org/project/asap-compliance/)
