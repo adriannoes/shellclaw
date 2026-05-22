@@ -10,10 +10,12 @@
 #include "cJSON.h"
 #include <curl/curl.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -23,8 +25,8 @@
 #include <arpa/inet.h>
 
 #define ASSERT(c) do { if (!(c)) { fprintf(stderr, "FAIL: %s:%d %s\n", __FILE__, __LINE__, #c); return 1; } } while (0)
-#define TEST_HOME "/tmp/shellclaw_test_gw_run"
 
+static char g_test_home[64];
 static char g_base_url[128];
 static char g_url_buf[512];
 
@@ -72,7 +74,10 @@ static int wait_for_health(int max_attempts)
 			return 0;
 		}
 		free(body);
-		usleep(200000);
+		{
+			struct timespec delay = { 0, 200000000L };
+			(void)nanosleep(&delay, NULL);
+		}
 	}
 	return -1;
 }
@@ -152,32 +157,6 @@ static int http_get_auth(const char *url, const char *bearer, long *code_out, ch
 	return (res == CURLE_OK) ? 0 : -1;
 }
 
-static int http_put_auth(const char *url, const char *bearer, const char *json, long *code_out, char **body_out)
-{
-	CURL *curl = curl_easy_init();
-	if (!curl) return -1;
-	*body_out = NULL;
-	struct curl_slist *headers = NULL;
-	char auth_hdr[256];
-	snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", bearer);
-	headers = curl_slist_append(headers, auth_hdr);
-	headers = curl_slist_append(headers, "Content-Type: application/json");
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
-	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
-	CURLcode res = curl_easy_perform(curl);
-	long code = 0;
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-	curl_slist_free_all(headers);
-	curl_easy_cleanup(curl);
-	if (code_out) *code_out = code;
-	return (res == CURLE_OK) ? 0 : -1;
-}
-
 static int http_post_auth(const char *url, const char *bearer, const char *json, long *code_out, char **body_out)
 {
 	CURL *curl = curl_easy_init();
@@ -213,6 +192,7 @@ static int http_delete_auth(const char *url, const char *bearer, long *code_out,
 	snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", bearer);
 	headers = curl_slist_append(headers, auth_hdr);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
@@ -224,6 +204,31 @@ static int http_delete_auth(const char *url, const char *bearer, long *code_out,
 	curl_easy_cleanup(curl);
 	if (code_out) *code_out = code;
 	return (res == CURLE_OK) ? 0 : -1;
+}
+
+static int read_pairing_code_from_file(const char *home, char *out, size_t out_sz)
+{
+	char path[160];
+	FILE *f;
+	if (!home || !out || out_sz < 7)
+		return -1;
+	snprintf(path, sizeof(path), "%s/.shellclaw/test_pairing_code", home);
+	for (int i = 0; i < 50; i++) {
+		f = fopen(path, "r");
+		if (f) {
+			if (fscanf(f, "%6[0-9]", out) == 1) {
+				out[6] = '\0';
+				fclose(f);
+				return 0;
+			}
+			fclose(f);
+		}
+		{
+			struct timespec delay = { 0, 100000000L };
+			(void)nanosleep(&delay, NULL);
+		}
+	}
+	return -1;
 }
 
 static int test_health(void)
@@ -247,9 +252,33 @@ static int test_pair(const char *pairing_code, char *token_out, size_t token_siz
 	snprintf(post_json, sizeof(post_json), "{\"code\":\"%s\"}", pairing_code);
 	long code_http;
 	char *body = NULL;
-	int r = http_post(gw_url("/pair"), post_json, &code_http, &body);
-	ASSERT(r == 0);
-	ASSERT(code_http == 200);
+	CURL *curl = curl_easy_init();
+	if (!curl) return 1;
+	struct curl_slist *headers = NULL;
+	char pair_hdr[64];
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	snprintf(pair_hdr, sizeof(pair_hdr), "X-Pairing-Code: %s", pairing_code);
+	headers = curl_slist_append(headers, pair_hdr);
+	curl_easy_setopt(curl, CURLOPT_URL, gw_url("/pair"));
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_json);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+	CURLcode res = curl_easy_perform(curl);
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code_http);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	if (res != CURLE_OK) {
+		free(body);
+		return 1;
+	}
+	if (code_http != 200) {
+		fprintf(stderr, "test_pair: HTTP %ld body=%s code=%s\n",
+		        code_http, body ? body : "(null)", pairing_code);
+		free(body);
+		return 1;
+	}
 	ASSERT(body != NULL);
 	ASSERT(strstr(body, "token") != NULL);
 	cJSON *root = cJSON_Parse(body);
@@ -562,21 +591,28 @@ int main(int argc, char **argv)
 	char config_path[256];
 	char skills_dir[256];
 	char db_path[256];
+	char shellclaw_dir[128];
+	char tokens_path[160];
+	char pairing_file[160];
 	int port;
-	snprintf(config_path, sizeof(config_path), "%s/config.toml", TEST_HOME);
-	snprintf(skills_dir, sizeof(skills_dir), "%s/.shellclaw/skills", TEST_HOME);
-	snprintf(db_path, sizeof(db_path), "%s/.shellclaw/memory.db", TEST_HOME);
+	snprintf(g_test_home, sizeof(g_test_home), "/tmp/shellclaw_test_gw_%d", (int)getpid());
+	snprintf(config_path, sizeof(config_path), "%s/config.toml", g_test_home);
+	snprintf(shellclaw_dir, sizeof(shellclaw_dir), "%s/.shellclaw", g_test_home);
+	snprintf(tokens_path, sizeof(tokens_path), "%s/.shellclaw/auth_tokens.json", g_test_home);
+	snprintf(pairing_file, sizeof(pairing_file), "%s/.shellclaw/test_pairing_code", g_test_home);
+	snprintf(skills_dir, sizeof(skills_dir), "%s/.shellclaw/skills", g_test_home);
+	snprintf(db_path, sizeof(db_path), "%s/.shellclaw/memory.db", g_test_home);
 	port = pick_ephemeral_port();
 	if (port <= 0) {
 		fprintf(stderr, "test_gateway_http: ephemeral port failed\n");
 		return 1;
 	}
 	snprintf(g_base_url, sizeof(g_base_url), "http://127.0.0.1:%d", port);
-	if (mkdir(TEST_HOME, 0755) != 0 && errno != EEXIST) {
+	if (mkdir(g_test_home, 0755) != 0 && errno != EEXIST) {
 		fprintf(stderr, "test_gateway_http: mkdir failed\n");
 		return 1;
 	}
-	if (mkdir(TEST_HOME "/.shellclaw", 0755) != 0 && errno != EEXIST) {
+	if (mkdir(shellclaw_dir, 0755) != 0 && errno != EEXIST) {
 		fprintf(stderr, "test_gateway_http: mkdir .shellclaw failed\n");
 		return 1;
 	}
@@ -584,7 +620,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "test_gateway_http: mkdir skills failed\n");
 		return 1;
 	}
-	unlink(TEST_HOME "/.shellclaw/auth_tokens.json");
+	unlink(tokens_path);
+	unlink(pairing_file);
 	FILE *f = fopen(config_path, "w");
 	if (!f) {
 		fprintf(stderr, "test_gateway_http: cannot write config\n");
@@ -593,48 +630,35 @@ int main(int argc, char **argv)
 	fprintf(f, "[agent]\nmodel = \"test\"\n");
 	fprintf(f, "[providers]\nfallback_chain = [ \"stub\" ]\n");
 	fprintf(f, "[gateway]\nenabled = true\nhost = \"127.0.0.1\"\nport = %d\n", port);
-	fprintf(f, "[memory]\ndb_path = \"%s/.shellclaw/memory.db\"\n", TEST_HOME);
+	fprintf(f, "[memory]\ndb_path = \"%s/.shellclaw/memory.db\"\n", g_test_home);
 	fprintf(f, "[skills]\ndir = \"%s\"\n", skills_dir);
 	fclose(f);
-	int pipefd[2];
-	if (pipe(pipefd) != 0) {
-		fprintf(stderr, "test_gateway_http: pipe failed\n");
-		return 1;
-	}
-	setenv("HOME", TEST_HOME, 1);
+	setenv("HOME", g_test_home, 1);
+	setenv("SHELLCLAW_TEST_MODE", "1", 1);
 	pid_t pid = fork();
 	if (pid < 0) {
 		fprintf(stderr, "test_gateway_http: fork failed\n");
 		return 1;
 	}
 	if (pid == 0) {
-		close(pipefd[0]);
-		dup2(pipefd[1], STDOUT_FILENO);
-		close(pipefd[1]);
+		int devnull = open("/dev/null", O_WRONLY);
+		if (devnull >= 0) {
+			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
+			close(devnull);
+		}
 		execl("./build/shellclaw", "shellclaw", "--config", config_path, (char *)NULL);
 		_exit(1);
 	}
-	close(pipefd[1]);
-	char read_buf[512] = {0};
-	size_t total = 0;
-	while (total < sizeof(read_buf) - 1) {
-		ssize_t n = read(pipefd[0], read_buf + total, sizeof(read_buf) - 1 - total);
-		if (n <= 0) break;
-		total += (size_t)n;
-		if (strstr(read_buf, "ShellClaw pairing code:") != NULL) break;
-	}
-	close(pipefd[0]);
 	char pairing_code[16] = {0};
-	const char *prefix = "ShellClaw pairing code: ";
-	char *p = strstr(read_buf, prefix);
-	if (p) {
-		p += strlen(prefix);
-		for (int i = 0; i < 6 && p[i] >= '0' && p[i] <= '9'; i++)
-			pairing_code[i] = p[i];
-	}
-	sleep(3);
 	if (wait_for_health(40) != 0) {
 		fprintf(stderr, "test_gateway_http: /health poll timeout on %s\n", g_base_url);
+		kill(pid, SIGTERM);
+		waitpid(pid, NULL, 0);
+		return 1;
+	}
+	if (read_pairing_code_from_file(g_test_home, pairing_code, sizeof(pairing_code)) != 0) {
+		fprintf(stderr, "test_gateway_http: failed to read pairing code file\n");
 		kill(pid, SIGTERM);
 		waitpid(pid, NULL, 0);
 		return 1;
@@ -642,7 +666,7 @@ int main(int argc, char **argv)
 	char token[128] = {0};
 	int failed = 0;
 	if (test_health() != 0) { fprintf(stderr, "test_health failed\n"); failed++; }
-	if (pairing_code[0] && test_pair(pairing_code, token, sizeof(token)) != 0) {
+	if (test_pair(pairing_code, token, sizeof(token)) != 0) {
 		fprintf(stderr, "test_pair failed\n");
 		failed++;
 	}
@@ -669,7 +693,8 @@ int main(int argc, char **argv)
 	kill(pid, SIGTERM);
 	waitpid(pid, NULL, 0);
 	unlink(config_path);
-	unlink(TEST_HOME "/.shellclaw/auth_tokens.json");
+	unlink(tokens_path);
+	unlink(pairing_file);
 	unlink(db_path);
 	if (failed == 0)
 		printf("test_gateway_http: all tests passed\n");

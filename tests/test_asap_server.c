@@ -707,6 +707,7 @@ static int test_trust_sender_rejects_blank_sender_when_list_nonempty(void)
 	ASSERT(pl != NULL);
 	ASSERT(cJSON_AddStringToObject(pl, "input", "hi") != NULL);
 	ASSERT(build_in_custom(&in, "task.request", "", "urn:to", pl) == 0);
+	cJSON_Delete(pl);
 	memset(&ctx, 0, sizeof ctx);
 	ctx.cfg = cfg;
 	ctx.task_request_hook = test_hook_task;
