@@ -120,7 +120,7 @@ static int http_body_is_complete(struct lws *wsi, const http_conn_t *conn)
 	long cl = 0;
 	if (!conn || conn->body_too_large)
 		return conn != NULL && conn->body_too_large;
-	if (http_body_content_length(wsi, &cl) != 0 || cl < 0)
+	if (http_body_content_length(wsi, &cl) != 0 || cl <= 0)
 		return 0;
 	if (conn->use_dyn_body)
 		return (long)conn->body_dyn_len >= cl;
@@ -337,7 +337,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			lws_set_wsi_user(wsi, conn);
 			if (in && len > 0)
 				http_append_body(conn, in, len);
-			if (http_body_is_complete(wsi, conn)) {
+			if (conn->body_len > 0 && http_body_is_complete(wsi, conn)) {
 				http_dispatch_body(ctx, wsi, conn);
 				lws_callback_on_writable(wsi);
 			}
