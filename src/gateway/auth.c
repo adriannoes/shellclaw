@@ -129,6 +129,20 @@ char *auth_get_or_create_pairing_code(auth_ctx_t *ctx)
 	if (!ctx->pending_pairing_code) return NULL;
 	printf("ShellClaw pairing code: %s\n", code);
 	fflush(stdout);
+	if (getenv("SHELLCLAW_TEST_MODE")) {
+		const char *home = getenv("HOME");
+		if (home && home[0] != '\0') {
+			char test_path[512];
+			snprintf(test_path, sizeof(test_path), "%s/.shellclaw/test_pairing_code", home);
+			if (ensure_tokens_dir(test_path) == 0) {
+				FILE *tf = fopen(test_path, "w");
+				if (tf) {
+					fprintf(tf, "%s\n", code);
+					fclose(tf);
+				}
+			}
+		}
+	}
 	return strdup(code);
 }
 

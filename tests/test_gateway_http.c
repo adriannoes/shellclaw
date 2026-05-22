@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include <curl/curl.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -204,35 +205,26 @@ static int http_delete_auth(const char *url, const char *bearer, long *code_out,
 	return (res == CURLE_OK) ? 0 : -1;
 }
 
-static int read_pairing_code_from_pipe(int fd, char *out, size_t out_sz)
+static int read_pairing_code_from_file(const char *home, char *out, size_t out_sz)
 {
-	char read_buf[512] = {0};
-	size_t total = 0;
-	const char *prefix = "ShellClaw pairing code: ";
-	if (!out || out_sz < 7)
+	char path[160];
+	FILE *f;
+	if (!home || !out || out_sz < 7)
 		return -1;
-	out[0] = '\0';
-	while (total < sizeof(read_buf) - 1) {
-		ssize_t n = read(fd, read_buf + total, sizeof(read_buf) - 1 - total);
-		if (n <= 0)
-			break;
-		total += (size_t)n;
-		read_buf[total] = '\0';
-		char *p = strstr(read_buf, prefix);
-		if (p) {
-			p += strlen(prefix);
-			int digits = 0;
-			for (int i = 0; i < 6; i++) {
-				if (p[i] >= '0' && p[i] <= '9')
-					digits++;
-				else
-					break;
-			}
-			if (digits == 6) {
-				memcpy(out, p, 6);
+	snprintf(path, sizeof(path), "%s/.shellclaw/test_pairing_code", home);
+	for (int i = 0; i < 50; i++) {
+		f = fopen(path, "r");
+		if (f) {
+			if (fscanf(f, "%6[0-9]", out) == 1) {
 				out[6] = '\0';
+				fclose(f);
 				return 0;
 			}
+			fclose(f);
+		}
+		{
+			struct timespec delay = { 0, 100000000L };
+			(void)nanosleep(&delay, NULL);
 		}
 	}
 	return -1;
@@ -576,11 +568,13 @@ int main(int argc, char **argv)
 	char db_path[256];
 	char shellclaw_dir[128];
 	char tokens_path[160];
+	char pairing_file[160];
 	int port;
 	snprintf(g_test_home, sizeof(g_test_home), "/tmp/shellclaw_test_gw_%d", (int)getpid());
 	snprintf(config_path, sizeof(config_path), "%s/config.toml", g_test_home);
 	snprintf(shellclaw_dir, sizeof(shellclaw_dir), "%s/.shellclaw", g_test_home);
 	snprintf(tokens_path, sizeof(tokens_path), "%s/.shellclaw/auth_tokens.json", g_test_home);
+	snprintf(pairing_file, sizeof(pairing_file), "%s/.shellclaw/test_pairing_code", g_test_home);
 	snprintf(skills_dir, sizeof(skills_dir), "%s/.shellclaw/skills", g_test_home);
 	snprintf(db_path, sizeof(db_path), "%s/.shellclaw/memory.db", g_test_home);
 	port = pick_ephemeral_port();
@@ -602,6 +596,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	unlink(tokens_path);
+	unlink(pairing_file);
 	FILE *f = fopen(config_path, "w");
 	if (!f) {
 		fprintf(stderr, "test_gateway_http: cannot write config\n");
@@ -613,37 +608,32 @@ int main(int argc, char **argv)
 	fprintf(f, "[memory]\ndb_path = \"%s/.shellclaw/memory.db\"\n", g_test_home);
 	fprintf(f, "[skills]\ndir = \"%s\"\n", skills_dir);
 	fclose(f);
-	int pipefd[2];
-	if (pipe(pipefd) != 0) {
-		fprintf(stderr, "test_gateway_http: pipe failed\n");
-		return 1;
-	}
 	setenv("HOME", g_test_home, 1);
+	setenv("SHELLCLAW_TEST_MODE", "1", 1);
 	pid_t pid = fork();
 	if (pid < 0) {
 		fprintf(stderr, "test_gateway_http: fork failed\n");
 		return 1;
 	}
 	if (pid == 0) {
-		close(pipefd[0]);
-		dup2(pipefd[1], STDOUT_FILENO);
-		dup2(pipefd[1], STDERR_FILENO);
-		close(pipefd[1]);
+		int devnull = open("/dev/null", O_WRONLY);
+		if (devnull >= 0) {
+			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
+			close(devnull);
+		}
 		execl("./build/shellclaw", "shellclaw", "--config", config_path, (char *)NULL);
 		_exit(1);
 	}
-	close(pipefd[1]);
 	char pairing_code[16] = {0};
-	if (read_pairing_code_from_pipe(pipefd[0], pairing_code, sizeof(pairing_code)) != 0) {
-		fprintf(stderr, "test_gateway_http: failed to read pairing code from server stdout\n");
-		close(pipefd[0]);
+	if (wait_for_health(40) != 0) {
+		fprintf(stderr, "test_gateway_http: /health poll timeout on %s\n", g_base_url);
 		kill(pid, SIGTERM);
 		waitpid(pid, NULL, 0);
 		return 1;
 	}
-	close(pipefd[0]);
-	if (wait_for_health(40) != 0) {
-		fprintf(stderr, "test_gateway_http: /health poll timeout on %s\n", g_base_url);
+	if (read_pairing_code_from_file(g_test_home, pairing_code, sizeof(pairing_code)) != 0) {
+		fprintf(stderr, "test_gateway_http: failed to read pairing code file\n");
 		kill(pid, SIGTERM);
 		waitpid(pid, NULL, 0);
 		return 1;
@@ -679,6 +669,7 @@ int main(int argc, char **argv)
 	waitpid(pid, NULL, 0);
 	unlink(config_path);
 	unlink(tokens_path);
+	unlink(pairing_file);
 	unlink(db_path);
 	if (failed == 0)
 		printf("test_gateway_http: all tests passed\n");
