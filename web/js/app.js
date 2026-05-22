@@ -1,14 +1,16 @@
-/* ShellClaw Web UI - vanilla JS SPA */
+/* ShellClaw Web UI - vanilla JS SPA (dashboard markup in dashboardView.js) */
 (function () {
   const TOKEN_KEY = 'shellclaw_token';
   const API_BASE = '';
+  const dash = typeof ShellClawDashboard !== 'undefined' ? ShellClawDashboard : {};
+  const escapeHtml = dash.escapeHtml;
+  const dashboardMarkup = dash.dashboardMarkup;
 
-  function escapeHtml(str) {
-    if (str == null || str === undefined) return '';
-    const s = String(str);
-    const div = document.createElement('div');
-    div.textContent = s;
-    return div.innerHTML;
+  function pickStatusSlice(wsMsg) {
+    if (!wsMsg || typeof wsMsg !== 'object') return null;
+    const o = Object.assign({}, wsMsg);
+    delete o.type;
+    return o;
   }
 
   function getToken() { return localStorage.getItem(TOKEN_KEY); }
@@ -22,9 +24,14 @@
       opts.headers['Content-Type'] = 'application/json';
       opts.body = typeof body === 'string' ? body : JSON.stringify(body);
     }
-    return fetch(API_BASE + path, opts).then(r => {
+    return fetch(API_BASE + path, opts).then(function (r) {
       if (r.status === 401) { setToken(null); window.location.hash = '#/pair'; return Promise.reject('Unauthorized'); }
-      return r.json().catch(() => ({}));
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          return Promise.reject(t || ('HTTP ' + r.status));
+        });
+      }
+      return r.json().catch(function () { return ({}); });
     });
   }
 
@@ -32,9 +39,47 @@
     const token = getToken();
     if (!token) return null;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(proto + '//' + location.host + '/ws?token=' + encodeURIComponent(token));
+    /* Browsers cannot set Authorization on WebSocket; server accepts bearer.<token> subprotocol. */
+    const ws = new WebSocket(proto + '//' + location.host + '/ws', ['bearer.' + token]);
     ws.onmessage = e => { try { const d = JSON.parse(e.data); onMessage(d); } catch (_) {} };
     return ws;
+  }
+
+  let dashboardLiveStop = null;
+
+  function stopDashboardLive() {
+    if (dashboardLiveStop) {
+      dashboardLiveStop();
+      dashboardLiveStop = null;
+    }
+  }
+
+  function cloneWithoutType(wsMsg) {
+    if (!wsMsg || typeof wsMsg !== 'object') return null;
+    try {
+      const o = JSON.parse(JSON.stringify(wsMsg));
+      if (o && typeof o === 'object') delete o.type;
+      return o;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * UI colour key (dashboard):
+   * GREEN  — nominal path (reachable primary provider, Discord connected).
+   * YELLOW — partial degradation (Discord disabled, using fallback tier, standby).
+   * RED    — unhealthy slice (unreachable backends in the failover chain).
+   */
+  function mergeStatusWithWs(prev, wsMsg) {
+    const slice = pickStatusSlice(wsMsg);
+    if (!slice || !prev) return prev;
+    const out = Object.assign({}, prev);
+    if (slice.active_provider !== undefined) out.active_provider = slice.active_provider;
+    if (slice.providers !== undefined) out.providers = slice.providers;
+    if (slice.generated_at !== undefined) out.generated_at = slice.generated_at;
+    if (Object.prototype.hasOwnProperty.call(slice, 'last_error')) out.last_error = slice.last_error;
+    return out;
   }
 
   const routes = {
@@ -62,23 +107,47 @@
   function renderDashboard() {
     const token = getToken();
     if (!token) { window.location.hash = '#/pair'; return; }
-    api('GET', '/health').then(d => {
-      const sandboxEnabled = d.sandbox_enabled != null ? d.sandbox_enabled : false;
-      const asapEnabled = d.asap_enabled != null ? d.asap_enabled : false;
-      const asapError = d.asap_last_error || '';
-      const registryTs = d.registry_last_fetch || '';
-      render(app, '<h1>Dashboard</h1>' +
-        '<div class="dashboard-cards">' +
-        '<div class="card"><div class="card-label">Status</div><div class="card-value status-ok">' + escapeHtml(d.status || 'ok') + '</div></div>' +
-        '<div class="card"><div class="card-label">Uptime</div><div class="card-value">' + escapeHtml(d.uptime != null ? d.uptime + 's' : '-') + '</div></div>' +
-        '<div class="card"><div class="card-label">Version</div><div class="card-value">' + escapeHtml(d.version || '-') + '</div></div>' +
-        '<div class="card"><div class="card-label">Sandbox</div><div class="card-value ' + (sandboxEnabled ? 'status-ok' : 'status-warn') + '">' + (sandboxEnabled ? 'enabled' : 'disabled') + '</div></div>' +
-        '<div class="card"><div class="card-label">ASAP</div><div class="card-value ' + (asapEnabled ? 'status-ok' : 'status-warn') + '">' + (asapEnabled ? 'connected' : 'disabled') + '</div></div>' +
-        '<div class="card"><div class="card-label">Registry</div><div class="card-value">' + escapeHtml(registryTs || 'never') + '</div></div>' +
-        (asapError ? '<div class="card card-full"><div class="card-label status-err">Last ASAP Error</div><div class="card-value">' + escapeHtml(asapError) + '</div></div>' : '') +
-        '</div>');
-    }).catch(e => {
-      render(app, '<h1>Dashboard</h1><p class="status-err">Failed to fetch: ' + escapeHtml(e || 'Unknown') + '</p>');
+    stopDashboardLive();
+    render(app, '<h1>Dashboard</h1><p class="status-note">Loading live status…</p>');
+    let lastHealth = {};
+    let lastStatus = {};
+    let lastCtx = {};
+    function paint() {
+      render(app, dashboardMarkup(lastHealth, lastStatus, lastCtx));
+    }
+    Promise.all([
+      api('GET', '/health'),
+      api('GET', '/api/status'),
+      api('GET', '/api/context/snapshot')
+    ]).then(function (results) {
+      lastHealth = results[0] || {};
+      lastStatus = results[1] || {};
+      lastCtx = results[2] || {};
+      paint();
+      const timer = window.setInterval(function () {
+        api('GET', '/api/status').then(function (st) {
+          lastStatus = st || lastStatus;
+          paint();
+        }).catch(function () {});
+      }, 12000);
+      const ctxTimer = window.setInterval(function () {
+        api('GET', '/api/context/snapshot').then(function (snap) {
+          lastCtx = snap || lastCtx;
+          paint();
+        }).catch(function () {});
+      }, 45000);
+      const ws = wsConnect(function (msg) {
+        if (!msg || msg.type !== 'provider_status') return;
+        lastStatus = mergeStatusWithWs(lastStatus, msg);
+        paint();
+      });
+      dashboardLiveStop = function () {
+        window.clearInterval(timer);
+        window.clearInterval(ctxTimer);
+        if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+      };
+    }).catch(function (err) {
+      render(app, '<h1>Dashboard</h1><p class="status-err">' + escapeHtml(err || 'Load failed') + '</p>');
     });
   }
 
@@ -285,6 +354,7 @@
 
   const app = document.getElementById('app');
   function navigate() {
+    stopDashboardLive();
     const route = getRoute();
     const m = route.match(/^\/skills\/(.+)$/);
     if (m) { renderSkillView(decodeURIComponent(m[1])); return; }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Embed Web UI assets: minify (optional), gzip, xxd -i -> src/gateway/ui_assets.h
-# Input: web/index.html, web/css/style.css, web/js/app.js
+# Input: web/index.html, web/css/style.css, web/js/dashboardView.js + web/js/app.js (concatenated)
 # Output: src/gateway/ui_assets.h with named arrays and lookup table
 # Verify: total gzipped < 50 KB
 
@@ -45,7 +45,8 @@ process_file() {
 mkdir -p "$(dirname "$OUT_HEADER")"
 process_file "$WEB_DIR/index.html" "index.html" "ui_index_html" > "$TMP_DIR/index_html.txt"
 process_file "$WEB_DIR/css/style.css" "style.css" "ui_style_css" > "$TMP_DIR/style_css.txt"
-process_file "$WEB_DIR/js/app.js" "app.js" "ui_app_js" > "$TMP_DIR/app_js.txt"
+cat "$WEB_DIR/js/dashboardView.js" "$WEB_DIR/js/app.js" > "$TMP_DIR/app_bundle.js"
+process_file "$TMP_DIR/app_bundle.js" "app.js" "ui_app_js" > "$TMP_DIR/app_js.txt"
 
 # Compute total size and verify < 50 KB
 TOTAL=0
