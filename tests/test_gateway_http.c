@@ -251,9 +251,33 @@ static int test_pair(const char *pairing_code, char *token_out, size_t token_siz
 	snprintf(post_json, sizeof(post_json), "{\"code\":\"%s\"}", pairing_code);
 	long code_http;
 	char *body = NULL;
-	int r = http_post(gw_url("/pair"), post_json, &code_http, &body);
-	ASSERT(r == 0);
-	ASSERT(code_http == 200);
+	CURL *curl = curl_easy_init();
+	if (!curl) return 1;
+	struct curl_slist *headers = NULL;
+	char pair_hdr[64];
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	snprintf(pair_hdr, sizeof(pair_hdr), "X-Pairing-Code: %s", pairing_code);
+	headers = curl_slist_append(headers, pair_hdr);
+	curl_easy_setopt(curl, CURLOPT_URL, gw_url("/pair"));
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_json);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+	CURLcode res = curl_easy_perform(curl);
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code_http);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	if (res != CURLE_OK) {
+		free(body);
+		return 1;
+	}
+	if (code_http != 200) {
+		fprintf(stderr, "test_pair: HTTP %ld body=%s code=%s\n",
+		        code_http, body ? body : "(null)", pairing_code);
+		free(body);
+		return 1;
+	}
 	ASSERT(body != NULL);
 	ASSERT(strstr(body, "token") != NULL);
 	cJSON *root = cJSON_Parse(body);
