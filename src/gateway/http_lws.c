@@ -45,6 +45,15 @@ typedef struct http_conn {
 
 static int http_parse_method(struct lws *wsi)
 {
+	char uri_probe[8];
+	if (lws_hdr_copy(wsi, uri_probe, sizeof(uri_probe), WSI_TOKEN_POST_URI) > 0)
+		return HTTP_POST;
+	if (lws_hdr_copy(wsi, uri_probe, sizeof(uri_probe), WSI_TOKEN_PUT_URI) > 0)
+		return HTTP_PUT;
+	if (lws_hdr_copy(wsi, uri_probe, sizeof(uri_probe), WSI_TOKEN_DELETE_URI) > 0)
+		return HTTP_DELETE;
+	if (lws_hdr_copy(wsi, uri_probe, sizeof(uri_probe), WSI_TOKEN_PATCH_URI) > 0)
+		return HTTP_PUT;
 	char meth_buf[32] = {0};
 	char req[32] = {0};
 	if (lws_hdr_custom_copy(wsi, meth_buf, sizeof(meth_buf), ":method", 7) > 0) {
