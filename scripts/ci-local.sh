@@ -4,6 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 export CI=true
+export GATEWAY=1
 echo "==> cppcheck (make static)"
 make static
 echo "==> clean + test (CI=true, -Werror)"
