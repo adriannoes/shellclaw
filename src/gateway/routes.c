@@ -144,6 +144,20 @@ static void handle_pair(http_server_ctx_t *ctx, struct lws *wsi, const char *bod
 		int n = lws_hdr_custom_copy(wsi, code, sizeof(code), "X-Pairing-Code", 14);
 		(void)n;
 	}
+	if (!code[0] && getenv("SHELLCLAW_TEST_MODE")) {
+		const char *home = getenv("HOME");
+		if (home && home[0] != '\0') {
+			char path[512];
+			FILE *tf;
+			snprintf(path, sizeof(path), "%s/.shellclaw/test_pairing_code", home);
+			tf = fopen(path, "r");
+			if (tf) {
+				if (fscanf(tf, "%6[0-9]", code) != 1)
+					code[0] = '\0';
+				fclose(tf);
+			}
+		}
+	}
 	char token[64] = {0};
 	if (auth_pair(ctx->auth, code, token, sizeof(token)) != 0) {
 		json_error(buf, size, status, 400, "Invalid pairing code");

@@ -41,6 +41,7 @@ typedef struct http_conn {
 	size_t body_dyn_cap;
 	int use_dyn_body;
 	int body_too_large;
+	int body_dispatched;
 } http_conn_t;
 
 static int http_parse_method(struct lws *wsi)
@@ -132,8 +133,9 @@ static void http_dispatch_body(http_server_ctx_t *ctx, struct lws *wsi, http_con
 	char uri[256];
 	int uri_len;
 	int method;
-	if (!conn || !conn->has_body)
+	if (!conn || !conn->has_body || conn->body_dispatched)
 		return;
+	conn->body_dispatched = 1;
 	uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI);
 	if (uri_len <= 0)
 		uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_POST_URI);
