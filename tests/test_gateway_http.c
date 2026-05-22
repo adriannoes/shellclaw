@@ -574,9 +574,13 @@ int main(int argc, char **argv)
 	char config_path[256];
 	char skills_dir[256];
 	char db_path[256];
+	char shellclaw_dir[128];
+	char tokens_path[160];
 	int port;
 	snprintf(g_test_home, sizeof(g_test_home), "/tmp/shellclaw_test_gw_%d", (int)getpid());
 	snprintf(config_path, sizeof(config_path), "%s/config.toml", g_test_home);
+	snprintf(shellclaw_dir, sizeof(shellclaw_dir), "%s/.shellclaw", g_test_home);
+	snprintf(tokens_path, sizeof(tokens_path), "%s/.shellclaw/auth_tokens.json", g_test_home);
 	snprintf(skills_dir, sizeof(skills_dir), "%s/.shellclaw/skills", g_test_home);
 	snprintf(db_path, sizeof(db_path), "%s/.shellclaw/memory.db", g_test_home);
 	port = pick_ephemeral_port();
@@ -589,7 +593,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "test_gateway_http: mkdir failed\n");
 		return 1;
 	}
-	if (mkdir(g_test_home "/.shellclaw", 0755) != 0 && errno != EEXIST) {
+	if (mkdir(shellclaw_dir, 0755) != 0 && errno != EEXIST) {
 		fprintf(stderr, "test_gateway_http: mkdir .shellclaw failed\n");
 		return 1;
 	}
@@ -597,7 +601,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "test_gateway_http: mkdir skills failed\n");
 		return 1;
 	}
-	unlink(g_test_home "/.shellclaw/auth_tokens.json");
+	unlink(tokens_path);
 	FILE *f = fopen(config_path, "w");
 	if (!f) {
 		fprintf(stderr, "test_gateway_http: cannot write config\n");
@@ -674,7 +678,7 @@ int main(int argc, char **argv)
 	kill(pid, SIGTERM);
 	waitpid(pid, NULL, 0);
 	unlink(config_path);
-	unlink(g_test_home "/.shellclaw/auth_tokens.json");
+	unlink(tokens_path);
 	unlink(db_path);
 	if (failed == 0)
 		printf("test_gateway_http: all tests passed\n");
