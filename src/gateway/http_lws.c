@@ -15,6 +15,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if !defined(WSI_TOKEN_HTTP_COLON_PROTOCOL) && defined(WSI_TOKEN_COLON_PROTOCOL)
+#define WSI_TOKEN_HTTP_COLON_PROTOCOL WSI_TOKEN_COLON_PROTOCOL
+#endif
+
+static void http_lws_tx_completed(struct lws *wsi)
+{
+	(void)lws_http_transaction_completed(wsi);
+}
+
 typedef struct http_conn {
 	char *response;
 	size_t response_len;
@@ -117,6 +126,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
                          void *in, size_t len)
 {
 	http_server_ctx_t *ctx = http_ctx_get();
+	(void)user;
 	if (!ctx) return 0;
 	switch (reason) {
 	case LWS_CALLBACK_HTTP: {
@@ -126,7 +136,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_POST_URI);
 		if (uri_len <= 0 || uri_len >= (int)sizeof(uri)) {
 			lws_return_http_status(wsi, 400, "Bad request");
-			lws_http_transaction_completed(wsi);
+			http_lws_tx_completed(wsi);
 			return 0;
 		}
 		int method = HTTP_GET;
@@ -153,21 +163,21 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			const char *token = get_bearer_token(wsi, auth_buf, sizeof(auth_buf));
 			if (!token || !auth_validate_token(ctx->auth, token)) {
 				lws_return_http_status(wsi, 401, "{\"error\":\"Unauthorized\"}");
-				lws_http_transaction_completed(wsi);
+				http_lws_tx_completed(wsi);
 				return 0;
 			}
 		}
 		http_conn_t *conn = calloc(1, sizeof(*conn));
 		if (!conn) {
 			lws_return_http_status(wsi, 500, "Internal error");
-			lws_http_transaction_completed(wsi);
+			http_lws_tx_completed(wsi);
 			return 0;
 		}
 		conn->response = malloc(RESP_BUF_SIZE);
 		if (!conn->response) {
 			free(conn);
 			lws_return_http_status(wsi, 500, "Internal error");
-			lws_http_transaction_completed(wsi);
+			http_lws_tx_completed(wsi);
 			return 0;
 		}
 		conn->status = 200;
@@ -184,7 +194,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 				free(conn->response);
 				free(conn);
 				lws_return_http_status(wsi, 413, "{\"error\":\"body too large\"}");
-				lws_http_transaction_completed(wsi);
+				http_lws_tx_completed(wsi);
 				return 0;
 			}
 			size_t cap = (cl > 0) ? (size_t)cl : (size_t)ASAP_BODY_MAX;
@@ -193,7 +203,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 				free(conn->response);
 				free(conn);
 				lws_return_http_status(wsi, 500, "Internal error");
-				lws_http_transaction_completed(wsi);
+				http_lws_tx_completed(wsi);
 				return 0;
 			}
 			conn->body_dyn[0] = '\0';
@@ -242,7 +252,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		return 0;
 	}
 	case LWS_CALLBACK_HTTP_BODY: {
-		http_conn_t *conn = lws_get_wsi_user(wsi);
+		http_conn_t *conn = lws_wsi_user(wsi);
 		if (conn && in && len > 0) {
 			if (conn->use_dyn_body) {
 				size_t remain = conn->body_dyn_cap - conn->body_dyn_len;
@@ -268,7 +278,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		return 0;
 	}
 	case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
-		http_conn_t *conn = lws_get_wsi_user(wsi);
+		http_conn_t *conn = lws_wsi_user(wsi);
 		if (conn && conn->has_body) {
 			char uri[256];
 			int uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI);
@@ -305,7 +315,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		return 0;
 	}
 	case LWS_CALLBACK_HTTP_WRITEABLE: {
-		http_conn_t *conn = lws_get_wsi_user(wsi);
+		http_conn_t *conn = lws_wsi_user(wsi);
 		if (!conn) return 0;
 		if (conn->is_static) {
 			if (!conn->headers_sent) {
@@ -329,7 +339,9 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			if (conn->static_sent < conn->static_len) {
 				size_t to_send = conn->static_len - conn->static_sent;
 				if (to_send > 4096) to_send = 4096;
-				int m = lws_write(wsi, conn->static_data + conn->static_sent, to_send,
+				int m = lws_write(wsi,
+				                  (unsigned char *)(conn->static_data + conn->static_sent),
+				                  to_send,
 				                  conn->static_sent + to_send >= conn->static_len ?
 				                  LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP);
 				if (m < 0) return -1;
@@ -338,7 +350,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			if (conn->static_sent >= conn->static_len) {
 				free(conn);
 				lws_set_wsi_user(wsi, NULL);
-				lws_http_transaction_completed(wsi);
+				http_lws_tx_completed(wsi);
 			}
 			return 0;
 		}
@@ -374,14 +386,14 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 				free(conn->body_dyn);
 			free(conn);
 			lws_set_wsi_user(wsi, NULL);
-			lws_http_transaction_completed(wsi);
+			http_lws_tx_completed(wsi);
 		} else {
 			lws_callback_on_writable(wsi);
 		}
 		return 0;
 	}
 	case LWS_CALLBACK_CLOSED_HTTP: {
-		http_conn_t *conn = lws_get_wsi_user(wsi);
+		http_conn_t *conn = lws_wsi_user(wsi);
 		if (conn) {
 			if (conn->response) free(conn->response);
 			if (conn->body_dyn) free(conn->body_dyn);
@@ -400,6 +412,7 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
                       void *in, size_t len)
 {
 	http_server_ctx_t *ctx = http_ctx_get();
+	(void)user;
 	switch (reason) {
 	case LWS_CALLBACK_HTTP_CONFIRM_UPGRADE: {
 		char token_buf[256] = {0};
@@ -420,7 +433,7 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		break;
 	}
 	case LWS_CALLBACK_SERVER_WRITEABLE: {
-		int conn_id = (int)(intptr_t)lws_get_wsi_user(wsi);
+		int conn_id = (int)(intptr_t)lws_wsi_user(wsi);
 		if (conn_id <= 0) break;
 		char buf[8192];
 		size_t len_out = 0;
@@ -437,7 +450,7 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		break;
 	}
 	case LWS_CALLBACK_RECEIVE: {
-		int conn_id = (int)(intptr_t)lws_get_wsi_user(wsi);
+		int conn_id = (int)(intptr_t)lws_wsi_user(wsi);
 		if (conn_id <= 0) break;
 		if (len > 0 && in) {
 			char *buf = malloc(len + 1);
@@ -459,7 +472,7 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		break;
 	}
 	case LWS_CALLBACK_CLOSED: {
-		int conn_id = (int)(intptr_t)lws_get_wsi_user(wsi);
+		int conn_id = (int)(intptr_t)lws_wsi_user(wsi);
 		if (conn_id > 0) ws_unregister_conn(conn_id);
 		break;
 	}
