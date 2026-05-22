@@ -73,6 +73,25 @@ static int is_user_allowed(const config_t *cfg, long user_id)
 	return 0;
 }
 
+static void tg_curl_harden(CURL *curl)
+{
+	if (!curl) return;
+	curl_easy_setopt(curl, CURLOPT_VERBOSE, 0L);
+}
+
+static int tg_curl_perform(CURL *curl, const char *op_label)
+{
+	CURLcode res;
+	if (!curl) return -1;
+	res = curl_easy_perform(curl);
+	if (res != CURLE_OK) {
+		fprintf(stderr, "shellclaw: telegram: %s failed: %s\n",
+		        op_label ? op_label : "request", curl_easy_strerror(res));
+		return -1;
+	}
+	return 0;
+}
+
 static int tg_init(const config_t *cfg)
 {
 	if (!cfg || !config_telegram_enabled(cfg)) return 0;
@@ -144,13 +163,27 @@ static int parse_update(const char *json, channel_incoming_msg_t *out, long *upd
 		return 0;
 	}
 	out->session_id = make_session_id(user_id);
+	if (!out->session_id) {
+		cJSON_Delete(root);
+		return -1;
+	}
 	{
 		char buf[32];
 		snprintf(buf, sizeof(buf), "%ld", user_id);
 		out->user_id = strdup(buf);
 	}
+	if (!out->user_id) {
+		channel_incoming_msg_clear(out);
+		cJSON_Delete(root);
+		return -1;
+	}
 	cJSON *text = cJSON_GetObjectItem(msg, "text");
 	out->text = text && cJSON_IsString(text) ? strdup(text->valuestring) : strdup("");
+	if (!out->text) {
+		channel_incoming_msg_clear(out);
+		cJSON_Delete(root);
+		return -1;
+	}
 	cJSON *photo = cJSON_GetObjectItem(msg, "photo");
 	out->attachments = NULL;
 	out->attachments_count = 0;
@@ -163,9 +196,14 @@ static int parse_update(const char *json, channel_incoming_msg_t *out, long *upd
 				out->attachments = malloc(sizeof(channel_attachment_t));
 				if (out->attachments) {
 					out->attachments[0].path_or_base64 = strdup(fid->valuestring);
-					out->attachments[0].size = strlen(fid->valuestring);
-					out->attachments[0].is_base64 = 0;
-					out->attachments_count = 1;
+					if (!out->attachments[0].path_or_base64) {
+						free(out->attachments);
+						out->attachments = NULL;
+					} else {
+						out->attachments[0].size = strlen(fid->valuestring);
+						out->attachments[0].is_base64 = 0;
+						out->attachments_count = 1;
+					}
 				}
 			}
 		}
@@ -174,6 +212,10 @@ static int parse_update(const char *json, channel_incoming_msg_t *out, long *upd
 	if (caption && cJSON_IsString(caption) && out->text && out->text[0] == '\0') {
 		free(out->text);
 		out->text = strdup(caption->valuestring);
+		if (!out->text) {
+			channel_incoming_msg_clear(out);
+			return -1;
+		}
 	}
 	cJSON_Delete(root);
 	return 1;
@@ -189,6 +231,7 @@ static int tg_poll(channel_incoming_msg_t *out, int timeout_ms)
 	         TG_API_BASE, g_tg.token, TG_GET_UPDATES, timeout_sec, g_tg.last_update_id + 1);
 	CURL *curl = curl_easy_init();
 	if (!curl) return -1;
+	tg_curl_harden(curl);
 	tg_buf_t resp = { .buf = malloc(RESP_BUF_INIT), .len = 0, .cap = RESP_BUF_INIT };
 	if (!resp.buf) { curl_easy_cleanup(curl); return -1; }
 	resp.buf[0] = '\0';
@@ -198,12 +241,12 @@ static int tg_poll(channel_incoming_msg_t *out, int timeout_ms)
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(timeout_sec + 5));
-	CURLcode res = curl_easy_perform(curl);
-	curl_easy_cleanup(curl);
-	if (res != CURLE_OK || !resp.buf) {
+	if (tg_curl_perform(curl, "getUpdates") != 0 || !resp.buf) {
 		free(resp.buf);
+		curl_easy_cleanup(curl);
 		return 0;
 	}
+	curl_easy_cleanup(curl);
 	long update_id = 0;
 	int r = parse_update(resp.buf, out, &update_id);
 	free(resp.buf);
@@ -231,6 +274,7 @@ static int tg_send(const char *recipient, const char *text,
 	snprintf(url, sizeof(url), "%s%s/%s", TG_API_BASE, g_tg.token, TG_SEND_MSG);
 	CURL *curl = curl_easy_init();
 	if (!curl) return -1;
+	tg_curl_harden(curl);
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
@@ -246,8 +290,7 @@ static int tg_send(const char *recipient, const char *text,
 		snprintf(postfields, need, "chat_id=%s&text=%s", chat_id, escaped);
 		curl_easy_setopt(curl, CURLOPT_URL, url);
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postfields);
-		CURLcode res = curl_easy_perform(curl);
-		ret = (res == CURLE_OK) ? 0 : -1;
+		ret = (tg_curl_perform(curl, "sendMessage") == 0) ? 0 : -1;
 		free(postfields);
 	}
 	curl_free(escaped);
@@ -274,6 +317,12 @@ static const channel_t tg_channel = {
 const channel_t *channel_telegram_get(void)
 {
 	return &tg_channel;
+}
+
+void shellclaw_telegram_set_live_cfg(const config_t *cfg)
+{
+	if (g_tg.initialized)
+		g_tg.cfg = cfg;
 }
 
 #ifdef SHELLCLAW_TEST
