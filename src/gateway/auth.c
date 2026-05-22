@@ -6,6 +6,7 @@
 
 #include "gateway/auth.h"
 #include "core/config.h"
+#include "crypto/crypto.h"
 #include "cJSON.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -45,22 +46,13 @@ static int is_file_empty_or_missing(const char *path)
 	return (c == EOF);
 }
 
-static int read_urandom(unsigned char *out, size_t n)
-{
-	int fd = open("/dev/urandom", O_RDONLY);
-	if (fd < 0) return -1;
-	ssize_t r = read(fd, out, n);
-	close(fd);
-	return (r == (ssize_t)n) ? 0 : -1;
-}
-
 static int generate_random_hex(char *out, size_t len)
 {
 	if (!out || len == 0) return -1;
 	size_t raw_len = (len + 1) / 2;
 	unsigned char *raw = malloc(raw_len);
 	if (!raw) return -1;
-	if (read_urandom(raw, raw_len) != 0) {
+	if (crypto_read_urandom(raw, raw_len) != 0) {
 		free(raw);
 		return -1;
 	}
@@ -77,7 +69,7 @@ static int generate_pairing_code(char *out, size_t out_size)
 {
 	if (!out || out_size < (size_t)(PAIRING_CODE_LEN + 1)) return -1;
 	unsigned char raw[PAIRING_CODE_LEN];
-	if (read_urandom(raw, sizeof(raw)) != 0) return -1;
+	if (crypto_read_urandom(raw, sizeof(raw)) != 0) return -1;
 	for (int i = 0; i < PAIRING_CODE_LEN; i++)
 		out[i] = (char)('0' + (raw[i] % 10));
 	out[PAIRING_CODE_LEN] = '\0';
