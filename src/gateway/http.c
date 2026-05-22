@@ -51,6 +51,15 @@ static const struct lws_http_mount mount_ws = {
 	.mount_next = NULL,
 };
 
+static const struct lws_http_mount mount_http = {
+	.mountpoint = "/",
+	.origin = "protocol",
+	.def = "http",
+	.protocol = "http",
+	.origin_protocol = LWSMPRO_CALLBACK,
+	.mount_next = &mount_ws,
+};
+
 void http_emit_ws_provider_status(void)
 {
 	char *status_json;
@@ -114,7 +123,7 @@ int http_start(const config_t *cfg, struct auth_ctx *auth_ctx, const char *confi
 #if defined(LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE)
 	info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
 #endif
-	info.mounts = &mount_ws;
+	info.mounts = &mount_http;
 	ctx->lws_ctx = lws_create_context(&info);
 	if (!ctx->lws_ctx) {
 		free(ctx->config_path);
