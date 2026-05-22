@@ -278,6 +278,9 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		conn->response[0] = '\0';
 		conn->status = 200;
 		conn->has_body = (method == HTTP_POST || method == HTTP_PUT);
+		if (getenv("SHELLCLAW_HTTP_TRACE"))
+			fprintf(stderr, "[trace]   alloc conn=%p method=%d has_body=%d uri=%.*s\n",
+				(void *)conn, method, conn->has_body, uri_len, uri);
 		/* For /asap POST: enforce 1 MB body cap via Content-Length and allocate
 		 * a dynamic buffer so large envelopes are not silently truncated. */
 		if (conn->has_body && path_eq(uri, uri_len, "/asap")) {
@@ -453,6 +456,9 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			conn->response_sent += (size_t)m;
 		}
 		if (conn->response_sent >= conn->response_len) {
+			if (getenv("SHELLCLAW_HTTP_TRACE"))
+				fprintf(stderr, "[trace]   free conn=%p (writable complete)\n",
+					(void *)conn);
 			free(conn->response);
 			if (conn->body_dyn)
 				free(conn->body_dyn);
