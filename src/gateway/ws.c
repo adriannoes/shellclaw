@@ -5,7 +5,13 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/ws.h"
+#ifdef SHELLCLAW_WS_TEST
+struct lws;
+struct lws_context;
+static void lws_callback_on_writable(struct lws *wsi) { (void)wsi; }
+#else
 #include <libwebsockets.h>
+#endif
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -18,6 +24,14 @@
 #define MAX_CONNECTIONS 16
 #define MAX_QUEUE 64
 #define MSG_MAX 8192
+
+static size_t ws_text_len_ok(const char *text)
+{
+	size_t len;
+	if (!text) return 0;
+	len = strlen(text);
+	return len > 0 && len <= (size_t)MSG_MAX;
+}
 
 typedef struct ws_msg {
 	int conn_id;
@@ -43,9 +57,9 @@ static atomic_int g_next_conn_id;
 static volatile int g_ws_shutdown;
 static struct lws_context *g_lws_ctx;
 
-void ws_set_context(struct lws_context *ctx)
+void ws_set_context(void *ctx)
 {
-	g_lws_ctx = ctx;
+	g_lws_ctx = (struct lws_context *)ctx;
 }
 
 int ws_next_conn_id(void)
@@ -53,17 +67,20 @@ int ws_next_conn_id(void)
 	return atomic_fetch_add(&g_next_conn_id, 1) + 1;
 }
 
-void ws_register_conn(int conn_id, ws_conn_t wsi)
+int ws_register_conn(int conn_id, ws_conn_t wsi)
 {
+	int registered = 0;
 	pthread_mutex_lock(&g_mutex);
 	for (int i = 0; i < MAX_CONNECTIONS; i++) {
 		if (g_conns[i].wsi == NULL) {
 			g_conns[i].wsi = wsi;
 			g_conns[i].conn_id = conn_id;
+			registered = 1;
 			break;
 		}
 	}
 	pthread_mutex_unlock(&g_mutex);
+	return registered ? 0 : -1;
 }
 
 void ws_unregister_conn(int conn_id)
@@ -81,7 +98,7 @@ void ws_unregister_conn(int conn_id)
 
 void ws_push_incoming(int conn_id, const char *text)
 {
-	if (!text) return;
+	if (!ws_text_len_ok(text)) return;
 	ws_msg_t *m = malloc(sizeof(*m));
 	if (!m) return;
 	m->conn_id = conn_id;
@@ -201,7 +218,7 @@ int ws_has_pending_outgoing(int conn_id)
 
 int ws_send_to(const char *session_id, const char *text)
 {
-	if (!session_id || !text) return -1;
+	if (!session_id || !ws_text_len_ok(text)) return -1;
 	int conn_id = parse_conn_id(session_id);
 	if (conn_id < 0) return -1;
 	ws_msg_t *m = malloc(sizeof(*m));
@@ -235,6 +252,48 @@ int ws_send_to(const char *session_id, const char *text)
 	if (!wsi) return 0;
 	lws_callback_on_writable((struct lws *)wsi);
 	return 0;
+}
+
+void ws_broadcast_text(const char *text)
+{
+	int i;
+	int wake_count = 0;
+	ws_conn_t wake_list[MAX_CONNECTIONS];
+	if (!ws_text_len_ok(text)) return;
+	pthread_mutex_lock(&g_mutex);
+	for (i = 0; i < MAX_CONNECTIONS; i++) {
+		ws_msg_t *m;
+		int cid;
+		if (!g_conns[i].wsi) continue;
+		cid = g_conns[i].conn_id;
+		if (g_outgoing_count >= MAX_QUEUE)
+			break;
+		m = malloc(sizeof(*m));
+		if (!m) break;
+		m->conn_id = cid;
+		m->text = strdup(text);
+		if (!m->text) {
+			free(m);
+			break;
+		}
+		m->next = NULL;
+		if (!g_outgoing_tail)
+			g_outgoing_head = g_outgoing_tail = m;
+		else {
+			g_outgoing_tail->next = m;
+			g_outgoing_tail = m;
+		}
+		g_outgoing_count++;
+		if (wake_count < MAX_CONNECTIONS) {
+			wake_list[wake_count] = g_conns[i].wsi;
+			wake_count++;
+		}
+	}
+	pthread_mutex_unlock(&g_mutex);
+	for (i = 0; i < wake_count; i++) {
+		if (wake_list[i])
+			lws_callback_on_writable((struct lws *)wake_list[i]);
+	}
 }
 
 void ws_shutdown_signal(void)

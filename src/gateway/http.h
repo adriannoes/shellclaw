@@ -30,6 +30,15 @@ int http_start(const config_t *cfg, struct auth_ctx *auth_ctx, const char *confi
  */
 void http_stop(void);
 
+/** Push provider_status WebSocket JSON (same payload as GET /api/status plus `type`). */
+void http_emit_ws_provider_status(void);
+
+/**
+ * After SIGHUP config reload: swap the server's live config pointer (no HTTP rebind).
+ * No-op when the gateway was not started.
+ */
+void http_set_live_config(const config_t *cfg);
+
 #ifdef __cplusplus
 }
 #endif
