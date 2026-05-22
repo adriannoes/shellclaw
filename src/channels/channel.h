@@ -88,6 +88,37 @@ void channel_cli_set_verbose(int v);
 /** Telegram channel: long-poll getUpdates, allowlist, /reset, /status. */
 const channel_t *channel_telegram_get(void);
 
+/** Discord Gateway channel (libwebsockets client) when built with gateway. */
+const channel_t *channel_discord_get(void);
+
+/** SIGHUP live reload: Telegram allowlist/token env lookups use refreshed config pointers (no re-init). */
+void shellclaw_telegram_set_live_cfg(const config_t *cfg);
+/** Discord allowlist lookups use refreshed pointers (stub no-op without gateway client). */
+void shellclaw_discord_set_live_cfg(const config_t *cfg);
+
+/** Lifecycle snapshot for `/api/status` (non-blocking; no Gateway I/O). */
+typedef enum discord_lifecycle {
+	DISCORD_LIFECYCLE_DISABLED = 0,
+	DISCORD_LIFECYCLE_DISCONNECTED,
+	DISCORD_LIFECYCLE_CONNECTING,
+	DISCORD_LIFECYCLE_CONNECTED,
+	DISCORD_LIFECYCLE_RECONNECTING,
+} discord_lifecycle_t;
+
+/** Short diagnostic string for @ref discord_lifecycle_t ("disabled", "connected", …). */
+const char *discord_lifecycle_str(discord_lifecycle_t lc);
+
+typedef struct discord_status_snapshot {
+	discord_lifecycle_t lifecycle;
+	char reason[160];
+} discord_status_snapshot_t;
+
+/**
+ * Fill Discord connection snapshot from config + channel runtime state.
+ * Safe from HTTP handlers: bounded work, mutex snapshot only when runtime is active.
+ */
+void discord_status_snapshot_fill(const config_t *cfg, discord_status_snapshot_t *out);
+
 #ifdef __cplusplus
 }
 #endif
