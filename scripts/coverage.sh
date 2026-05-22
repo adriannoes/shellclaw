@@ -37,14 +37,27 @@ FIRST=""
 for f in "$COVERAGE_DIR"/*.info; do
 	[ -f "$f" ] || continue
 	[ "$f" = "$ALL_INFO" ] && continue
+	if [ ! -s "$f" ]; then
+		echo "coverage: skip empty $f"
+		continue
+	fi
 	if [ -z "$FIRST" ]; then
 		cp "$f" "$ALL_INFO"
 		FIRST=1
 	else
-		lcov -a "$ALL_INFO" -a "$f" -o "${ALL_INFO}.tmp" --rc "$LCOV_RC" 2>/dev/null || true
-		mv "${ALL_INFO}.tmp" "$ALL_INFO"
+		if lcov -a "$ALL_INFO" -a "$f" -o "${ALL_INFO}.tmp" --rc "$LCOV_RC" 2>/dev/null; then
+			mv "${ALL_INFO}.tmp" "$ALL_INFO"
+		else
+			rm -f "${ALL_INFO}.tmp"
+			echo "coverage: warning: failed to merge $(basename "$f") (skipping)"
+		fi
 	fi
 done
+
+if [ ! -s "$ALL_INFO" ]; then
+	echo "Could not collect coverage data"
+	exit 1
+fi
 
 CORE_INFO="$COVERAGE_DIR/core.info"
 lcov --remove "$ALL_INFO" '/usr/*' 'vendor/*' 'tests/*' '*/channels/*' '*/tools/*' '*/providers/*' '*/core/main.c' \
