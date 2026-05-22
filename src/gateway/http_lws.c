@@ -240,6 +240,25 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	http_server_ctx_t *ctx = http_ctx_get();
 	(void)user;
 	if (!ctx) return 0;
+	if (getenv("SHELLCLAW_HTTP_TRACE")) {
+		switch (reason) {
+		case LWS_CALLBACK_HTTP:
+		case LWS_CALLBACK_HTTP_BODY:
+		case LWS_CALLBACK_HTTP_BODY_COMPLETION:
+		case LWS_CALLBACK_HTTP_WRITEABLE:
+		case LWS_CALLBACK_CLOSED_HTTP:
+		case LWS_CALLBACK_CHECK_ACCESS_RIGHTS:
+		case LWS_CALLBACK_PROCESS_HTML:
+		case LWS_CALLBACK_FILTER_HTTP_CONNECTION:
+		case LWS_CALLBACK_HTTP_FILE_COMPLETION:
+		case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
+		case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
+		case 76 /*LWS_CALLBACK_HTTP_PMO*/:
+			fprintf(stderr, "[trace] cb reason=%d len=%zu\n", (int)reason, len);
+			break;
+		default: break;
+		}
+	}
 	switch (reason) {
 	case LWS_CALLBACK_HTTP: {
 		char uri[256];
