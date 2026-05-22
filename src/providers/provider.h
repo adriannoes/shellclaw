@@ -7,6 +7,7 @@
 #define SHELLCLAW_PROVIDER_H
 
 #include <stddef.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,8 +73,31 @@ void provider_set_error(provider_response_t *response, const char *msg);
 char *provider_dup_str(const char *s);
 
 /**
- * Provider vtable: init, chat, cleanup. All providers implement this interface.
+ * Parse OpenAI-style chat/completions JSON into @p response. Caller must provider_response_clear on success.
+ * Returns -1 on invalid JSON or API error object.
  */
+int provider_parse_chat_completions_json(const char *response_body, provider_response_t *response);
+
+/** Non-zero if router may try next chain entry: no `HTTP 4xx` in message, otherwise transport/5xx may retry. */
+int provider_error_allows_fallback_retry(const char *provider_error_content);
+
+void provider_router_active_backend_snapshot(char *dst, size_t dst_sz);
+void provider_router_last_error_snapshot(char *dst, size_t dst_sz);
+void provider_router_periodic_recovery_tick(time_t now_wall);
+void provider_router_periodic_recovery_set_interval_seconds(unsigned interval_sec);
+void provider_router_periodic_recovery_reset_timer(void);
+/** Malloc'd JSON for GET /api/status; caller frees. NULL on OOM. */
+char *provider_router_api_status_json(void);
+
+typedef void (*provider_router_status_changed_fn)(void);
+void provider_router_set_status_changed_callback(provider_router_status_changed_fn fn);
+
+/**
+ * After reloading config.toml (same process): point the fallback router's live reads at @p cfg.
+ * Does not re-run backend init; chain shape and backends stay as at startup (PRD §9 Q4).
+ */
+void provider_router_set_live_config(const config_t *cfg);
+
 typedef struct provider {
 	const char *name;
 	/** Initialize with config (e.g. read API key env). Return 0 on success. */
@@ -91,14 +115,34 @@ typedef struct provider {
 
 /** Stub provider for tests and vtable verification. Returns static vtable. */
 const provider_t *provider_stub_get(void);
+/** Second stub backend with optional forced chat failure (router / recovery tests). */
+const provider_t *provider_stub_b_get(void);
+void provider_stub_b_set_chat_should_fail(int should_fail);
 
 /** Anthropic (Claude) provider. Messages API, tool_use. */
 const provider_t *provider_anthropic_get(void);
 
 /** OpenAI provider. Chat Completions, tool_calls (function calling). */
 const provider_t *provider_openai_get(void);
+/** After SIGHUP reload: refresh live config reads without re-init (PRD §9 Q4). */
+void provider_openai_set_live_config(const config_t *cfg);
 
-/** Provider selected by config (default_provider). No fallback; failure propagates to caller. */
+/** Local llama.cpp / OpenAI-compatible HTTP server (#config_provider_local_endpoint). */
+const provider_t *provider_local_get(void);
+/** After SIGHUP reload: refresh live config reads without re-init (PRD §9 Q4). */
+void provider_local_set_live_config(const config_t *cfg);
+/** Lightweight GET probe via `/v1/models` or `/health`; used by init and router recovery. */
+int provider_local_endpoint_reachable(const char *endpoint);
+/** After a successful recovery GET probe on local; clears init-time unreachable flag. */
+void provider_local_recovery_probe_succeeded(void);
+
+#ifdef SHELLCLAW_TEST
+int local_provider_is_unavailable_for_test(void);
+void local_provider_test_reset(void);
+void local_provider_test_set_http_response(const char *json_body);
+void local_provider_test_set_skip_probe(int skip);
+#endif
+
 const provider_t *provider_router_get(const config_t *cfg);
 
 #ifdef __cplusplus
