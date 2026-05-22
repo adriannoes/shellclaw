@@ -116,6 +116,21 @@ static int http_body_content_length(struct lws *wsi, long *cl_out)
 	return 0;
 }
 
+static int http_copy_request_uri(struct lws *wsi, char *uri, int uri_size)
+{
+	int n;
+	n = lws_hdr_copy(wsi, uri, uri_size, WSI_TOKEN_GET_URI);
+	if (n > 0) return n;
+	n = lws_hdr_copy(wsi, uri, uri_size, WSI_TOKEN_POST_URI);
+	if (n > 0) return n;
+	n = lws_hdr_copy(wsi, uri, uri_size, WSI_TOKEN_PUT_URI);
+	if (n > 0) return n;
+	n = lws_hdr_copy(wsi, uri, uri_size, WSI_TOKEN_DELETE_URI);
+	if (n > 0) return n;
+	n = lws_hdr_copy(wsi, uri, uri_size, WSI_TOKEN_PATCH_URI);
+	return n;
+}
+
 static void http_dispatch_body(http_server_ctx_t *ctx, struct lws *wsi, http_conn_t *conn)
 {
 	char uri[256];
@@ -124,9 +139,7 @@ static void http_dispatch_body(http_server_ctx_t *ctx, struct lws *wsi, http_con
 	if (!conn || !conn->has_body || conn->body_dispatched)
 		return;
 	conn->body_dispatched = 1;
-	uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI);
-	if (uri_len <= 0)
-		uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_POST_URI);
+	uri_len = http_copy_request_uri(wsi, uri, sizeof(uri));
 	method = http_parse_method(wsi);
 	if (conn->body_too_large) {
 		json_error(conn->response, RESP_BUF_SIZE, &conn->status, 413,
@@ -230,9 +243,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	switch (reason) {
 	case LWS_CALLBACK_HTTP: {
 		char uri[256];
-		int uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI);
-		if (uri_len <= 0)
-			uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_POST_URI);
+		int uri_len = http_copy_request_uri(wsi, uri, sizeof(uri));
 		if (uri_len <= 0 || uri_len >= (int)sizeof(uri)) {
 			lws_return_http_status(wsi, 400, "Bad request");
 			http_lws_tx_completed(wsi);
@@ -261,6 +272,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			http_lws_tx_completed(wsi);
 			return 0;
 		}
+		conn->response[0] = '\0';
 		conn->status = 200;
 		conn->has_body = (method == HTTP_POST || method == HTTP_PUT);
 		/* For /asap POST: enforce 1 MB body cap via Content-Length and allocate
@@ -339,8 +351,21 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	}
 	case LWS_CALLBACK_HTTP_BODY: {
 		http_conn_t *conn = lws_wsi_user(wsi);
-		if (conn && conn->has_body && in && len > 0)
-			http_append_body(conn, in, len);
+		long cl;
+		size_t received;
+		if (!conn || !conn->has_body || !in || len == 0)
+			return 0;
+		http_append_body(conn, in, len);
+		/* On some libwebsockets versions (e.g. 4.3) the
+		 * LWS_CALLBACK_HTTP_BODY_COMPLETION callback is not always
+		 * delivered for short request bodies. Dispatch eagerly as soon
+		 * as we have received Content-Length bytes. */
+		received = conn->use_dyn_body ? conn->body_dyn_len : conn->body_len;
+		if (http_body_content_length(wsi, &cl) == 0 && cl > 0 &&
+		    (long)received >= cl) {
+			http_dispatch_body(ctx, wsi, conn);
+			lws_callback_on_writable(wsi);
+		}
 		return 0;
 	}
 	case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
