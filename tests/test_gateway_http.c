@@ -24,8 +24,8 @@
 #include <arpa/inet.h>
 
 #define ASSERT(c) do { if (!(c)) { fprintf(stderr, "FAIL: %s:%d %s\n", __FILE__, __LINE__, #c); return 1; } } while (0)
-#define TEST_HOME "/tmp/shellclaw_test_gw_run"
 
+static char g_test_home[64];
 static char g_base_url[128];
 static char g_url_buf[512];
 
@@ -202,6 +202,40 @@ static int http_delete_auth(const char *url, const char *bearer, long *code_out,
 	curl_easy_cleanup(curl);
 	if (code_out) *code_out = code;
 	return (res == CURLE_OK) ? 0 : -1;
+}
+
+static int read_pairing_code_from_pipe(int fd, char *out, size_t out_sz)
+{
+	char read_buf[512] = {0};
+	size_t total = 0;
+	const char *prefix = "ShellClaw pairing code: ";
+	if (!out || out_sz < 7)
+		return -1;
+	out[0] = '\0';
+	while (total < sizeof(read_buf) - 1) {
+		ssize_t n = read(fd, read_buf + total, sizeof(read_buf) - 1 - total);
+		if (n <= 0)
+			break;
+		total += (size_t)n;
+		read_buf[total] = '\0';
+		char *p = strstr(read_buf, prefix);
+		if (p) {
+			p += strlen(prefix);
+			int digits = 0;
+			for (int i = 0; i < 6; i++) {
+				if (p[i] >= '0' && p[i] <= '9')
+					digits++;
+				else
+					break;
+			}
+			if (digits == 6) {
+				memcpy(out, p, 6);
+				out[6] = '\0';
+				return 0;
+			}
+		}
+	}
+	return -1;
 }
 
 static int test_health(void)
@@ -541,20 +575,21 @@ int main(int argc, char **argv)
 	char skills_dir[256];
 	char db_path[256];
 	int port;
-	snprintf(config_path, sizeof(config_path), "%s/config.toml", TEST_HOME);
-	snprintf(skills_dir, sizeof(skills_dir), "%s/.shellclaw/skills", TEST_HOME);
-	snprintf(db_path, sizeof(db_path), "%s/.shellclaw/memory.db", TEST_HOME);
+	snprintf(g_test_home, sizeof(g_test_home), "/tmp/shellclaw_test_gw_%d", (int)getpid());
+	snprintf(config_path, sizeof(config_path), "%s/config.toml", g_test_home);
+	snprintf(skills_dir, sizeof(skills_dir), "%s/.shellclaw/skills", g_test_home);
+	snprintf(db_path, sizeof(db_path), "%s/.shellclaw/memory.db", g_test_home);
 	port = pick_ephemeral_port();
 	if (port <= 0) {
 		fprintf(stderr, "test_gateway_http: ephemeral port failed\n");
 		return 1;
 	}
 	snprintf(g_base_url, sizeof(g_base_url), "http://127.0.0.1:%d", port);
-	if (mkdir(TEST_HOME, 0755) != 0 && errno != EEXIST) {
+	if (mkdir(g_test_home, 0755) != 0 && errno != EEXIST) {
 		fprintf(stderr, "test_gateway_http: mkdir failed\n");
 		return 1;
 	}
-	if (mkdir(TEST_HOME "/.shellclaw", 0755) != 0 && errno != EEXIST) {
+	if (mkdir(g_test_home "/.shellclaw", 0755) != 0 && errno != EEXIST) {
 		fprintf(stderr, "test_gateway_http: mkdir .shellclaw failed\n");
 		return 1;
 	}
@@ -562,7 +597,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "test_gateway_http: mkdir skills failed\n");
 		return 1;
 	}
-	unlink(TEST_HOME "/.shellclaw/auth_tokens.json");
+	unlink(g_test_home "/.shellclaw/auth_tokens.json");
 	FILE *f = fopen(config_path, "w");
 	if (!f) {
 		fprintf(stderr, "test_gateway_http: cannot write config\n");
@@ -571,7 +606,7 @@ int main(int argc, char **argv)
 	fprintf(f, "[agent]\nmodel = \"test\"\n");
 	fprintf(f, "[providers]\nfallback_chain = [ \"stub\" ]\n");
 	fprintf(f, "[gateway]\nenabled = true\nhost = \"127.0.0.1\"\nport = %d\n", port);
-	fprintf(f, "[memory]\ndb_path = \"%s/.shellclaw/memory.db\"\n", TEST_HOME);
+	fprintf(f, "[memory]\ndb_path = \"%s/.shellclaw/memory.db\"\n", g_test_home);
 	fprintf(f, "[skills]\ndir = \"%s\"\n", skills_dir);
 	fclose(f);
 	int pipefd[2];
@@ -579,7 +614,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "test_gateway_http: pipe failed\n");
 		return 1;
 	}
-	setenv("HOME", TEST_HOME, 1);
+	setenv("HOME", g_test_home, 1);
 	pid_t pid = fork();
 	if (pid < 0) {
 		fprintf(stderr, "test_gateway_http: fork failed\n");
@@ -594,24 +629,15 @@ int main(int argc, char **argv)
 		_exit(1);
 	}
 	close(pipefd[1]);
-	char read_buf[512] = {0};
-	size_t total = 0;
-	while (total < sizeof(read_buf) - 1) {
-		ssize_t n = read(pipefd[0], read_buf + total, sizeof(read_buf) - 1 - total);
-		if (n <= 0) break;
-		total += (size_t)n;
-		if (strstr(read_buf, "ShellClaw pairing code:") != NULL) break;
+	char pairing_code[16] = {0};
+	if (read_pairing_code_from_pipe(pipefd[0], pairing_code, sizeof(pairing_code)) != 0) {
+		fprintf(stderr, "test_gateway_http: failed to read pairing code from server stdout\n");
+		close(pipefd[0]);
+		kill(pid, SIGTERM);
+		waitpid(pid, NULL, 0);
+		return 1;
 	}
 	close(pipefd[0]);
-	char pairing_code[16] = {0};
-	const char *prefix = "ShellClaw pairing code: ";
-	char *p = strstr(read_buf, prefix);
-	if (p) {
-		p += strlen(prefix);
-		for (int i = 0; i < 6 && p[i] >= '0' && p[i] <= '9'; i++)
-			pairing_code[i] = p[i];
-	}
-	sleep(3);
 	if (wait_for_health(40) != 0) {
 		fprintf(stderr, "test_gateway_http: /health poll timeout on %s\n", g_base_url);
 		kill(pid, SIGTERM);
@@ -621,7 +647,7 @@ int main(int argc, char **argv)
 	char token[128] = {0};
 	int failed = 0;
 	if (test_health() != 0) { fprintf(stderr, "test_health failed\n"); failed++; }
-	if (pairing_code[0] && test_pair(pairing_code, token, sizeof(token)) != 0) {
+	if (test_pair(pairing_code, token, sizeof(token)) != 0) {
 		fprintf(stderr, "test_pair failed\n");
 		failed++;
 	}
@@ -648,7 +674,7 @@ int main(int argc, char **argv)
 	kill(pid, SIGTERM);
 	waitpid(pid, NULL, 0);
 	unlink(config_path);
-	unlink(TEST_HOME "/.shellclaw/auth_tokens.json");
+	unlink(g_test_home "/.shellclaw/auth_tokens.json");
 	unlink(db_path);
 	if (failed == 0)
 		printf("test_gateway_http: all tests passed\n");

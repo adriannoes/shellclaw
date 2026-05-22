@@ -521,9 +521,9 @@ test_gateway_http: shellclaw tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(T
 	@if [ "$(GATEWAY)" != "1" ]; then \
 		if [ "$(CI)" = "true" ]; then echo "test_gateway_http: GATEWAY=0 in CI — install libwebsockets-dev"; exit 1; fi; \
 		echo "test_gateway_http: skipped (GATEWAY=0)"; exit 0; \
-	fi; \
-	mkdir -p $(BINDIR) && \
-	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_GATEWAY -o $(BINDIR)/$@ tests/test_gateway_http.c $(AUTH_O) $(CRYPTO_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) && \
+	fi
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_GATEWAY -o $(BINDIR)/$@ tests/test_gateway_http.c $(AUTH_O) $(CRYPTO_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
 test_static: tests/test_static.c src/gateway/ui_assets.h src/gateway/static.o
