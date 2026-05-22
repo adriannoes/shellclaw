@@ -172,6 +172,10 @@ static int path_eq(const char *uri, int uri_len, const char *path)
 static const char *get_bearer_token(struct lws *wsi, char *buf, size_t buf_size)
 {
 	int n = lws_hdr_copy(wsi, buf, (int)buf_size, WSI_TOKEN_HTTP_AUTHORIZATION);
+	if (n <= 0)
+		n = lws_hdr_custom_copy(wsi, buf, (int)buf_size, "authorization", 13);
+	if (n <= 0)
+		n = lws_hdr_custom_copy(wsi, buf, (int)buf_size, "Authorization", 13);
 	if (n <= 0) return NULL;
 	if (n < 8 || strncmp(buf, "Bearer ", 7) != 0) return NULL;
 	return buf + 7;
