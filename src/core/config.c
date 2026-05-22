@@ -44,6 +44,15 @@
 #define ENV_GATEWAY_ALLOW_BIND   "SHELLCLAW_GATEWAY_ALLOW_BIND_ALL"
 #define ENV_ASAP_REGISTRY_URL         "SHELLCLAW_ASAP_REGISTRY_URL"
 #define ENV_ASAP_REVOCATION_LIST_URL  "SHELLCLAW_ASAP_REVOCATION_LIST_URL"
+#define ENV_FALLBACK_CHAIN           "SHELLCLAW_FALLBACK_CHAIN"
+#define ENV_LOCAL_ENDPOINT           "SHELLCLAW_LOCAL_ENDPOINT"
+#define ENV_LOCAL_MODEL              "SHELLCLAW_LOCAL_MODEL"
+#define ENV_AGENT_LATITUDE           "SHELLCLAW_AGENT_LATITUDE"
+#define ENV_AGENT_LONGITUDE          "SHELLCLAW_AGENT_LONGITUDE"
+#define ENV_AGENT_COUNTRY_CODE       "SHELLCLAW_AGENT_COUNTRY_CODE"
+
+#define DEFAULT_LOCAL_ENDPOINT "http://127.0.0.1:8080/v1/chat/completions"
+#define DEFAULT_LOCAL_MODEL "tinyllama-1.1b-q4"
 
 struct config {
 	char *agent_model;
@@ -54,14 +63,27 @@ struct config {
 	char *agent_soul_path;
 	char *agent_identity_path;
 	char *agent_user_path;
+	int agent_has_latitude;
+	double agent_latitude;
+	int agent_has_longitude;
+	double agent_longitude;
+	char *agent_country_code;
 	char *provider_default;
 	char *provider_anthropic_api_key_env;
 	char *provider_openai_api_key_env;
 	char *provider_openai_endpoint;
+	char **provider_fallback_chain;
+	int provider_fallback_chain_count;
+	char *provider_local_endpoint;
+	char *provider_local_model;
 	int telegram_enabled;
 	char *telegram_token_env;
 	char **telegram_allowed_users;
 	int telegram_allowed_users_count;
+	int discord_enabled;
+	char *discord_token_env;
+	char **discord_allowed_user_ids;
+	int discord_allowed_user_ids_count;
 	char *memory_db_path;
 	char *skills_dir;
 	int workspace_only;
@@ -142,26 +164,199 @@ static int parse_agent(const toml_table_t *root, config_t *cfg, char *errbuf, si
 		d = toml_string_in(identity, "user");
 		if (d.ok) { set_string(&cfg->agent_user_path, d.u.s); free(d.u.s); }
 	}
+	d = toml_double_in(agent, "latitude");
+	if (d.ok) {
+		cfg->agent_has_latitude = 1;
+		cfg->agent_latitude = d.u.d;
+	}
+	d = toml_double_in(agent, "longitude");
+	if (d.ok) {
+		cfg->agent_has_longitude = 1;
+		cfg->agent_longitude = d.u.d;
+	}
+	d = toml_string_in(agent, "country_code");
+	if (d.ok) { set_string(&cfg->agent_country_code, d.u.s); free(d.u.s); }
 	return 0;
 }
 
-static int parse_providers(const toml_table_t *root, config_t *cfg)
+static void trim_inplace(char *s)
+{
+	char *p = s;
+	size_t len;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (p != s)
+		memmove(s, p, strlen(p) + 1);
+	len = strlen(s);
+	while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t'))
+		s[--len] = '\0';
+}
+
+/** Frees prior fallback_chain entries. */
+static void fallback_chain_clear(config_t *cfg)
+{
+	int i;
+	if (!cfg) return;
+	for (i = 0; i < cfg->provider_fallback_chain_count; i++)
+		free(cfg->provider_fallback_chain[i]);
+	free(cfg->provider_fallback_chain);
+	cfg->provider_fallback_chain = NULL;
+	cfg->provider_fallback_chain_count = 0;
+}
+
+/** Default PRD fallback order: anthropic → openai → local. Returns -1 if allocation fails (cfg cleared). */
+static int fallback_chain_set_defaults(config_t *cfg)
+{
+	static const char *names[] = { "anthropic", "openai", "local" };
+	char **dup;
+	size_t i;
+	fallback_chain_clear(cfg);
+	dup = calloc(3, sizeof(char *));
+	if (!dup) return -1;
+	for (i = 0; i < 3; i++) {
+		dup[i] = strdup(names[i]);
+		if (!dup[i]) {
+			for (; i > 0;)
+				free(dup[--i]);
+			free(dup);
+			fallback_chain_clear(cfg);
+			return -1;
+		}
+	}
+	cfg->provider_fallback_chain = dup;
+	cfg->provider_fallback_chain_count = 3;
+	return 0;
+}
+
+/** env SHELLCLAW_FALLBACK_CHAIN comma list; on OOM returns -1 and leaves prior chain. */
+static int fallback_chain_apply_csv_override(config_t *cfg, const char *csv)
+{
+	char *work = NULL;
+	char *save = NULL;
+	char *tok;
+	char **built = NULL;
+	int n = 0;
+	int capacity = 0;
+	char **tmp = NULL;
+	if (!cfg || !csv || csv[0] == '\0') return 0;
+	work = strdup(csv);
+	if (!work) return -1;
+	for (tok = strtok_r(work, ",", &save); tok != NULL; tok = strtok_r(NULL, ",", &save)) {
+		char *dup;
+		trim_inplace(tok);
+		if (tok[0] == '\0') continue;
+		if (n >= capacity) {
+			int nc = capacity == 0 ? 8 : capacity * 2;
+			tmp = realloc(built, (size_t)nc * sizeof(char *));
+			if (!tmp) goto fail_partial;
+			built = tmp;
+			capacity = nc;
+		}
+		dup = strdup(tok);
+		if (!dup) goto fail_partial;
+		built[n++] = dup;
+	}
+	free(work);
+	work = NULL;
+	if (n == 0) {
+		free(built);
+		return 0;
+	}
+	tmp = realloc(built, (size_t)n * sizeof(char *));
+	if (!tmp) goto fail_partial;
+	built = tmp;
+	fallback_chain_clear(cfg);
+	cfg->provider_fallback_chain = built;
+	cfg->provider_fallback_chain_count = n;
+	return 0;
+fail_partial:
+	if (work) free(work);
+	for (; n > 0;)
+		free(built[--n]);
+	free(built);
+	return -1;
+}
+
+static int parse_providers(const toml_table_t *root, config_t *cfg, char *errbuf, size_t errbufsz)
 {
 	const toml_table_t *providers = toml_table_in(root, "providers");
+	const toml_table_t *local_tbl;
+	const toml_table_t *anth;
+	const toml_table_t *openai;
+	const toml_array_t *fb_arr;
+	toml_datum_t d_def;
+	toml_datum_t d_ep;
+	int n_fb;
+	char **parsed = NULL;
 	if (!providers) return 0;
-	toml_datum_t d_def = toml_string_in(providers, "default");
+	d_def = toml_string_in(providers, "default");
 	if (d_def.ok) { set_string(&cfg->provider_default, d_def.u.s); free(d_def.u.s); }
-	const toml_table_t *anth = toml_table_in(providers, "anthropic");
+	anth = toml_table_in(providers, "anthropic");
 	if (anth) {
 		toml_datum_t d_anth = toml_string_in(anth, "api_key_env");
 		if (d_anth.ok) { set_string(&cfg->provider_anthropic_api_key_env, d_anth.u.s); free(d_anth.u.s); }
 	}
-	const toml_table_t *openai = toml_table_in(providers, "openai");
+	openai = toml_table_in(providers, "openai");
 	if (openai) {
 		toml_datum_t d_oe = toml_string_in(openai, "api_key_env");
 		if (d_oe.ok) { set_string(&cfg->provider_openai_api_key_env, d_oe.u.s); free(d_oe.u.s); }
-		toml_datum_t d_ep = toml_string_in(openai, "endpoint");
+		d_ep = toml_string_in(openai, "endpoint");
 		if (d_ep.ok) { set_string(&cfg->provider_openai_endpoint, d_ep.u.s); free(d_ep.u.s); }
+	}
+	local_tbl = toml_table_in(providers, "local");
+	if (local_tbl) {
+		toml_datum_t d_lm;
+		d_ep = toml_string_in(local_tbl, "endpoint");
+		if (d_ep.ok) { set_string(&cfg->provider_local_endpoint, d_ep.u.s); free(d_ep.u.s); }
+		d_lm = toml_string_in(local_tbl, "model");
+		if (d_lm.ok) { set_string(&cfg->provider_local_model, d_lm.u.s); free(d_lm.u.s); }
+	}
+	fb_arr = toml_array_in(providers, "fallback_chain");
+	if (fb_arr)
+		n_fb = toml_array_nelem(fb_arr);
+	else
+		n_fb = 0;
+	if (n_fb > 0) {
+		int count = 0;
+		parsed = calloc((size_t)n_fb, sizeof(char *));
+		if (!parsed) {
+			ERRBUF_COPY(errbuf, errbufsz, "out of memory allocating fallback_chain");
+			return -1;
+		}
+		for (int i = 0; i < n_fb; i++) {
+			char *dup;
+			toml_datum_t st = toml_string_at(fb_arr, i);
+			if (!st.ok || !st.u.s || st.u.s[0] == '\0') {
+				if (st.ok && st.u.s)
+					free(st.u.s);
+				continue;
+			}
+			dup = strdup(st.u.s);
+			free(st.u.s);
+			if (!dup) {
+				for (int j = 0; j < count; j++)
+					free(parsed[j]);
+				free(parsed);
+				ERRBUF_COPY(errbuf, errbufsz, "out of memory copying fallback_chain");
+				return -1;
+			}
+			parsed[count++] = dup;
+		}
+		if (count > 0) {
+			char **shrunk = realloc(parsed, (size_t)count * sizeof(char *));
+			if (!shrunk) {
+				for (int j = 0; j < count; j++)
+					free(parsed[j]);
+				free(parsed);
+				ERRBUF_COPY(errbuf, errbufsz, "out of memory allocating fallback_chain");
+				return -1;
+			}
+			fallback_chain_clear(cfg);
+			cfg->provider_fallback_chain = shrunk;
+			cfg->provider_fallback_chain_count = count;
+		} else {
+			free(parsed);
+		}
 	}
 	return 0;
 }
@@ -192,6 +387,39 @@ static int parse_telegram(const toml_table_t *root, config_t *cfg, char *errbuf,
 			cfg->telegram_allowed_users = users;
 			cfg->telegram_allowed_users_count = n;
 		}
+	}
+	return 0;
+}
+
+static int parse_discord(const toml_table_t *root, config_t *cfg, char *errbuf, size_t errbufsz)
+{
+	const toml_table_t *ch = toml_table_in(root, "channels");
+	const toml_table_t *dc;
+	const toml_array_t *arr;
+	int n;
+	if (!ch) return 0;
+	dc = toml_table_in(ch, "discord");
+	if (!dc) return 0;
+	toml_datum_t d = toml_bool_in(dc, "enabled");
+	if (d.ok) cfg->discord_enabled = d.u.b;
+	d = toml_string_in(dc, "token_env");
+	if (d.ok) { set_string(&cfg->discord_token_env, d.u.s); free(d.u.s); }
+	arr = toml_array_in(dc, "allowed_user_ids");
+	if (!arr) return 0;
+	n = toml_array_nelem(arr);
+	if (n <= 0) return 0;
+	{
+		char **users = malloc((size_t)n * sizeof(char *));
+		if (!users) {
+			ERRBUF_COPY(errbuf, errbufsz, "out of memory allocating discord allowed_user_ids");
+			return -1;
+		}
+		for (int i = 0; i < n; i++) {
+			toml_datum_t s = toml_string_at(arr, i);
+			users[i] = s.ok ? s.u.s : NULL;
+		}
+		cfg->discord_allowed_user_ids = users;
+		cfg->discord_allowed_user_ids_count = n;
 	}
 	return 0;
 }
@@ -355,7 +583,7 @@ static int parse_double_env(const char *v, double *out, double min_val, double m
 	return 1;
 }
 
-static void apply_env_overrides(config_t *cfg)
+static int apply_env_overrides(config_t *cfg)
 {
 	const char *v;
 	v = getenv(ENV_AGENT_MODEL);
@@ -368,6 +596,14 @@ static void apply_env_overrides(config_t *cfg)
 	if (v) parse_int_env(v, &cfg->agent_max_tool_iterations, 1, 1000);
 	v = getenv(ENV_AGENT_MAX_CTX_MSG);
 	if (v) parse_int_env(v, &cfg->agent_max_context_messages, 1, 1000);
+	v = getenv(ENV_AGENT_LATITUDE);
+	if (v && parse_double_env(v, &cfg->agent_latitude, -90.0, 90.0))
+		cfg->agent_has_latitude = 1;
+	v = getenv(ENV_AGENT_LONGITUDE);
+	if (v && parse_double_env(v, &cfg->agent_longitude, -180.0, 180.0))
+		cfg->agent_has_longitude = 1;
+	v = getenv(ENV_AGENT_COUNTRY_CODE);
+	if (v && v[0]) set_string(&cfg->agent_country_code, v);
 	v = getenv(ENV_MEMORY_DB_PATH);
 	if (v) set_string(&cfg->memory_db_path, v);
 	v = getenv(ENV_SKILLS_DIR);
@@ -376,6 +612,15 @@ static void apply_env_overrides(config_t *cfg)
 	if (v) set_string(&cfg->provider_openai_endpoint, v);
 	v = getenv(ENV_DEFAULT_PROVIDER);
 	if (v) set_string(&cfg->provider_default, v);
+	v = getenv(ENV_LOCAL_ENDPOINT);
+	if (v) set_string(&cfg->provider_local_endpoint, v);
+	v = getenv(ENV_LOCAL_MODEL);
+	if (v) set_string(&cfg->provider_local_model, v);
+	v = getenv(ENV_FALLBACK_CHAIN);
+	if (v && v[0]) {
+		if (fallback_chain_apply_csv_override(cfg, v) != 0)
+			return -1;
+	}
 	v = getenv(ENV_GATEWAY_ENABLED);
 	if (v && (strcmp(v, "1") == 0 || strcasecmp(v, "true") == 0 || strcasecmp(v, "yes") == 0))
 		cfg->gateway_enabled = 1;
@@ -394,6 +639,7 @@ static void apply_env_overrides(config_t *cfg)
 	if (v) set_string(&cfg->asap_registry_url, v);
 	v = getenv(ENV_ASAP_REVOCATION_LIST_URL);
 	if (v) set_string(&cfg->asap_revocation_list_url, v);
+	return 0;
 }
 
 static void expand_paths(config_t *cfg)
@@ -480,6 +726,14 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	set_string(&cfg->provider_anthropic_api_key_env, "ANTHROPIC_API_KEY");
 	set_string(&cfg->provider_openai_api_key_env, "OPENAI_API_KEY");
 	set_string(&cfg->provider_openai_endpoint, "https://api.openai.com/v1/chat/completions");
+	set_string(&cfg->provider_local_endpoint, DEFAULT_LOCAL_ENDPOINT);
+	set_string(&cfg->provider_local_model, DEFAULT_LOCAL_MODEL);
+	if (fallback_chain_set_defaults(cfg) != 0) {
+		toml_free(tab);
+		config_free(cfg);
+		ERRBUF_COPY(errbuf, errbufsz, "out of memory");
+		return -1;
+	}
 	set_string(&cfg->memory_db_path, "~/.shellclaw/memory.db");
 	set_string(&cfg->skills_dir, "~/.shellclaw/skills");
 	cfg->workspace_only = 1;
@@ -495,8 +749,11 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	cfg->shell_timeout_sec = DEFAULT_SHELL_TIMEOUT_SEC;
 	int err = parse_agent(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
-	parse_providers(tab, cfg);
+	err = parse_providers(tab, cfg, errbuf, errbufsz);
+	if (err) goto fail;
 	err = parse_telegram(tab, cfg, errbuf, errbufsz);
+	if (err) goto fail;
+	err = parse_discord(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
 	parse_memory_skills_sandbox(tab, cfg);
 	parse_gateway(tab, cfg);
@@ -506,7 +763,11 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	parse_web_search(tab, cfg);
 	toml_free(tab);
 	tab = NULL;
-	apply_env_overrides(cfg);
+	if (apply_env_overrides(cfg) != 0) {
+		ERRBUF_COPY(errbuf, errbufsz, "invalid SHELLCLAW_FALLBACK_CHAIN");
+		err = -1;
+		goto fail;
+	}
 	expand_paths(cfg);
 	err = validate_required(cfg, errbuf, errbufsz);
 	if (err) goto fail;
@@ -525,10 +786,16 @@ void config_free(config_t *cfg)
 	set_string(&cfg->agent_soul_path, NULL);
 	set_string(&cfg->agent_identity_path, NULL);
 	set_string(&cfg->agent_user_path, NULL);
+	cfg->agent_has_latitude = 0;
+	cfg->agent_has_longitude = 0;
+	set_string(&cfg->agent_country_code, NULL);
 	set_string(&cfg->provider_default, NULL);
 	set_string(&cfg->provider_anthropic_api_key_env, NULL);
 	set_string(&cfg->provider_openai_api_key_env, NULL);
 	set_string(&cfg->provider_openai_endpoint, NULL);
+	set_string(&cfg->provider_local_endpoint, NULL);
+	set_string(&cfg->provider_local_model, NULL);
+	fallback_chain_clear(cfg);
 	set_string(&cfg->telegram_token_env, NULL);
 	if (cfg->telegram_allowed_users) {
 		for (int i = 0; i < cfg->telegram_allowed_users_count; i++)
@@ -536,6 +803,14 @@ void config_free(config_t *cfg)
 		free(cfg->telegram_allowed_users);
 		cfg->telegram_allowed_users = NULL;
 		cfg->telegram_allowed_users_count = 0;
+	}
+	set_string(&cfg->discord_token_env, NULL);
+	if (cfg->discord_allowed_user_ids) {
+		for (int i = 0; i < cfg->discord_allowed_user_ids_count; i++)
+			free(cfg->discord_allowed_user_ids[i]);
+		free(cfg->discord_allowed_user_ids);
+		cfg->discord_allowed_user_ids = NULL;
+		cfg->discord_allowed_user_ids_count = 0;
 	}
 	set_string(&cfg->memory_db_path, NULL);
 	set_string(&cfg->skills_dir, NULL);
@@ -562,10 +837,57 @@ int config_agent_max_context_messages(const config_t *c) { return c ? c->agent_m
 const char *config_agent_soul_path(const config_t *c) { return c ? c->agent_soul_path : NULL; }
 const char *config_agent_identity_path(const config_t *c) { return c ? c->agent_identity_path : NULL; }
 const char *config_agent_user_path(const config_t *c) { return c ? c->agent_user_path : NULL; }
+
+int config_agent_has_latitude(const config_t *c) { return c ? c->agent_has_latitude : 0; }
+
+double config_agent_latitude(const config_t *c)
+{
+	return c && c->agent_has_latitude ? c->agent_latitude : 0.0;
+}
+
+int config_agent_has_longitude(const config_t *c) { return c ? c->agent_has_longitude : 0; }
+
+double config_agent_longitude(const config_t *c)
+{
+	return c && c->agent_has_longitude ? c->agent_longitude : 0.0;
+}
+
+const char *config_agent_country_code(const config_t *c)
+{
+	return c ? c->agent_country_code : NULL;
+}
+
 const char *config_default_provider(const config_t *c) { return c ? c->provider_default : NULL; }
 const char *config_provider_anthropic_api_key_env(const config_t *c) { return c ? c->provider_anthropic_api_key_env : NULL; }
 const char *config_provider_openai_api_key_env(const config_t *c) { return c ? c->provider_openai_api_key_env : NULL; }
 const char *config_provider_openai_endpoint(const config_t *c) { return c ? c->provider_openai_endpoint : NULL; }
+
+int config_provider_fallback_chain_count(const config_t *c)
+{
+	return c ? c->provider_fallback_chain_count : 0;
+}
+
+const char *config_provider_fallback_chain_entry(const config_t *c, int index)
+{
+	if (!c || !c->provider_fallback_chain || index < 0 || index >= c->provider_fallback_chain_count)
+		return NULL;
+	return c->provider_fallback_chain[index];
+}
+
+const char *config_provider_local_endpoint(const config_t *c)
+{
+	if (!c || !c->provider_local_endpoint || c->provider_local_endpoint[0] == '\0')
+		return DEFAULT_LOCAL_ENDPOINT;
+	return c->provider_local_endpoint;
+}
+
+const char *config_provider_local_model(const config_t *c)
+{
+	if (!c || !c->provider_local_model || c->provider_local_model[0] == '\0')
+		return DEFAULT_LOCAL_MODEL;
+	return c->provider_local_model;
+}
+
 int config_telegram_enabled(const config_t *c) { return c ? c->telegram_enabled : 0; }
 const char *config_telegram_token_env(const config_t *c) { return c ? c->telegram_token_env : NULL; }
 int config_telegram_allowed_users_count(const config_t *c) { return c ? c->telegram_allowed_users_count : 0; }
@@ -573,6 +895,29 @@ const char *config_telegram_allowed_user(const config_t *c, int index) {
 	if (!c || !c->telegram_allowed_users || index < 0 || index >= c->telegram_allowed_users_count) return NULL;
 	return c->telegram_allowed_users[index];
 }
+
+int config_discord_enabled(const config_t *c) { return c ? c->discord_enabled : 0; }
+
+const char *config_discord_token_env(const config_t *c)
+{
+	if (!c || !c->discord_token_env || !c->discord_token_env[0])
+		return "DISCORD_BOT_TOKEN";
+	return c->discord_token_env;
+}
+
+int config_discord_allowed_user_ids_count(const config_t *c)
+{
+	return c ? c->discord_allowed_user_ids_count : 0;
+}
+
+const char *config_discord_allowed_user_id(const config_t *c, int index)
+{
+	if (!c || !c->discord_allowed_user_ids || index < 0 ||
+	    index >= c->discord_allowed_user_ids_count)
+		return NULL;
+	return c->discord_allowed_user_ids[index];
+}
+
 const char *config_memory_db_path(const config_t *c) { return c ? c->memory_db_path : NULL; }
 const char *config_skills_dir(const config_t *c) { return c ? c->skills_dir : NULL; }
 int config_workspace_only(const config_t *c) { return c ? c->workspace_only : 0; }
