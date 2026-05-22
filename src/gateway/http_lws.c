@@ -135,6 +135,12 @@ static void http_dispatch_body(http_server_ctx_t *ctx, struct lws *wsi, http_con
 	conn->body_dispatched = 1;
 	uri_len = http_copy_request_uri(wsi, uri, sizeof(uri));
 	method = http_parse_method(wsi);
+	if (getenv("SHELLCLAW_HTTP_TRACE"))
+		fprintf(stderr, "[trace]   body dispatch method=%d uri=%.*s body_len=%zu body=%.*s\n",
+			method, uri_len > 0 ? uri_len : 0, uri_len > 0 ? uri : "",
+			conn->use_dyn_body ? conn->body_dyn_len : conn->body_len,
+			(int)(conn->use_dyn_body ? conn->body_dyn_len : conn->body_len),
+			conn->use_dyn_body ? conn->body_dyn : conn->body);
 	if (conn->body_too_large) {
 		json_error(conn->response, RESP_BUF_SIZE, &conn->status, 413,
 		           "Request body too large");
@@ -322,6 +328,11 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		if (!conn->has_body) {
 			dispatch_route(ctx, wsi, method, uri, uri_len, NULL, 0, conn->response, RESP_BUF_SIZE, &conn->status);
 			conn->response_len = strlen(conn->response);
+			if (getenv("SHELLCLAW_HTTP_TRACE"))
+				fprintf(stderr, "[trace]   no-body dispatch method=%d uri=%.*s status=%d resp=%.*s\n",
+					method, uri_len, uri, conn->status,
+					(int)(conn->response_len > 120 ? 120 : conn->response_len),
+					conn->response);
 			lws_set_wsi_user(wsi, conn);
 			lws_callback_on_writable(wsi);
 		} else {
