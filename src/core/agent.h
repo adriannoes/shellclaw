@@ -37,7 +37,7 @@ typedef struct agent_tool {
  * @param cfg           Configuration (model, limits, paths).
  * @param session_id    Session ID (e.g. "cli:default", "telegram:123"); used for history.
  * @param user_message  User message text (must not be NULL).
- * @param provider      LLM provider (e.g. from provider_router_get(cfg)); must not be NULL.
+ * @param provider      Fallback composite (`shellclaw-router`), e.g. from provider_router_get(cfg); must not be NULL.
  * @param tools         Array of tools (may be NULL if tool_count is 0).
  * @param tool_count    Number of tools.
  * @param response_buf  Output buffer for final assistant text (or error message).
@@ -63,6 +63,9 @@ void agent_lock(void);
  * Release the global agent mutex after agent_run() returns.
  */
 void agent_unlock(void);
+
+/** Test-only: non-empty @p name_or_null forces “active backend” for local/offline prompt suffix; NULL uses router. */
+void shellclaw_agent_set_test_active_backend_name(const char *name_or_null);
 
 #ifdef __cplusplus
 }

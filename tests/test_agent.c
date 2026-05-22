@@ -227,6 +227,7 @@ static int test_context_assembly_system_prompt_history_memories(void)
 	if (!spy_roles[0] || strcmp(spy_roles[0], "system") != 0) goto cleanup;
 	if (!strstr(spy_content[0], "User likes coffee")) goto cleanup;
 	if (!strstr(spy_content[0], "Test skill line for context.")) goto cleanup;
+	if (strstr(spy_content[0], "local/offline inference") != NULL) goto cleanup;
 	if (!strstr(spy_content[1], "old user")) goto cleanup;
 	if (!strstr(spy_content[2], "old assistant")) goto cleanup;
 	if (!spy_roles[3] || strcmp(spy_roles[3], "user") != 0) goto cleanup;
@@ -442,6 +443,153 @@ cleanup_early:
 	return failed;
 }
 
+static int test_local_offline_note_when_active_is_local(void)
+{
+	const char *path = "build/test_agent_local_note.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	char response_buf[4096];
+	spy_roles_clear();
+	shellclaw_agent_set_test_active_backend_name("local");
+	int ret = agent_run(cfg, "cli:localnote", "hey", &spy_provider, NULL, 0, response_buf, sizeof(response_buf));
+	shellclaw_agent_set_test_active_backend_name(NULL);
+	config_free(cfg);
+	remove(path);
+	ASSERT(ret == 0);
+	ASSERT(spy_message_count >= 1);
+	ASSERT(strstr(spy_content[0], "local/offline inference") != NULL);
+	return 0;
+}
+
+static int provider_error_init(const config_t *cfg) { (void)cfg; return 0; }
+static int provider_error_chat(const provider_message_t *messages, size_t message_count,
+	const provider_tool_def_t *tools, size_t tool_count, provider_response_t *response)
+{
+	(void)messages;
+	(void)message_count;
+	(void)tools;
+	(void)tool_count;
+	provider_set_error(response, "mock provider error");
+	return -1;
+}
+static void provider_error_cleanup(void) {}
+static const provider_t provider_error_provider = {
+	.name = "provider_error",
+	.init = provider_error_init,
+	.chat = provider_error_chat,
+	.cleanup = provider_error_cleanup,
+};
+
+static int test_agent_provider_error_response(void)
+{
+	const char *path = "build/test_agent_provider_err.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	char response_buf[4096];
+	int ret;
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	response_buf[0] = '\0';
+	ret = agent_run(cfg, "cli:perr", "hi", &provider_error_provider, NULL, 0,
+	                response_buf, sizeof(response_buf));
+	ASSERT(ret != 0);
+	ASSERT(strstr(response_buf, "mock provider error") != NULL);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int unknown_tool_call_count;
+static int unknown_tool_init(const config_t *cfg) { (void)cfg; unknown_tool_call_count = 0; return 0; }
+static int unknown_tool_chat(const provider_message_t *messages, size_t message_count,
+	const provider_tool_def_t *tools, size_t tool_count, provider_response_t *response)
+{
+	(void)messages;
+	(void)message_count;
+	(void)tools;
+	(void)tool_count;
+	response->error = 0;
+	response->tool_calls = NULL;
+	response->tool_calls_count = 0;
+	response->content = NULL;
+	unknown_tool_call_count++;
+	if (unknown_tool_call_count == 1) {
+		response->tool_calls = malloc(sizeof(provider_tool_call_t));
+		ASSERT(response->tool_calls != NULL);
+		response->tool_calls[0].id = strdup("u1");
+		response->tool_calls[0].name = strdup("no_such_tool");
+		response->tool_calls[0].arguments = strdup("{}");
+		response->tool_calls_count = 1;
+		response->content = strdup("");
+		return 0;
+	}
+	response->content = strdup("after unknown tool");
+	return 0;
+}
+static void unknown_tool_cleanup(void) {}
+static const provider_t unknown_tool_provider = {
+	.name = "unknown_tool",
+	.init = unknown_tool_init,
+	.chat = unknown_tool_chat,
+	.cleanup = unknown_tool_cleanup,
+};
+
+static int test_agent_unknown_tool_continues(void)
+{
+	const char *path = "build/test_agent_unknown_tool.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\nmax_tool_iterations = 5\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	char response_buf[4096];
+	int ret;
+	const agent_tool_t *tools = &mock_echo_tool;
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	response_buf[0] = '\0';
+	unknown_tool_call_count = 0;
+	ret = agent_run(cfg, "cli:unk", "hi", &unknown_tool_provider, tools, 1,
+	                response_buf, sizeof(response_buf));
+	ASSERT(ret == 0);
+	ASSERT(strstr(response_buf, "after unknown tool") != NULL);
+	ASSERT(unknown_tool_call_count == 2);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_local_offline_note_skipped_for_non_local(void)
+{
+	const char *path = "build/test_agent_nonlocal_note.toml";
+	FILE *f = fopen(path, "w");
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fclose(f);
+	config_t *cfg = NULL;
+	char errbuf[256];
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	char response_buf[4096];
+	spy_roles_clear();
+	shellclaw_agent_set_test_active_backend_name("stub");
+	int ret = agent_run(cfg, "cli:nonlocalnote", "hey", &spy_provider, NULL, 0, response_buf, sizeof(response_buf));
+	shellclaw_agent_set_test_active_backend_name(NULL);
+	config_free(cfg);
+	remove(path);
+	ASSERT(ret == 0);
+	ASSERT(spy_message_count >= 1);
+	ASSERT(strstr(spy_content[0], "local/offline inference") == NULL);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_agent_run_with_stub_and_no_tools());
@@ -451,6 +599,10 @@ int main(void)
 	RUN(test_react_loop_max_iterations());
 	RUN(test_session_persisted_after_exchange());
 	RUN(test_context_compaction_when_history_exceeds_max());
+	RUN(test_local_offline_note_when_active_is_local());
+	RUN(test_local_offline_note_skipped_for_non_local());
+	RUN(test_agent_provider_error_response());
+	RUN(test_agent_unknown_tool_continues());
 	printf("test_agent: all tests passed\n");
 	return 0;
 }
