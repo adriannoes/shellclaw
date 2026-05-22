@@ -42,22 +42,24 @@ static const struct lws_protocols protocols[] = {
 	{ .name = NULL },
 };
 
-static const struct lws_http_mount mount_ws = {
-	.mountpoint = "/ws",
-	.origin = "protocol",
-	.def = "ws",
-	.protocol = "ws",
-	.origin_protocol = LWSMPRO_CALLBACK,
-	.mount_next = NULL,
-};
-
 static const struct lws_http_mount mount_http = {
 	.mountpoint = "/",
-	.origin = "protocol",
+	.origin = "http",
 	.def = "http",
 	.protocol = "http",
 	.origin_protocol = LWSMPRO_CALLBACK,
-	.mount_next = &mount_ws,
+	.mountpoint_len = 1,
+	.mount_next = NULL,
+};
+
+static const struct lws_http_mount mount_ws = {
+	.mountpoint = "/ws",
+	.origin = "ws",
+	.def = "ws",
+	.protocol = "ws",
+	.origin_protocol = LWSMPRO_CALLBACK,
+	.mountpoint_len = 3,
+	.mount_next = &mount_http,
 };
 
 void http_emit_ws_provider_status(void)
@@ -123,7 +125,7 @@ int http_start(const config_t *cfg, struct auth_ctx *auth_ctx, const char *confi
 #if defined(LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE)
 	info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
 #endif
-	info.mounts = &mount_http;
+	info.mounts = &mount_ws;
 	ctx->lws_ctx = lws_create_context(&info);
 	if (!ctx->lws_ctx) {
 		free(ctx->config_path);
