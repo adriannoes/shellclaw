@@ -59,7 +59,7 @@ static int fake_http(const char *url, long *code, char **body)
 int ctx_fetch_url(const char *url, long *http_code, char **body)
 {
 	CURL *c;
-	struct wrbuf w = {.p = calloc(1u, CTX_RESP_MAX), .n = 0};
+	struct wrbuf w;
 	long code = 0;
 	CURLcode r;
 	if (!url || !http_code || !body)
@@ -74,6 +74,8 @@ int ctx_fetch_url(const char *url, long *http_code, char **body)
 		return -1;
 	}
 #endif
+	w.p = calloc(1u, CTX_RESP_MAX);
+	w.n = 0;
 	if (!w.p)
 		return -1;
 	c = curl_easy_init();
