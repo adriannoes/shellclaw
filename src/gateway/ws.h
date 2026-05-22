@@ -20,8 +20,9 @@ typedef void *ws_conn_t;
  *
  * @param conn_id Unique connection ID (e.g. incrementing integer).
  * @param wsi     libwebsockets wsi (stored as ws_conn_t).
+ * @return 0 on success, -1 when the connection table is full.
  */
-void ws_register_conn(int conn_id, ws_conn_t wsi);
+int ws_register_conn(int conn_id, ws_conn_t wsi);
 
 /**
  * Unregister a WebSocket connection. Called when connection closes.
@@ -60,6 +61,9 @@ int ws_pop_incoming(char *session_id_out, size_t session_size,
  * @return 0 on success, non-zero on error.
  */
 int ws_send_to(const char *session_id, const char *text);
+
+/** Queue @p text for every connected WebSocket client. */
+void ws_broadcast_text(const char *text);
 
 /**
  * Dequeue next outgoing message for conn_id. Must be called from lws thread only.

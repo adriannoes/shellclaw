@@ -18,9 +18,64 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #define ASSERT(c) do { if (!(c)) { fprintf(stderr, "FAIL: %s:%d %s\n", __FILE__, __LINE__, #c); return 1; } } while (0)
-#define BASE_URL "http://127.0.0.1:18789"
 #define TEST_HOME "/tmp/shellclaw_test_gw_run"
+
+static char g_base_url[128];
+static char g_url_buf[512];
+
+static const char *gw_url(const char *path)
+{
+	snprintf(g_url_buf, sizeof(g_url_buf), "%s%s", g_base_url, path);
+	return g_url_buf;
+}
+
+static int pick_ephemeral_port(void)
+{
+	int fd;
+	struct sockaddr_in addr;
+	socklen_t len = sizeof(addr);
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0) return -1;
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	addr.sin_port = 0;
+	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+		close(fd);
+		return -1;
+	}
+	if (getsockname(fd, (struct sockaddr *)&addr, &len) != 0) {
+		close(fd);
+		return -1;
+	}
+	close(fd);
+	return (int)ntohs(addr.sin_port);
+}
+
+static int http_get(const char *url, long *code_out, char **body_out);
+static int http_post(const char *url, const char *json, long *code_out, char **body_out);
+
+static int wait_for_health(int max_attempts)
+{
+	long code;
+	char *body = NULL;
+	int i;
+	for (i = 0; i < max_attempts; i++) {
+		body = NULL;
+		if (http_get(gw_url("/health"), &code, &body) == 0 && code == 200) {
+			free(body);
+			return 0;
+		}
+		free(body);
+		usleep(200000);
+	}
+	return -1;
+}
 
 static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *user)
 {
@@ -175,7 +230,7 @@ static int test_health(void)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get(BASE_URL "/health", &code, &body);
+	int r = http_get(gw_url("/health"), &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -192,7 +247,7 @@ static int test_pair(const char *pairing_code, char *token_out, size_t token_siz
 	snprintf(post_json, sizeof(post_json), "{\"code\":\"%s\"}", pairing_code);
 	long code_http;
 	char *body = NULL;
-	int r = http_post(BASE_URL "/pair", post_json, &code_http, &body);
+	int r = http_post(gw_url("/pair"), post_json, &code_http, &body);
 	ASSERT(r == 0);
 	ASSERT(code_http == 200);
 	ASSERT(body != NULL);
@@ -214,7 +269,7 @@ static int test_api_config_401(void)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get(BASE_URL "/api/config", &code, &body);
+	int r = http_get(gw_url("/api/config"), &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 401);
 	free(body);
@@ -225,7 +280,7 @@ static int test_asap_invalid_body(void)
 {
 	long code;
 	char *body = NULL;
-	int r = http_post(BASE_URL "/asap", "not-json", &code, &body);
+	int r = http_post(gw_url("/asap"), "not-json", &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 400);
 	ASSERT(body != NULL);
@@ -238,7 +293,7 @@ static int test_asap_missing_fields(void)
 {
 	long code;
 	char *body = NULL;
-	int r = http_post(BASE_URL "/asap", "{\"jsonrpc\":\"2.0\"}", &code, &body);
+	int r = http_post(gw_url("/asap"), "{\"jsonrpc\":\"2.0\"}", &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 400);
 	ASSERT(body != NULL);
@@ -251,7 +306,7 @@ static int test_manifest(void)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get(BASE_URL "/.well-known/asap/manifest.json", &code, &body);
+	int r = http_get(gw_url("/.well-known/asap/manifest.json"), &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -267,7 +322,7 @@ static int test_health_wellknown(void)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get(BASE_URL "/.well-known/asap/health", &code, &body);
+	int r = http_get(gw_url("/.well-known/asap/health"), &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -277,11 +332,94 @@ static int test_health_wellknown(void)
 	return 0;
 }
 
+static int test_api_status_401(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get(gw_url("/api/status"), &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
+static int test_api_context_snapshot_401(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get(gw_url("/api/context/snapshot"), &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
+static int test_api_context_snapshot_get(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(gw_url("/api/context/snapshot"), token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"dashboard\"") != NULL);
+	free(body);
+	return 0;
+}
+
+static int test_api_status_get(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(gw_url("/api/status"), token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"active_provider\"") != NULL);
+	ASSERT(strstr(body, "\"providers\"") != NULL);
+	ASSERT(strstr(body, "\"stub\"") != NULL);
+	ASSERT(strstr(body, "\"role\"") != NULL);
+	ASSERT(strstr(body, "\"reachable\"") != NULL);
+	{
+		cJSON *root = cJSON_Parse(body);
+		cJSON *ap;
+		cJSON *arr;
+		cJSON *first;
+		cJSON *name_item;
+		cJSON *role_item;
+		ASSERT(root != NULL);
+		ap = cJSON_GetObjectItem(root, "active_provider");
+		ASSERT(ap != NULL && cJSON_IsString(ap) && strcmp(ap->valuestring, "stub") == 0);
+		arr = cJSON_GetObjectItem(root, "providers");
+		ASSERT(arr != NULL && cJSON_IsArray(arr));
+		ASSERT(cJSON_GetArraySize(arr) >= 1);
+		first = cJSON_GetArrayItem(arr, 0);
+		ASSERT(first != NULL);
+		name_item = cJSON_GetObjectItem(first, "name");
+		ASSERT(name_item != NULL && cJSON_IsString(name_item) &&
+		       strcmp(name_item->valuestring, "stub") == 0);
+		role_item = cJSON_GetObjectItem(first, "role");
+		ASSERT(role_item != NULL && cJSON_IsString(role_item) &&
+		       strcmp(role_item->valuestring, "primary") == 0);
+		{
+			cJSON *discord_item = cJSON_GetObjectItem(root, "discord");
+			cJSON *lc;
+			ASSERT(discord_item != NULL && cJSON_IsObject(discord_item));
+			lc = cJSON_GetObjectItem(discord_item, "lifecycle");
+			ASSERT(lc != NULL && cJSON_IsString(lc) &&
+			       strcmp(lc->valuestring, "disabled") == 0);
+		}
+		cJSON_Delete(root);
+	}
+	free(body);
+	return 0;
+}
+
 static int test_api_config_get(const char *token)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get_auth(BASE_URL "/api/config", token, &code, &body);
+	int r = http_get_auth(gw_url("/api/config"), token, &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -294,7 +432,7 @@ static int test_api_skills_list(const char *token)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get_auth(BASE_URL "/api/skills", token, &code, &body);
+	int r = http_get_auth(gw_url("/api/skills"), token, &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -307,14 +445,14 @@ static int test_api_skill_create_delete(const char *token)
 {
 	long code;
 	char *body = NULL;
-	int r = http_post_auth(BASE_URL "/api/skills", token,
+	int r = http_post_auth(gw_url("/api/skills"), token,
 		"{\"name\":\"test_integration_skill\",\"content\":\"# Test skill for integration\"}",
 		&code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200 || code == 201);
 	free(body);
 	body = NULL;
-	r = http_delete_auth(BASE_URL "/api/skills/test_integration_skill", token, &code, &body);
+	r = http_delete_auth(gw_url("/api/skills/test_integration_skill"), token, &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	free(body);
@@ -325,7 +463,7 @@ static int test_api_memory(const char *token)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get_auth(BASE_URL "/api/memory?q=test&limit=5", token, &code, &body);
+	int r = http_get_auth(gw_url("/api/memory?q=test&limit=5"), token, &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -337,7 +475,7 @@ static int test_api_cron_list(const char *token)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get_auth(BASE_URL "/api/cron", token, &code, &body);
+	int r = http_get_auth(gw_url("/api/cron"), token, &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -350,7 +488,7 @@ static int test_api_cron_create_delete(const char *token)
 {
 	long code;
 	char *body = NULL;
-	int r = http_post_auth(BASE_URL "/api/cron", token,
+	int r = http_post_auth(gw_url("/api/cron"), token,
 		"{\"schedule\":\"interval:3600\",\"message\":\"integration test\",\"channel\":\"cli\",\"recipient\":\"default\"}",
 		&code, &body);
 	ASSERT(r == 0);
@@ -361,7 +499,7 @@ static int test_api_cron_create_delete(const char *token)
 	cJSON *id_obj = cJSON_GetObjectItem(root, "id");
 	ASSERT(id_obj != NULL && cJSON_IsString(id_obj));
 	char del_url[256];
-	snprintf(del_url, sizeof(del_url), BASE_URL "/api/cron/%s", id_obj->valuestring);
+	snprintf(del_url, sizeof(del_url), "%s/api/cron/%s", g_base_url, id_obj->valuestring);
 	cJSON_Delete(root);
 	free(body);
 	body = NULL;
@@ -376,7 +514,7 @@ static int test_api_sessions(const char *token)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get_auth(BASE_URL "/api/sessions", token, &code, &body);
+	int r = http_get_auth(gw_url("/api/sessions"), token, &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -388,7 +526,7 @@ static int test_api_asap_log_401(void)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get(BASE_URL "/api/asap/log", &code, &body);
+	int r = http_get(gw_url("/api/asap/log"), &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 401);
 	free(body);
@@ -399,7 +537,7 @@ static int test_api_asap_log(const char *token)
 {
 	long code;
 	char *body = NULL;
-	int r = http_get_auth(BASE_URL "/api/asap/log", token, &code, &body);
+	int r = http_get_auth(gw_url("/api/asap/log"), token, &code, &body);
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
@@ -424,9 +562,16 @@ int main(int argc, char **argv)
 	char config_path[256];
 	char skills_dir[256];
 	char db_path[256];
+	int port;
 	snprintf(config_path, sizeof(config_path), "%s/config.toml", TEST_HOME);
 	snprintf(skills_dir, sizeof(skills_dir), "%s/.shellclaw/skills", TEST_HOME);
 	snprintf(db_path, sizeof(db_path), "%s/.shellclaw/memory.db", TEST_HOME);
+	port = pick_ephemeral_port();
+	if (port <= 0) {
+		fprintf(stderr, "test_gateway_http: ephemeral port failed\n");
+		return 1;
+	}
+	snprintf(g_base_url, sizeof(g_base_url), "http://127.0.0.1:%d", port);
 	if (mkdir(TEST_HOME, 0755) != 0 && errno != EEXIST) {
 		fprintf(stderr, "test_gateway_http: mkdir failed\n");
 		return 1;
@@ -446,7 +591,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	fprintf(f, "[agent]\nmodel = \"test\"\n");
-	fprintf(f, "[gateway]\nenabled = true\nhost = \"127.0.0.1\"\nport = 18789\n");
+	fprintf(f, "[providers]\nfallback_chain = [ \"stub\" ]\n");
+	fprintf(f, "[gateway]\nenabled = true\nhost = \"127.0.0.1\"\nport = %d\n", port);
 	fprintf(f, "[memory]\ndb_path = \"%s/.shellclaw/memory.db\"\n", TEST_HOME);
 	fprintf(f, "[skills]\ndir = \"%s\"\n", skills_dir);
 	fclose(f);
@@ -487,6 +633,12 @@ int main(int argc, char **argv)
 			pairing_code[i] = p[i];
 	}
 	sleep(3);
+	if (wait_for_health(40) != 0) {
+		fprintf(stderr, "test_gateway_http: /health poll timeout on %s\n", g_base_url);
+		kill(pid, SIGTERM);
+		waitpid(pid, NULL, 0);
+		return 1;
+	}
 	char token[128] = {0};
 	int failed = 0;
 	if (test_health() != 0) { fprintf(stderr, "test_health failed\n"); failed++; }
@@ -495,6 +647,8 @@ int main(int argc, char **argv)
 		failed++;
 	}
 	if (test_api_config_401() != 0) { fprintf(stderr, "test_api_config_401 failed\n"); failed++; }
+	if (test_api_status_401() != 0) { fprintf(stderr, "test_api_status_401 failed\n"); failed++; }
+	if (test_api_context_snapshot_401() != 0) { fprintf(stderr, "test_api_context_snapshot_401 failed\n"); failed++; }
 	if (test_manifest() != 0) { fprintf(stderr, "test_manifest failed\n"); failed++; }
 	if (test_health_wellknown() != 0) { fprintf(stderr, "test_health_wellknown failed\n"); failed++; }
 	if (test_asap_invalid_body() != 0) { fprintf(stderr, "test_asap_invalid_body failed\n"); failed++; }
@@ -502,6 +656,8 @@ int main(int argc, char **argv)
 	if (test_api_asap_log_401() != 0) { fprintf(stderr, "test_api_asap_log_401 failed\n"); failed++; }
 	if (token[0]) {
 		if (test_api_config_get(token) != 0) { fprintf(stderr, "test_api_config_get failed\n"); failed++; }
+		if (test_api_status_get(token) != 0) { fprintf(stderr, "test_api_status_get failed\n"); failed++; }
+		if (test_api_context_snapshot_get(token) != 0) { fprintf(stderr, "test_api_context_snapshot_get failed\n"); failed++; }
 		if (test_api_skills_list(token) != 0) { fprintf(stderr, "test_api_skills_list failed\n"); failed++; }
 		if (test_api_skill_create_delete(token) != 0) { fprintf(stderr, "test_api_skill_create_delete failed\n"); failed++; }
 		if (test_api_memory(token) != 0) { fprintf(stderr, "test_api_memory failed\n"); failed++; }
