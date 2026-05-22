@@ -29,9 +29,17 @@ void http_ctx_set(http_server_ctx_t *ctx)
 }
 
 static const struct lws_protocols protocols[] = {
-	{ "http", http_callback, 0, RESP_BUF_SIZE },
-	{ "ws", ws_callback, 0, 256 },
-	{ NULL, NULL, 0, 0 }
+	{
+		.name = "http",
+		.callback = http_callback,
+		.rx_buffer_size = RESP_BUF_SIZE,
+	},
+	{
+		.name = "ws",
+		.callback = ws_callback,
+		.rx_buffer_size = 256,
+	},
+	{ .name = NULL },
 };
 
 static const struct lws_http_mount mount_ws = {
