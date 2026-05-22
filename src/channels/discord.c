@@ -235,8 +235,12 @@ static char *discord_build_identify(const char *token)
 	cJSON_AddStringToObject(props, "browser", "shellclaw");
 	cJSON_AddStringToObject(props, "device", "shellclaw");
 	cJSON_AddNumberToObject(d, "intents", (double)DISCORD_INTENTS);
+	props = NULL;
+	d = NULL;
 	out = cJSON_PrintUnformatted(root);
 fail:
+	cJSON_Delete(props);
+	cJSON_Delete(d);
 	cJSON_Delete(root);
 	return out;
 }
@@ -630,8 +634,13 @@ static int callback_discord(struct lws *wsi, enum lws_callback_reasons reason,
 }
 
 static struct lws_protocols discord_protocols[] = {
-	{ "discord-gateway", callback_discord, sizeof(struct discord_userdata), 65536 },
-	{ NULL, NULL, 0, 0 }
+	{
+		.name = "discord-gateway",
+		.callback = callback_discord,
+		.per_session_data_size = sizeof(struct discord_userdata),
+		.rx_buffer_size = 65536,
+	},
+	{ .name = NULL },
 };
 
 static int discord_start_client_connect(struct discord_ctx *dc)

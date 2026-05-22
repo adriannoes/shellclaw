@@ -29,18 +29,37 @@ void http_ctx_set(http_server_ctx_t *ctx)
 }
 
 static const struct lws_protocols protocols[] = {
-	{ "http", http_callback, 0, RESP_BUF_SIZE },
-	{ "ws", ws_callback, 0, 256 },
-	{ NULL, NULL, 0, 0 }
+	{
+		.name = "http",
+		.callback = http_callback,
+		.rx_buffer_size = RESP_BUF_SIZE,
+	},
+	{
+		.name = "ws",
+		.callback = ws_callback,
+		.rx_buffer_size = 256,
+	},
+	{ .name = NULL },
+};
+
+static const struct lws_http_mount mount_http = {
+	.mountpoint = "/",
+	.origin = "http",
+	.def = "http",
+	.protocol = "http",
+	.origin_protocol = LWSMPRO_CALLBACK,
+	.mountpoint_len = 1,
+	.mount_next = NULL,
 };
 
 static const struct lws_http_mount mount_ws = {
 	.mountpoint = "/ws",
-	.origin = "protocol",
+	.origin = "ws",
 	.def = "ws",
 	.protocol = "ws",
 	.origin_protocol = LWSMPRO_CALLBACK,
-	.mount_next = NULL,
+	.mountpoint_len = 3,
+	.mount_next = &mount_http,
 };
 
 void http_emit_ws_provider_status(void)
@@ -103,7 +122,9 @@ int http_start(const config_t *cfg, struct auth_ctx *auth_ctx, const char *confi
 	memset(&info, 0, sizeof(info));
 	info.port = port;
 	info.protocols = protocols;
-	info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY;
+#if defined(LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE)
+	info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
+#endif
 	info.mounts = &mount_ws;
 	ctx->lws_ctx = lws_create_context(&info);
 	if (!ctx->lws_ctx) {

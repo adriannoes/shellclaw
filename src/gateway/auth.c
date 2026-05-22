@@ -46,6 +46,8 @@ static int is_file_empty_or_missing(const char *path)
 	return (c == EOF);
 }
 
+static int ensure_tokens_dir(const char *path);
+
 static int generate_random_hex(char *out, size_t len)
 {
 	if (!out || len == 0) return -1;
@@ -128,6 +130,21 @@ char *auth_get_or_create_pairing_code(auth_ctx_t *ctx)
 	ctx->pending_pairing_code = strdup(code);
 	if (!ctx->pending_pairing_code) return NULL;
 	printf("ShellClaw pairing code: %s\n", code);
+	fflush(stdout);
+	if (getenv("SHELLCLAW_TEST_MODE")) {
+		const char *home = getenv("HOME");
+		if (home && home[0] != '\0') {
+			char test_path[512];
+			snprintf(test_path, sizeof(test_path), "%s/.shellclaw/test_pairing_code", home);
+			if (ensure_tokens_dir(test_path) == 0) {
+				FILE *tf = fopen(test_path, "w");
+				if (tf) {
+					fprintf(tf, "%s\n", code);
+					fclose(tf);
+				}
+			}
+		}
+	}
 	return strdup(code);
 }
 
