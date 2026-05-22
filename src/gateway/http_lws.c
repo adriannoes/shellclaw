@@ -244,6 +244,9 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	case LWS_CALLBACK_HTTP: {
 		char uri[256];
 		int uri_len = http_copy_request_uri(wsi, uri, sizeof(uri));
+		if (getenv("SHELLCLAW_HTTP_TRACE"))
+			fprintf(stderr, "[trace] HTTP cb reason=%d uri_len=%d uri=%.*s in_len=%zu\n",
+				reason, uri_len, uri_len > 0 ? uri_len : 0, uri_len > 0 ? uri : "", len);
 		if (uri_len <= 0 || uri_len >= (int)sizeof(uri)) {
 			lws_return_http_status(wsi, 400, "Bad request");
 			http_lws_tx_completed(wsi);
@@ -353,6 +356,9 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		http_conn_t *conn = lws_wsi_user(wsi);
 		long cl;
 		size_t received;
+		if (getenv("SHELLCLAW_HTTP_TRACE"))
+			fprintf(stderr, "[trace] HTTP_BODY conn=%p has_body=%d in_len=%zu\n",
+				(void *)conn, conn ? conn->has_body : -1, len);
 		if (!conn || !conn->has_body || !in || len == 0)
 			return 0;
 		http_append_body(conn, in, len);
@@ -370,6 +376,10 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	}
 	case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
 		http_conn_t *conn = lws_wsi_user(wsi);
+		if (getenv("SHELLCLAW_HTTP_TRACE"))
+			fprintf(stderr, "[trace] HTTP_BODY_COMPLETION conn=%p has_body=%d body_len=%zu\n",
+				(void *)conn, conn ? conn->has_body : -1,
+				conn ? (conn->use_dyn_body ? conn->body_dyn_len : conn->body_len) : 0);
 		if (conn && conn->has_body) {
 			http_dispatch_body(ctx, wsi, conn);
 			lws_callback_on_writable(wsi);
