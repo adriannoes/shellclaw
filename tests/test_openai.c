@@ -151,6 +151,8 @@ static int test_parse_null_json_returns_error(void)
 {
 	provider_response_t response = {0};
 	ASSERT(openai_parse_response_for_test(NULL, &response) == -1);
+	ASSERT(response.error != 0);
+	provider_response_clear(&response);
 	return 0;
 }
 #endif
