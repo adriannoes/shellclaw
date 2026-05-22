@@ -192,6 +192,7 @@ static int http_delete_auth(const char *url, const char *bearer, long *code_out,
 	snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", bearer);
 	headers = curl_slist_append(headers, auth_hdr);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
@@ -634,7 +635,6 @@ int main(int argc, char **argv)
 	fclose(f);
 	setenv("HOME", g_test_home, 1);
 	setenv("SHELLCLAW_TEST_MODE", "1", 1);
-	setenv("SHELLCLAW_HTTP_TRACE", "1", 1);
 	pid_t pid = fork();
 	if (pid < 0) {
 		fprintf(stderr, "test_gateway_http: fork failed\n");
@@ -644,6 +644,7 @@ int main(int argc, char **argv)
 		int devnull = open("/dev/null", O_WRONLY);
 		if (devnull >= 0) {
 			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
 			close(devnull);
 		}
 		execl("./build/shellclaw", "shellclaw", "--config", config_path, (char *)NULL);

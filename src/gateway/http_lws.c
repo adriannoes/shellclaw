@@ -135,12 +135,6 @@ static void http_dispatch_body(http_server_ctx_t *ctx, struct lws *wsi, http_con
 	conn->body_dispatched = 1;
 	uri_len = http_copy_request_uri(wsi, uri, sizeof(uri));
 	method = http_parse_method(wsi);
-	if (getenv("SHELLCLAW_HTTP_TRACE"))
-		fprintf(stderr, "[trace]   body dispatch method=%d uri=%.*s body_len=%zu body=%.*s\n",
-			method, uri_len > 0 ? uri_len : 0, uri_len > 0 ? uri : "",
-			conn->use_dyn_body ? conn->body_dyn_len : conn->body_len,
-			(int)(conn->use_dyn_body ? conn->body_dyn_len : conn->body_len),
-			conn->use_dyn_body ? conn->body_dyn : conn->body);
 	if (conn->body_too_large) {
 		json_error(conn->response, RESP_BUF_SIZE, &conn->status, 413,
 		           "Request body too large");
@@ -174,8 +168,6 @@ static const char *get_bearer_token(struct lws *wsi, char *buf, size_t buf_size)
 	int n = lws_hdr_copy(wsi, buf, (int)buf_size, WSI_TOKEN_HTTP_AUTHORIZATION);
 	if (n <= 0)
 		n = lws_hdr_custom_copy(wsi, buf, (int)buf_size, "authorization", 13);
-	if (n <= 0)
-		n = lws_hdr_custom_copy(wsi, buf, (int)buf_size, "Authorization", 13);
 	if (n <= 0) return NULL;
 	if (n < 8 || strncmp(buf, "Bearer ", 7) != 0) return NULL;
 	return buf + 7;
@@ -244,50 +236,20 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	http_server_ctx_t *ctx = http_ctx_get();
 	(void)user;
 	if (!ctx) return 0;
-	if (getenv("SHELLCLAW_HTTP_TRACE")) {
-		switch (reason) {
-		case LWS_CALLBACK_HTTP:
-		case LWS_CALLBACK_HTTP_BODY:
-		case LWS_CALLBACK_HTTP_BODY_COMPLETION:
-		case LWS_CALLBACK_HTTP_WRITEABLE:
-		case LWS_CALLBACK_CLOSED_HTTP:
-		case LWS_CALLBACK_CHECK_ACCESS_RIGHTS:
-		case LWS_CALLBACK_PROCESS_HTML:
-		case LWS_CALLBACK_FILTER_HTTP_CONNECTION:
-		case LWS_CALLBACK_HTTP_FILE_COMPLETION:
-		case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
-		case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
-		case 76 /*LWS_CALLBACK_HTTP_PMO*/:
-			fprintf(stderr, "[trace] cb reason=%d len=%zu\n", (int)reason, len);
-			break;
-		default: break;
-		}
-	}
 	switch (reason) {
 	case LWS_CALLBACK_HTTP: {
 		char uri[256];
 		int uri_len = http_copy_request_uri(wsi, uri, sizeof(uri));
-		if (getenv("SHELLCLAW_HTTP_TRACE"))
-			fprintf(stderr, "[trace] HTTP enter uri_len=%d uri=%.*s\n",
-				uri_len, uri_len > 0 ? uri_len : 0, uri_len > 0 ? uri : "");
 		if (uri_len <= 0 || uri_len >= (int)sizeof(uri)) {
-			if (getenv("SHELLCLAW_HTTP_TRACE"))
-				fprintf(stderr, "[trace] HTTP 400 bad uri_len=%d\n", uri_len);
 			lws_return_http_status(wsi, 400, "Bad request");
 			http_lws_tx_completed(wsi);
 			return 0;
 		}
 		int method = http_parse_method(wsi);
-		if (getenv("SHELLCLAW_HTTP_TRACE"))
-			fprintf(stderr, "[trace] HTTP method=%d auth_req=%d\n",
-				method, requires_auth(uri, uri_len, method));
 		if (requires_auth(uri, uri_len, method)) {
 			char auth_buf[256];
 			const char *token = get_bearer_token(wsi, auth_buf, sizeof(auth_buf));
 			if (!token || !auth_validate_token(ctx->auth, token)) {
-				if (getenv("SHELLCLAW_HTTP_TRACE"))
-					fprintf(stderr, "[trace] HTTP 401 token=%s valid=%d\n",
-						token ? "yes" : "no", token ? auth_validate_token(ctx->auth, token) : -1);
 				lws_return_http_status(wsi, 401, "{\"error\":\"Unauthorized\"}");
 				http_lws_tx_completed(wsi);
 				return 0;
@@ -362,11 +324,6 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 		if (!conn->has_body) {
 			dispatch_route(ctx, wsi, method, uri, uri_len, NULL, 0, conn->response, RESP_BUF_SIZE, &conn->status);
 			conn->response_len = strlen(conn->response);
-			if (getenv("SHELLCLAW_HTTP_TRACE"))
-				fprintf(stderr, "[trace]   no-body dispatch method=%d uri=%.*s status=%d resp=%.*s\n",
-					method, uri_len, uri, conn->status,
-					(int)(conn->response_len > 120 ? 120 : conn->response_len),
-					conn->response);
 			lws_set_wsi_user(wsi, conn);
 			lws_callback_on_writable(wsi);
 		} else {
