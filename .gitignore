@@ -26,6 +26,7 @@ auth_tokens.json
 .idea/
 .vscode/
 .cursor/
+.claude/
 .DS_Store
 *.swp
 *.swo

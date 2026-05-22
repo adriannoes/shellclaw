@@ -42,16 +42,41 @@ int config_agent_max_context_messages(const config_t *c);
 const char *config_agent_soul_path(const config_t *c);
 const char *config_agent_identity_path(const config_t *c);
 const char *config_agent_user_path(const config_t *c);
+/** Optional [agent] fallbacks when ip-api is unavailable (degrees). Zero if unset by TOML/env. */
+int config_agent_has_latitude(const config_t *c);
+double config_agent_latitude(const config_t *c);
+int config_agent_has_longitude(const config_t *c);
+double config_agent_longitude(const config_t *c);
+/** Optional ISO country code string for holiday lookup (typically two letters); may be NULL. */
+const char *config_agent_country_code(const config_t *c);
 
 const char *config_default_provider(const config_t *c);
 const char *config_provider_anthropic_api_key_env(const config_t *c);
 const char *config_provider_openai_api_key_env(const config_t *c);
 const char *config_provider_openai_endpoint(const config_t *c);
+/** Ordered fallback chain entries (provider names matching router). Defaults: anthropic, openai, local. */
+int config_provider_fallback_chain_count(const config_t *c);
+/** Name at index, or NULL if out of range. */
+const char *config_provider_fallback_chain_entry(const config_t *c, int index);
+/** OpenAI-compatible llama-server URL (chat completions path). Default http://127.0.0.1:8080/v1/chat/completions. */
+const char *config_provider_local_endpoint(const config_t *c);
+/** Model id sent to local server. Default tinyllama-1.1b-q4. */
+const char *config_provider_local_model(const config_t *c);
 
 int config_telegram_enabled(const config_t *c);
 const char *config_telegram_token_env(const config_t *c);
 int config_telegram_allowed_users_count(const config_t *c);
 const char *config_telegram_allowed_user(const config_t *c, int index);
+
+/** Discord gateway channel. Deny-by-default: empty `allowed_user_ids` rejects all users. */
+int config_discord_enabled(const config_t *c);
+/**
+ * Env var name for the bot token. Defaults to `DISCORD_BOT_TOKEN` when unset in TOML.
+ */
+const char *config_discord_token_env(const config_t *c);
+int config_discord_allowed_user_ids_count(const config_t *c);
+/** Snowflake id string at index; NULL if out of range (same contract as Telegram allowlist). */
+const char *config_discord_allowed_user_id(const config_t *c, int index);
 
 const char *config_memory_db_path(const config_t *c);
 const char *config_skills_dir(const config_t *c);

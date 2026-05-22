@@ -33,6 +33,13 @@ main {
   padding: 1rem;
   max-width: 960px;
   margin: 0 auto;
+  overflow-x: auto;
+}
+@media (max-width: 640px) {
+  nav { flex-wrap: wrap; gap: 0.5rem; }
+  main { padding: 0.75rem; }
+  .dashboard-cards { grid-template-columns: 1fr 1fr; }
+  .dash-table { font-size: 0.78rem; }
 }
 h1, h2 { color: var(--accent); margin-top: 0; }
 input, textarea, button {
@@ -89,6 +96,37 @@ button.danger { background: #f85149; border-color: #f85149; }
 .pre-wrap { white-space: pre-wrap; font-size: 0.85rem; }
 .status-warn { color: #d29922; }
 .status-note { color: #8b949e; }
+/** Dashboard: semantic row colours (providers / Discord) */
+.dash-meta { font-size: 0.8rem; margin: 0 0 1rem; }
+.dash-h2 { margin-top: 1.25rem; }
+.dash-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.dash-table th, .dash-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.dash-table th { color: var(--dim); font-weight: normal; }
+.dash-green { color: var(--accent); font-weight: 600; }
+.dash-yellow { color: #d29922; font-weight: 600; }
+.dash-red { color: #f85149; font-weight: 600; }
+.dash-banner-err {
+  background: #2d1b1b;
+  border: 1px solid #f85149;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+.dash-context { background: #161b22; border: 1px solid var(--border); padding: 0.75rem; border-radius: 4px; }
+.dash-kv { margin: 0.35rem 0; font-size: 0.85rem; }
+.dash-label { color: var(--dim); margin-right: 0.35rem; }
 .dashboard-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

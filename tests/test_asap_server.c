@@ -39,6 +39,13 @@ static int test_hook_state(const asap_server_ctx_t *ctx, cJSON **payload_out)
 	return 0;
 }
 
+static int test_hook_state_fail(const asap_server_ctx_t *ctx, cJSON **payload_out)
+{
+	(void)ctx;
+	(void)payload_out;
+	return -1;
+}
+
 static int echo_tool_execute(const char *args_json, char *result_buf, size_t max_len)
 {
 	(void)args_json;
@@ -46,11 +53,38 @@ static int echo_tool_execute(const char *args_json, char *result_buf, size_t max
 	return 0;
 }
 
+static int failing_tool_execute(const char *args_json, char *result_buf, size_t max_len)
+{
+	(void)args_json;
+	snprintf(result_buf, max_len, "tool-failure-payload");
+	return -1;
+}
+
+static int hook_tool_dispatcher(const asap_server_ctx_t *ctx, const char *tool_name,
+				const char *args_json, char *result_buf, size_t result_cap)
+{
+	(void)ctx;
+	(void)args_json;
+	if (tool_name && strcmp(tool_name, "echo") == 0) {
+		snprintf(result_buf, result_cap, "hook-tool-ok");
+		return 0;
+	}
+	snprintf(result_buf, result_cap, "hook-bad-tool");
+	return -1;
+}
+
 static agent_tool_t s_echo_tool = {
 	.name = "echo",
 	.description = "",
 	.parameters_json = "{}",
 	.execute = echo_tool_execute,
+};
+
+static agent_tool_t s_flaky_tool = {
+	.name = "flaky",
+	.description = "",
+	.parameters_json = "{}",
+	.execute = failing_tool_execute,
 };
 
 static int build_in_custom(asap_envelope_t *e, const char *ptype, const char *sender,
@@ -392,6 +426,300 @@ static int test_trust_list_rejects_unknown_sender(void)
 	return 0;
 }
 
+static int test_null_envelope_arguments(void)
+{
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[96];
+	memset(&ctx, 0, sizeof ctx);
+	ASSERT(asap_server_handle(NULL, &out, &ctx, err, sizeof err) == -32602);
+	return 0;
+}
+
+static int test_state_query_hook_failure(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddBoolToObject(pl, "full", 1) != NULL);
+	ASSERT(wrap_build(&in, "state.query", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.state_query_hook = test_hook_state_fail;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == -32603);
+	ASSERT(strstr(err, "state.query") != NULL);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_state_query_without_memory(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	memory_cleanup();
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(wrap_build(&in, "state.query", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == -32603);
+	ASSERT(strstr(err, "memory") != NULL || strstr(err, "unavailable") != NULL);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_task_request_accepts_prompt_field(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "prompt", "from-prompt") != NULL);
+	ASSERT(wrap_build(&in, "task.request", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.task_request_hook = test_hook_task;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == 0);
+	ASSERT(strcmp(out.payload_type, "task.response") == 0);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_task_request_accepts_message_field(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "message", "from-message") != NULL);
+	ASSERT(wrap_build(&in, "task.request", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.task_request_hook = test_hook_task;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == 0);
+	ASSERT(strcmp(out.payload_type, "task.response") == 0);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_task_request_object_payload_fallback(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddBoolToObject(pl, "only_flag", 0) != NULL);
+	ASSERT(wrap_build(&in, "task.request", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.task_request_hook = test_hook_task;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == 0);
+	ASSERT(strcmp(out.payload_type, "task.response") == 0);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_unsupported_payload_type(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[160];
+	int rc;
+
+	asap_envelope_init(&in);
+	in.id = strdup("unsupported-e1");
+	in.asap_version = strdup("2.1");
+	in.sender = strdup("urn:from");
+	in.recipient = strdup("urn:to");
+	in.payload_type = strdup("telemetry.event");
+	ASSERT(in.id && in.asap_version && in.sender && in.recipient && in.payload_type);
+	in.payload = cJSON_CreateObject();
+	ASSERT(in.payload != NULL);
+	ASSERT(cJSON_AddNumberToObject(in.payload, "x", 1.0) != NULL);
+	memset(&ctx, 0, sizeof ctx);
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == -32601);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_reject_mcp_tool_result_inbound(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(wrap_build(&in, "mcp.tool_result", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == -32601);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_mcp_arguments_string_encoded_json(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[160];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "name", "echo") != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "arguments", "{\"k\":\"v\"}") != NULL);
+	ASSERT(wrap_build(&in, "mcp.tool_call", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.tools = &s_echo_tool;
+	ctx.tool_count = 1;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == 0);
+	ASSERT(strcmp(out.payload_type, "mcp.tool_result") == 0);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_mcp_omitted_arguments_defaults_to_empty_object(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "name", "echo") != NULL);
+	ASSERT(wrap_build(&in, "mcp.tool_call", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.tools = &s_echo_tool;
+	ctx.tool_count = 1;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == 0);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_tool_call_hook_overrides_builtin_dispatch(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[128];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "name", "echo") != NULL);
+	ASSERT(cJSON_AddObjectToObject(pl, "arguments") != NULL);
+	ASSERT(wrap_build(&in, "mcp.tool_call", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.tool_call_hook = hook_tool_dispatcher;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == 0);
+	ASSERT(strcmp(out.payload_type, "mcp.tool_result") == 0);
+	{
+		const cJSON *r = cJSON_GetObjectItemCaseSensitive(out.payload, "result");
+		ASSERT(r && cJSON_IsString(r) && strcmp(r->valuestring, "hook-tool-ok") == 0);
+	}
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_tool_execute_nonzero_reports_error(void)
+{
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[160];
+	cJSON *pl;
+	int rc;
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "name", "flaky") != NULL);
+	ASSERT(wrap_build(&in, "mcp.tool_call", pl) == 0);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.tools = &s_flaky_tool;
+	ctx.tool_count = 1;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == -32603);
+	ASSERT(strstr(err, "failure") != NULL || strstr(err, "tool") != NULL);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
+static int test_trust_sender_rejects_blank_sender_when_list_nonempty(void)
+{
+	const char *path = "/tmp/shellclaw_test_asap_trust_blank.toml";
+	FILE *f;
+	config_t *cfg;
+	asap_envelope_t in;
+	asap_envelope_t out;
+	asap_server_ctx_t ctx;
+	char err[160];
+	cJSON *pl;
+	int rc;
+	f = fopen(path, "w");
+	ASSERT(f != NULL);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[asap]\ntrusted_senders = [\"urn:someone\"]\n");
+	fclose(f);
+	ASSERT(config_load(path, &cfg, NULL, 0) == 0);
+	pl = cJSON_CreateObject();
+	ASSERT(pl != NULL);
+	ASSERT(cJSON_AddStringToObject(pl, "input", "hi") != NULL);
+	ASSERT(build_in_custom(&in, "task.request", "", "urn:to", pl) == 0);
+	cJSON_Delete(pl);
+	memset(&ctx, 0, sizeof ctx);
+	ctx.cfg = cfg;
+	ctx.task_request_hook = test_hook_task;
+	rc = asap_server_handle(&in, &out, &ctx, err, sizeof err);
+	ASSERT(rc == ASAP_SERVER_RPC_SENDER_UNTRUSTED);
+	config_free(cfg);
+	remove(path);
+	teardown_env(&in);
+	teardown_env(&out);
+	return 0;
+}
+
 int main(void)
 {
 	int r = 0;
@@ -406,5 +734,18 @@ int main(void)
 	r |= test_task_request_no_agent_config();
 	r |= test_trust_list_allows_listed_sender();
 	r |= test_trust_list_rejects_unknown_sender();
+	r |= test_null_envelope_arguments();
+	r |= test_state_query_hook_failure();
+	r |= test_state_query_without_memory();
+	r |= test_task_request_accepts_prompt_field();
+	r |= test_task_request_accepts_message_field();
+	r |= test_task_request_object_payload_fallback();
+	r |= test_unsupported_payload_type();
+	r |= test_reject_mcp_tool_result_inbound();
+	r |= test_mcp_arguments_string_encoded_json();
+	r |= test_mcp_omitted_arguments_defaults_to_empty_object();
+	r |= test_tool_call_hook_overrides_builtin_dispatch();
+	r |= test_tool_execute_nonzero_reports_error();
+	r |= test_trust_sender_rejects_blank_sender_when_list_nonempty();
 	return r;
 }

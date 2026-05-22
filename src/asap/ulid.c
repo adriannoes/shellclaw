@@ -5,28 +5,17 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "asap/ulid.h"
-#include <fcntl.h>
+#include "crypto/crypto.h"
 #include <pthread.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
-
 /** Crockford Base32 (no I, L, O, U). */
 static const char C32[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 static pthread_mutex_t g_ulid_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_last_ms;
 static uint8_t g_rand[10];
-
-static int read_urandom(void *out, size_t n)
-{
-	int fd = open("/dev/urandom", O_RDONLY);
-	if (fd < 0) return -1;
-	ssize_t r = read(fd, out, n);
-	close(fd);
-	return (r == (ssize_t)n) ? 0 : -1;
-}
 
 static int get_epoch_ms_u48(uint64_t *out_ms)
 {
@@ -89,13 +78,13 @@ int ulid_generate(char *out, size_t out_size)
 	if (pthread_mutex_lock(&g_ulid_lock) != 0) return -1;
 	if (ms < g_last_ms) {
 		g_last_ms = ms;
-		if (read_urandom(g_rand, sizeof(g_rand)) != 0) {
+		if (crypto_read_urandom(g_rand, sizeof(g_rand)) != 0) {
 			(void)pthread_mutex_unlock(&g_ulid_lock);
 			return -1;
 		}
 	} else if (ms > g_last_ms) {
 		g_last_ms = ms;
-		if (read_urandom(g_rand, sizeof(g_rand)) != 0) {
+		if (crypto_read_urandom(g_rand, sizeof(g_rand)) != 0) {
 			(void)pthread_mutex_unlock(&g_ulid_lock);
 			return -1;
 		}
@@ -108,7 +97,7 @@ int ulid_generate(char *out, size_t out_size)
 				}
 			} while (ms <= g_last_ms);
 			g_last_ms = ms;
-			if (read_urandom(g_rand, sizeof(g_rand)) != 0) {
+			if (crypto_read_urandom(g_rand, sizeof(g_rand)) != 0) {
 				(void)pthread_mutex_unlock(&g_ulid_lock);
 				return -1;
 			}

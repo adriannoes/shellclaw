@@ -184,7 +184,11 @@ static int build_and_send(const provider_message_t *messages, size_t message_cou
 		const char *role = messages[i].role ? messages[i].role : "user";
 		if (strcmp(role, "system") == 0) continue;
 		cJSON *msg = cJSON_CreateObject();
-		if (!msg) break;
+		if (!msg) {
+			cJSON_Delete(root);
+			provider_set_error(response, "Out of memory");
+			return -1;
+		}
 		cJSON_AddItemToObject(msg, "role", cJSON_CreateString(role));
 		if (messages[i].tool_use_id) {
 			cJSON *content_arr = cJSON_CreateArray();

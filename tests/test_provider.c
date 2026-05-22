@@ -24,9 +24,16 @@ static int test_stub_provider_vtable(void)
 	return 0;
 }
 
+static int test_provider_set_error_null_response(void)
+{
+	provider_set_error(NULL, "should not crash");
+	return 0;
+}
+
 int main(void)
 {
 	if (test_stub_provider_vtable() != 0) return 1;
+	if (test_provider_set_error_null_response() != 0) return 1;
 	printf("test_provider: all tests passed\n");
 	return 0;
 }

@@ -151,6 +151,7 @@ static int test_parse_null_json_returns_error(void)
 {
 	provider_response_t response = {0};
 	ASSERT(anthropic_parse_response_for_test(NULL, &response) == -1);
+	provider_response_clear(&response);
 	return 0;
 }
 #endif

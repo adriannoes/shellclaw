@@ -5,25 +5,16 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "tools/cron.h"
+#include "crypto/crypto.h"
 #include "core/memory.h"
 #include "channels/channel.h"
 #include "core/config.h"
 #include "cJSON.h"
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-
-static int read_urandom(unsigned char *out, size_t n)
-{
-	int fd = open("/dev/urandom", O_RDONLY);
-	if (fd < 0) return -1;
-	ssize_t r = read(fd, out, n);
-	close(fd);
-	return (r == (ssize_t)n) ? 0 : -1;
-}
 
 #define CRON_TOOL_PARAMS "{\"type\":\"object\",\"properties\":{\"operation\":{\"type\":\"string\",\"enum\":[\"list\",\"create\",\"delete\",\"toggle\"]},\"id\":{\"type\":\"string\"},\"schedule\":{\"type\":\"string\"},\"message\":{\"type\":\"string\"},\"channel\":{\"type\":\"string\"},\"recipient\":{\"type\":\"string\"}},\"required\":[\"operation\"]}"
 
@@ -165,7 +156,7 @@ int cron_create_job(const char *schedule, const char *message,
 	const char *rec = recipient ? recipient : "default";
 	if (id_out[0] == '\0') {
 		unsigned char rnd[2];
-		if (read_urandom(rnd, sizeof(rnd)) != 0) return -1;
+		if (crypto_read_urandom(rnd, sizeof(rnd)) != 0) return -1;
 		snprintf(id_out, id_size, "cron_%ld_%02x%02x", (long)time(NULL), rnd[0], rnd[1]);
 	}
 	long long now = (long long)time(NULL);

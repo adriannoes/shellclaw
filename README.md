@@ -1,8 +1,15 @@
 # ShellClaw
 
-**The first physical AI agent that participates in a global agent ecosystem.**
+**The first physical AI agent in a global agent ecosystem — and the only one that scales from a $15 Raspberry Pi to a $249 NVIDIA Jetson with the same C-native binary.**
 
-A lightweight AI assistant written in C, designed to run on a Raspberry Pi Zero 2 W and communicate with other agents through the [agentic marketplace](https://asap-protocol.vercel.app/), using [ASAP Protocol](https://github.com/adriannoes/asap-protocol).
+A lightweight AI assistant written in C that runs on **NVIDIA Jetson Orin Nano Super** (8 GB, 67 TOPS, CUDA-accelerated local LLM) for the edge-AI maker / researcher persona, and on **Raspberry Pi Zero 2 W** (~$15, smallest viable Linux SBC) for the hobbyist persona — from a single `aarch64` binary with runtime board detection. It communicates with other agents through the [agentic marketplace](https://asap-protocol.com/browse), using [ASAP Protocol](https://github.com/adriannoes/asap-protocol).
+
+**Two personas, one binary** (see [DR-015](.cursor/strategy/decision-records/decisions.md), [DR-016](.cursor/strategy/decision-records/decisions.md)):
+
+| Persona | Hardware | Headline capability |
+|---|---|---|
+| Edge-AI maker / researcher | Jetson Orin Nano Super 8 GB Dev Kit | Local Llama-3.1-8B Q4 @ 14–18 tok/s or Phi-3-mini Q4 @ 25–35 tok/s via CUDA; GPIO/I2C/CSI camera; NVMe boot |
+| Hobbyist / IoT tinkerer | Raspberry Pi Zero 2 W | < 5 MB RAM, < 500 KB binary on the cheapest viable Linux SBC; GPIO/I2C/CSI camera; cloud LLM primary with TinyLlama emergency fallback |
 
 **Roadmap (high level):**
 
@@ -11,24 +18,26 @@ A lightweight AI assistant written in C, designed to run on a Raspberry Pi Zero 
 | 1: Foundation | v0.1.0 | ✅ Done | Core agent loop, CLI + Telegram, Anthropic/OpenAI, shell/search/file tools, SQLite memory & sessions, skill loading |
 | 2: Gateway | v0.2.0 | ✅ Done | HTTP server, embedded Web UI, WebSocket chat, cron scheduler, pairing auth, ASAP manifest, skill hot-reload |
 | 3: Protocol | v0.3.0 | ✅ Done | ASAP client/server, registry, `asap_invoke` tool, process sandbox (namespaces + cgroups), Tavily search, `/asap` + `/api/asap/log`, rate limits |
-| 4: Autonomy | v0.4.0 | — | Local inference (llama.cpp), provider fallback, Discord channel, systemd service, OTA updates |
-| 5: Hardware & Release | v1.0.0 | — | GPIO, I2C sensors, camera, Ed25519 signing, ASAP marketplace registration, security audit, full docs |
+| 4: Autonomy | v0.4.0 | ✅ Done | Local inference (llama.cpp), provider fallback, Discord channel, systemd service, OTA updates, context tool, dashboard |
+| 5: Edge AI Hardware & Release | v1.0.0 | — | **Jetson Orin Nano Super primary target**: GPIO/I2C/camera, CUDA-accelerated local LLM, Ed25519 signing, ASAP marketplace registration, security audit, full docs |
+| 6: Hobbyist Portability | v1.1.0 | — | **Raspberry Pi Zero 2 W validation**: same binary, RPi-specific install + benchmarks + docs, optional pre-built SD image |
 
 ## What makes ShellClaw different
 
-ShellClaw is **not another OpenClaw clone** in a different language. It is a **hardware-native agent** that interacts with the physical world (GPIO, I2C sensors, camera) while collaborating with cloud-based agents through a standardized protocol.
+ShellClaw is **not another OpenClaw clone** in a different language. It is a **hardware-native, dual-persona agent**: it interacts with the physical world (GPIO, I2C sensors, camera) on both ends of the SBC spectrum, runs production-grade local LLMs on edge-AI hardware (CUDA on Jetson), and collaborates with cloud agents through a standardized protocol — all from a single C source tree and a single `aarch64` binary.
 
 | Feature | ShellClaw |
 |---|---|
-| **Binary** | < 2 MB |
-| **RAM** | < 5 MB |
-| **Startup** | < 1 second |
-| **Language** | C (~5,000 lines) |
-| **Hardware** | GPIO, I2C, SPI, Camera |
-| **Sandbox** | Native Linux namespaces |
+| **Binary** | < 500 KB base, < 600 KB with hardware backends |
+| **Agent RAM** | < 5 MB idle, < 15 MB active (on both boards) |
+| **Startup** | < 1 s on Jetson, < 2 s on RPi Zero 2 W |
+| **Language** | C (~5,500 lines target after Phase 5) |
+| **Hardware** | GPIO, I2C, CSI/USB Camera (single abstraction, per-board backends) |
+| **Sandbox** | Native Linux namespaces + cgroups v2 |
 | **Web UI** | Embedded in binary |
-| **Offline** | llama.cpp fallback |
-| **Agent network** | ASAP Protocol |
+| **Local inference** | CUDA `llama-server` on Jetson (14–35 tok/s); CPU `llama-server` on RPi (emergency) |
+| **Agent network** | ASAP Protocol (first non-Python + first edge-AI ASAP agent) |
+| **Hardware range** | Same binary runs on a $15 RPi Zero 2 W and a $249 Jetson Orin Nano Super |
 
 ## Build and run
 
@@ -44,11 +53,19 @@ ShellClaw is **not another OpenClaw clone** in a different language. It is a **h
 
 **Phase 3 configuration (optional):** registry and revocation URLs, Tavily API key name, and sandbox-related keys are documented in [`.env.example`](.env.example). Install **libwebsockets** (`pkg-config` must find it) to build the gateway and run `GATEWAY=1 make test_gateway_http`.
 
+**Phase 5 (v1.0.0, planned):** edge-AI release on Jetson Orin Nano Super — hardware tools (GPIO/I2C/camera), CUDA-accelerated local inference, Ed25519 manifest signing, ASAP marketplace registration, security audit, full documentation.
+
+**Phase 6 (v1.1.0, planned):** Raspberry Pi Zero 2 W portability — same binary validated and benchmarked on the $15 hobbyist board, with RPi-specific install script and side-by-side docs.
+
+**WebSocket auth (breaking vs early gateway builds):** browsers cannot send `Authorization` on WebSocket; use subprotocol `bearer.<pairing-token>` when opening `/ws` (see `web/js/app.js`).
+
 **Debug (macOS):** Symbols in `tests-dSYM/`. Use `lldb build/test_agent` then `settings set target.debug-file-search-path tests-dSYM`. Old `.dSYM` in repo root? Run `make clean-root-dsym`.
 
 ## Thread Safety
 
-The **main agent loop** is single-threaded: memory, providers, channels, and tools keep much of their state in process-wide data initialized at startup. **Inbound HTTP/WebSocket paths** (for example ASAP `POST /asap` and the WebSocket chat dispatcher) may run on **libwebsockets worker threads**. Those code paths must call `agent_lock()` before `agent_run()` and `agent_unlock()` afterward so only one `agent_run` uses shared session/memory state at a time. Do not call `agent_run`, provider `chat`, or memory functions from arbitrary new threads without the same discipline.
+The **main agent loop** is single-threaded: memory, providers, channels and tools keep much of their state in process-wide data initialized at startup. **Inbound HTTP/WebSocket paths** (for example ASAP `POST /asap` and the WebSocket chat dispatcher) may run on **libwebsockets worker threads**. 
+
+Those code paths must call `agent_lock()` before `agent_run()` and `agent_unlock()` afterward so only one `agent_run` uses shared session/memory state at a time. Do not call `agent_run`, provider `chat`, or memory functions from arbitrary new threads without the same discipline.
 
 ## Architecture
 
@@ -56,24 +73,29 @@ The **main agent loop** is single-threaded: memory, providers, channels, and too
 Channels (Telegram, Discord, WebChat)
          │
          ▼
-   ┌──────────────┐     ┌──────────────┐
-   │  Agent Loop  │────►│  LLM APIs    │
-   │  (ReAct)     │     │  (Claude,    │
-   │              │◄────│   OpenAI,    │
-   │              │     │   local)     │
-   └──────┬───────┘     └──────────────┘
+   ┌──────────────┐     ┌─────────────────────────────┐
+   │  Agent Loop  │────►│  LLM APIs                   │
+   │  (ReAct)     │     │  Claude · OpenAI · local    │
+   │              │◄────│  (local = llama-server      │
+   │              │     │   CUDA on Jetson /          │
+   │              │     │   CPU on RPi)               │
+   └──────┬───────┘     └─────────────────────────────┘
           │
-   ┌──────▼───────┐     ┌──────────────┐
-   │  Tools       │────►│  Hardware    │
-   │  (shell,     │     │  (GPIO, I2C, │
-   │   search,    │     │   camera)    │
-   │   cron,      │     └──────────────┘
-   │   file,      │
-   │   asap)      │     ┌──────────────┐
-   │              │────►│  ASAP Agent  │
-   └──────────────┘     │  Ecosystem   │
-                        └──────────────┘
+   ┌──────▼───────┐     ┌─────────────────────────────┐
+   │  Tools       │────►│  Hardware                   │
+   │  (shell,     │     │  GPIO · I2C · CSI/USB cam   │
+   │   search,    │     │  (libgpiod + per-board      │
+   │   cron,      │     │   backends, runtime         │
+   │   file,      │     │   board detection)          │
+   │   asap)      │     └─────────────────────────────┘
+   │              │
+   │              │     ┌─────────────────────────────┐
+   │              │────►│  ASAP Agent Ecosystem       │
+   └──────────────┘     │  (marketplace + peers)      │
+                        └─────────────────────────────┘
 ```
+
+**One source tree, one `aarch64` binary, two hardware personas.** The agent reads `/proc/device-tree/compatible` at startup and selects the right hardware backends (Jetson `tegra234-gpio` / `nvarguscamerasrc` vs RPi `bcm2835-gpio` / `libcamera-still`). The architecture above is identical on both boards; only the leaf backends and the local LLM throughput differ.
 
 ## License
 
