@@ -235,8 +235,12 @@ static char *discord_build_identify(const char *token)
 	cJSON_AddStringToObject(props, "browser", "shellclaw");
 	cJSON_AddStringToObject(props, "device", "shellclaw");
 	cJSON_AddNumberToObject(d, "intents", (double)DISCORD_INTENTS);
+	props = NULL;
+	d = NULL;
 	out = cJSON_PrintUnformatted(root);
 fail:
+	cJSON_Delete(props);
+	cJSON_Delete(d);
 	cJSON_Delete(root);
 	return out;
 }

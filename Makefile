@@ -466,7 +466,6 @@ test_ws: tests/test_ws.c $(WS_TEST_O)
 	@mkdir -p $(BINDIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_ws.c $(WS_TEST_O) $(LDLIBS) -pthread
 	$(DSYM_SCRIPT)
-	$(DSYM_SCRIPT)
 
 test_context: tests/test_context.c $(CONTEXT_TEST_OBJS) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@mkdir -p $(BINDIR)
