@@ -21,6 +21,30 @@ static void http_lws_tx_completed(struct lws *wsi)
 	(void)rc;
 }
 
+static int http_parse_method(struct lws *wsi)
+{
+	char meth_buf[32] = {0};
+	char req[32] = {0};
+	if (lws_hdr_custom_copy(wsi, meth_buf, sizeof(meth_buf), ":method", 7) > 0) {
+		if (strcmp(meth_buf, "POST") == 0) return HTTP_POST;
+		if (strcmp(meth_buf, "PUT") == 0) return HTTP_PUT;
+		if (strcmp(meth_buf, "DELETE") == 0) return HTTP_DELETE;
+		return HTTP_GET;
+	}
+	if (lws_hdr_copy(wsi, meth_buf, sizeof(meth_buf), WSI_TOKEN_HTTP_COLON_METHOD) > 0) {
+		if (strcmp(meth_buf, "POST") == 0) return HTTP_POST;
+		if (strcmp(meth_buf, "PUT") == 0) return HTTP_PUT;
+		if (strcmp(meth_buf, "DELETE") == 0) return HTTP_DELETE;
+		return HTTP_GET;
+	}
+	if (lws_hdr_copy(wsi, req, sizeof(req), WSI_TOKEN_HTTP) > 0) {
+		if (strncmp(req, "POST", 4) == 0) return HTTP_POST;
+		if (strncmp(req, "PUT", 3) == 0) return HTTP_PUT;
+		if (strncmp(req, "DELETE", 6) == 0) return HTTP_DELETE;
+	}
+	return HTTP_GET;
+}
+
 typedef struct http_conn {
 	char *response;
 	size_t response_len;
@@ -136,25 +160,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			http_lws_tx_completed(wsi);
 			return 0;
 		}
-		int method = HTTP_GET;
-		{
-			char meth_buf[32] = {0};
-			int n = lws_hdr_custom_copy(wsi, meth_buf, sizeof(meth_buf), ":method", 7);
-			if (n <= 0) {
-				int t = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP);
-				if (t > 0 && t < 16) {
-					char req[16];
-					lws_hdr_copy(wsi, req, sizeof(req), WSI_TOKEN_HTTP);
-					if (strncmp(req, "POST", 4) == 0) method = HTTP_POST;
-					else if (strncmp(req, "PUT", 3) == 0) method = HTTP_PUT;
-					else if (strncmp(req, "DELETE", 6) == 0) method = HTTP_DELETE;
-				}
-			} else {
-				if (strcmp(meth_buf, "POST") == 0) method = HTTP_POST;
-				else if (strcmp(meth_buf, "PUT") == 0) method = HTTP_PUT;
-				else if (strcmp(meth_buf, "DELETE") == 0) method = HTTP_DELETE;
-			}
-		}
+		int method = http_parse_method(wsi);
 		if (requires_auth(uri, uri_len, method)) {
 			char auth_buf[256];
 			const char *token = get_bearer_token(wsi, auth_buf, sizeof(auth_buf));
@@ -280,14 +286,7 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 			char uri[256];
 			int uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI);
 			if (uri_len <= 0) uri_len = lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_POST_URI);
-			int method = HTTP_POST;
-			{
-				char mb[32] = {0};
-				if (lws_hdr_custom_copy(wsi, mb, sizeof(mb), ":method", 7) > 0) {
-					if (strcmp(mb, "PUT") == 0) method = HTTP_PUT;
-					else if (strcmp(mb, "DELETE") == 0) method = HTTP_DELETE;
-				}
-			}
+			int method = http_parse_method(wsi);
 			if (conn->body_too_large) {
 				json_error(conn->response, RESP_BUF_SIZE, &conn->status, 413,
 				           "Request body too large");

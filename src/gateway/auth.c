@@ -128,6 +128,7 @@ char *auth_get_or_create_pairing_code(auth_ctx_t *ctx)
 	ctx->pending_pairing_code = strdup(code);
 	if (!ctx->pending_pairing_code) return NULL;
 	printf("ShellClaw pairing code: %s\n", code);
+	fflush(stdout);
 	return strdup(code);
 }
 
