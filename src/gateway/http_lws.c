@@ -263,16 +263,27 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 	case LWS_CALLBACK_HTTP: {
 		char uri[256];
 		int uri_len = http_copy_request_uri(wsi, uri, sizeof(uri));
+		if (getenv("SHELLCLAW_HTTP_TRACE"))
+			fprintf(stderr, "[trace] HTTP enter uri_len=%d uri=%.*s\n",
+				uri_len, uri_len > 0 ? uri_len : 0, uri_len > 0 ? uri : "");
 		if (uri_len <= 0 || uri_len >= (int)sizeof(uri)) {
+			if (getenv("SHELLCLAW_HTTP_TRACE"))
+				fprintf(stderr, "[trace] HTTP 400 bad uri_len=%d\n", uri_len);
 			lws_return_http_status(wsi, 400, "Bad request");
 			http_lws_tx_completed(wsi);
 			return 0;
 		}
 		int method = http_parse_method(wsi);
+		if (getenv("SHELLCLAW_HTTP_TRACE"))
+			fprintf(stderr, "[trace] HTTP method=%d auth_req=%d\n",
+				method, requires_auth(uri, uri_len, method));
 		if (requires_auth(uri, uri_len, method)) {
 			char auth_buf[256];
 			const char *token = get_bearer_token(wsi, auth_buf, sizeof(auth_buf));
 			if (!token || !auth_validate_token(ctx->auth, token)) {
+				if (getenv("SHELLCLAW_HTTP_TRACE"))
+					fprintf(stderr, "[trace] HTTP 401 token=%s valid=%d\n",
+						token ? "yes" : "no", token ? auth_validate_token(ctx->auth, token) : -1);
 				lws_return_http_status(wsi, 401, "{\"error\":\"Unauthorized\"}");
 				http_lws_tx_completed(wsi);
 				return 0;
