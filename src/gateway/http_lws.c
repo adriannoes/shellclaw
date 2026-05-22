@@ -21,6 +21,28 @@ static void http_lws_tx_completed(struct lws *wsi)
 	(void)rc;
 }
 
+typedef struct http_conn {
+	char *response;
+	size_t response_len;
+	size_t response_sent;
+	int headers_sent;
+	int status;
+	char body[BODY_BUF_SIZE];
+	size_t body_len;
+	int has_body;
+	int is_static;
+	const unsigned char *static_data;
+	size_t static_len;
+	const char *static_content_type;
+	size_t static_sent;
+	/* Dynamic body buffer used when the /asap path needs more than BODY_BUF_SIZE. */
+	char *body_dyn;
+	size_t body_dyn_len;
+	size_t body_dyn_cap;
+	int use_dyn_body;
+	int body_too_large;
+} http_conn_t;
+
 static int http_parse_method(struct lws *wsi)
 {
 	char meth_buf[32] = {0};
@@ -123,27 +145,6 @@ static void http_dispatch_body(http_server_ctx_t *ctx, struct lws *wsi, http_con
 	conn->has_body = 0;
 }
 
-typedef struct http_conn {
-	char *response;
-	size_t response_len;
-	size_t response_sent;
-	int headers_sent;
-	int status;
-	char body[BODY_BUF_SIZE];
-	size_t body_len;
-	int has_body;
-	int is_static;
-	const unsigned char *static_data;
-	size_t static_len;
-	const char *static_content_type;
-	size_t static_sent;
-	/* Dynamic body buffer used when the /asap path needs more than BODY_BUF_SIZE. */
-	char *body_dyn;
-	size_t body_dyn_len;
-	size_t body_dyn_cap;
-	int use_dyn_body;
-	int body_too_large;
-} http_conn_t;
 static int path_match(const char *uri, int uri_len, const char *prefix)
 {
 	size_t plen = strlen(prefix);
