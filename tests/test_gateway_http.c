@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -72,7 +73,10 @@ static int wait_for_health(int max_attempts)
 			return 0;
 		}
 		free(body);
-		usleep(200000);
+		{
+			struct timespec delay = { 0, 200000000L };
+			(void)nanosleep(&delay, NULL);
+		}
 	}
 	return -1;
 }
@@ -139,32 +143,6 @@ static int http_get_auth(const char *url, const char *bearer, long *code_out, ch
 	snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", bearer);
 	headers = curl_slist_append(headers, auth_hdr);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
-	CURLcode res = curl_easy_perform(curl);
-	long code = 0;
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-	curl_slist_free_all(headers);
-	curl_easy_cleanup(curl);
-	if (code_out) *code_out = code;
-	return (res == CURLE_OK) ? 0 : -1;
-}
-
-static int http_put_auth(const char *url, const char *bearer, const char *json, long *code_out, char **body_out)
-{
-	CURL *curl = curl_easy_init();
-	if (!curl) return -1;
-	*body_out = NULL;
-	struct curl_slist *headers = NULL;
-	char auth_hdr[256];
-	snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", bearer);
-	headers = curl_slist_append(headers, auth_hdr);
-	headers = curl_slist_append(headers, "Content-Type: application/json");
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
