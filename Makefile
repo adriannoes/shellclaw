@@ -13,6 +13,13 @@ GATEWAY_CFLAGS := $(if $(filter 1,$(GATEWAY)),$(shell pkg-config --cflags libweb
 GATEWAY_CFLAGS += $(if $(filter 1,$(GATEWAY)),$(shell pkg-config --cflags openssl 2>/dev/null),)
 GATEWAY_LDLIBS := $(if $(filter 1,$(GATEWAY)),$(shell pkg-config --libs libwebsockets 2>/dev/null),)
 GATEWAY_LDLIBS += $(if $(filter 1,$(GATEWAY)),$(shell pkg-config --libs openssl 2>/dev/null),)
+# Hardware GPIO (Phase 5): libgpiod v2 API for Jetson / RPi (JetPack 6 / Bookworm)
+# Set LIBGPIOD=0 when libgpiod-dev is not installed (stub backend only).
+# pkg-config may find libgpiod 1.x on older distros; we require >= 2.0.
+LIBGPIOD_PKG := $(shell pkg-config --exists libgpiod 2>/dev/null && pkg-config --atleast-version=2.0 libgpiod 2>/dev/null && echo 1 || echo 0)
+LIBGPIOD ?= $(LIBGPIOD_PKG)
+LIBGPIOD_CFLAGS := $(if $(filter 1,$(LIBGPIOD)),$(shell pkg-config --cflags libgpiod 2>/dev/null),)
+LIBGPIOD_LDLIBS := $(if $(filter 1,$(LIBGPIOD)),$(shell pkg-config --libs libgpiod 2>/dev/null),)
 LDFLAGS :=
 # On macOS debug builds: generate .dSYM into tests-dSYM/ and remove any from BINDIR
 DSYM_SCRIPT = @mkdir -p $(DSYMDIR) && ( [ "$$(uname)" != "Darwin" ] || [ "$(BUILD)" != "debug" ] || dsymutil $(BINDIR)/$@ -o $(DSYMDIR)/$@.dSYM 2>/dev/null ); rm -rf $(BINDIR)/$@.dSYM
@@ -33,6 +40,8 @@ CFLAGS ?= -std=c11 -Wall -Wextra -g -O0 -DDEBUG
 endif
 CFLAGS += -Wformat=2 -Wformat-security
 CFLAGS += $(if $(filter 1,$(GATEWAY)),-DSHELLCLAW_GATEWAY,)
+CFLAGS += $(if $(filter 1,$(LIBGPIOD)),-DHAVE_LIBGPIOD,)
+CFLAGS += $(LIBGPIOD_CFLAGS)
 ifeq ($(CI),true)
 CFLAGS += -Werror
 endif
@@ -88,6 +97,12 @@ CONTEXT_HTTP_O := src/tools/context_http.o
 CONTEXT_GEO_O := src/tools/context_geo.o
 CRYPTO_O := src/crypto/crypto.o
 HARDWARE_STUB_O := src/hardware/hardware_stub.o
+HARDWARE_INIT_O := src/hardware/hardware_init.o
+HARDWARE_TOOLS_O := src/tools/hardware_tools.o src/tools/hardware_tools_helpers.o src/tools/hardware_tools_gpio.o src/tools/hardware_tools_i2c.o
+BOARD_DETECT_O := src/hardware/board_detect.o
+HARDWARE_LIBGPIOD_O := $(if $(filter 1,$(LIBGPIOD)),src/hardware/hardware_libgpiod.o,)
+HARDWARE_I2C_O := src/hardware/hardware_i2c.o
+HARDWARE_CAMERA_O := src/hardware/hardware_camera.o
 CRON_O         := src/tools/cron.o
 ASAP_INVOKE_O  := src/tools/asap_invoke.o
 ASAP_INVOKE_TEST_O := $(BINDIR)/asap_invoke_test.o
@@ -122,7 +137,7 @@ OBJS := $(CORE_OBJS) $(VENDOR_OBJS)
 PROVIDER_OBJS := $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O)
 CHANNEL_OBJS := $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_DISCORD_O) $(DISCORD_HELPERS_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O)
 GATEWAY_OBJS := $(AUTH_O) $(STATIC_O) $(HTTP_O) $(HTTP_LWS_O) $(ROUTES_O) $(WS_O) $(RATE_LIMIT_O)
-TOOL_OBJS := $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CONTEXT_O) $(CONTEXT_CACHE_O) $(CONTEXT_HTTP_O) $(CONTEXT_GEO_O) $(CRYPTO_O) $(HARDWARE_STUB_O) $(CRON_O) $(ASAP_INVOKE_O)
+TOOL_OBJS := $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CONTEXT_O) $(CONTEXT_CACHE_O) $(CONTEXT_HTTP_O) $(CONTEXT_GEO_O) $(CRYPTO_O) $(HARDWARE_STUB_O) $(HARDWARE_INIT_O) $(HARDWARE_TOOLS_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CRON_O) $(ASAP_INVOKE_O)
 ASAP_OBJS := $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SERVER_O) $(ASAP_LOG_O)
 SANDBOX_OBJS := $(SANDBOX_O) $(ALLOWLIST_O)
 SHELLCLAW_OBJS := $(OBJS) $(PROVIDER_OBJS) $(CHANNEL_OBJS) $(GATEWAY_OBJS) $(ASAP_OBJS) $(TOOL_OBJS) $(SANDBOX_OBJS)
@@ -140,14 +155,14 @@ release:
 
 shellclaw: $(SHELLCLAW_OBJS)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(SHELLCLAW_OBJS) $(LDLIBS) $(GATEWAY_LDLIBS) -pthread
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BINDIR)/$@ $(SHELLCLAW_OBJS) $(LDLIBS) $(GATEWAY_LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
 	$(DSYM_SCRIPT)
 	@if [ "$(BUILD)" = "release" ]; then strip -s $(BINDIR)/$@ 2>/dev/null || true; fi
 
 $(CONFIG_O): src/core/config.c src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 
-$(MAIN_O): src/core/main.c src/core/config.h src/core/bootstrap.h src/core/daemon.h src/core/dispatch.h src/core/reload.h src/channels/channel.h src/providers/provider.h
+$(MAIN_O): src/core/main.c src/core/config.h src/core/bootstrap.h src/core/daemon.h src/core/dispatch.h src/core/reload.h src/channels/channel.h src/hardware/board_detect.h src/providers/provider.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/core/main.c
 
 $(DAEMON_O): src/core/daemon.c src/core/daemon.h src/core/config.h
@@ -312,8 +327,17 @@ $(WEBSEARCH_O): src/tools/web_search.c src/tools/tool.h src/tools/web_search.h s
 $(FILE_O): src/tools/file.c src/tools/tool.h src/tools/file.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/file.c
 
-$(REGISTRY_O): src/tools/registry.c src/tools/tool.h src/tools/shell.h src/tools/web_search.h src/tools/file.h src/tools/context.h src/tools/asap_invoke.h src/hardware/hardware.h src/core/config.h
+$(REGISTRY_O): src/tools/registry.c src/tools/tool.h src/tools/shell.h src/tools/web_search.h src/tools/file.h src/tools/context.h src/tools/asap_invoke.h src/tools/hardware_tools.h src/hardware/hardware.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/registry.c
+
+$(HARDWARE_INIT_O): src/hardware/hardware_init.c src/hardware/hardware.h src/hardware/board_detect.h src/core/config.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/hardware_init.c
+
+$(HARDWARE_TOOLS_O): src/tools/hardware_tools.c src/tools/hardware_tools_helpers.c src/tools/hardware_tools_gpio.c src/tools/hardware_tools_i2c.c src/tools/hardware_tools.h src/tools/hardware_tools_internal.h src/tools/tool.h src/core/config.h src/hardware/hardware.h src/hardware/board_detect.h vendor/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INC) -c -o src/tools/hardware_tools.o src/tools/hardware_tools.c
+	$(CC) $(CFLAGS) $(INC) -c -o src/tools/hardware_tools_helpers.o src/tools/hardware_tools_helpers.c
+	$(CC) $(CFLAGS) $(INC) -c -o src/tools/hardware_tools_gpio.o src/tools/hardware_tools_gpio.c
+	$(CC) $(CFLAGS) $(INC) -c -o src/tools/hardware_tools_i2c.o src/tools/hardware_tools_i2c.c
 
 $(CRYPTO_O): src/crypto/crypto.c src/crypto/crypto.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/crypto/crypto.c
@@ -348,6 +372,18 @@ $(CONTEXT_CACHE_TEST_O): src/tools/context_cache.c src/tools/context_internal.h 
 
 $(HARDWARE_STUB_O): src/hardware/hardware_stub.c src/hardware/hardware.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/hardware_stub.c
+
+$(BOARD_DETECT_O): src/hardware/board_detect.c src/hardware/board_detect.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/board_detect.c
+
+$(HARDWARE_LIBGPIOD_O): src/hardware/hardware_libgpiod.c src/hardware/hardware_libgpiod.h src/hardware/pin_table.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/hardware_libgpiod.c
+
+$(HARDWARE_I2C_O): src/hardware/hardware_i2c.c src/hardware/hardware_i2c.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/hardware_i2c.c
+
+$(HARDWARE_CAMERA_O): src/hardware/hardware_camera.c src/hardware/hardware_camera.h src/hardware/board_detect.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/hardware_camera.c
 
 $(CRON_O): src/tools/cron.c src/tools/cron.h src/crypto/crypto.h src/core/memory.h src/channels/channel.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/cron.c
@@ -412,6 +448,42 @@ test_crypto: tests/test_crypto.c $(CRYPTO_O)
 test_hardware_stub: tests/test_hardware_stub.c $(HARDWARE_STUB_O) $(CONFIG_O) $(TOML_O)
 	@mkdir -p $(BINDIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_hardware_stub.c $(HARDWARE_STUB_O) $(CONFIG_O) $(TOML_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_board_detect: tests/test_board_detect.c $(BOARD_DETECT_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_board_detect.c $(BOARD_DETECT_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_hardware_libgpiod: tests/test_hardware_libgpiod.c $(HARDWARE_LIBGPIOD_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_HARDWARE_LIBGPIOD_TEST -o $(BINDIR)/$@ tests/test_hardware_libgpiod.c $(HARDWARE_LIBGPIOD_O) $(LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
+	$(DSYM_SCRIPT)
+
+test_hardware_i2c: tests/test_hardware_i2c.c $(HARDWARE_I2C_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_hardware_i2c.c $(HARDWARE_I2C_O) $(LDLIBS)
+
+test_hardware_camera: tests/test_hardware_camera.c $(HARDWARE_CAMERA_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_hardware_camera.c $(HARDWARE_CAMERA_O) $(LDLIBS)
+
+test_pin_tables: tests/test_pin_tables.c
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_pin_tables.c $(LDLIBS)
+
+test_hardware_init: tests/test_hardware_init.c $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_hardware_init.c $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
+
+test_registry: tests/test_registry.c $(REGISTRY_O) $(HARDWARE_TOOLS_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_registry.c $(REGISTRY_O) $(HARDWARE_TOOLS_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
+	$(DSYM_SCRIPT)
+
+test_hardware_tools: tests/test_hardware_tools.c $(HARDWARE_TOOLS_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_hardware_tools.c $(HARDWARE_TOOLS_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
 	$(DSYM_SCRIPT)
 
 test_agent: tests/test_agent.c $(AGENT_O) $(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(CJSON_O)
@@ -575,9 +647,11 @@ static:
 		--suppress=doubleFree:src/core/config.c \
 		--suppress=constParameterPointer \
 		--suppress=constParameterCallback \
+		--suppress=constParameter:src/hardware/hardware_camera.c \
+		--suppress=variableScope:src/hardware/hardware_camera.c \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_daemon_smoke test_update_script test_install_script test_web_dashboard
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_board_detect test_hardware_libgpiod test_hardware_i2c test_hardware_camera test_pin_tables test_hardware_init test_hardware_tools test_registry test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_daemon_smoke test_update_script test_install_script test_web_dashboard
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -599,6 +673,14 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_context
 	$(BINDIR)/test_crypto
 	$(BINDIR)/test_hardware_stub
+	$(BINDIR)/test_board_detect
+	$(BINDIR)/test_hardware_libgpiod
+	$(BINDIR)/test_hardware_i2c
+	$(BINDIR)/test_hardware_camera
+	$(BINDIR)/test_pin_tables
+	$(BINDIR)/test_hardware_init
+	$(BINDIR)/test_hardware_tools
+	$(BINDIR)/test_registry
 	$(BINDIR)/test_ws
 	$(BINDIR)/test_manifest
 	@for t in $(ASAP_UNIT_TESTS); do $(BINDIR)/$$t || exit 1; done
@@ -616,7 +698,7 @@ COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage GATEWAY=0 test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_auth
+	$(MAKE) BUILD=coverage GATEWAY=0 test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_board_detect test_hardware_libgpiod test_hardware_i2c test_hardware_camera test_pin_tables test_hardware_init test_hardware_tools test_registry test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_auth
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage GATEWAY=1 shellclaw test_gateway_http test_static; fi
 	@chmod +x scripts/coverage.sh
 	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh
@@ -627,8 +709,8 @@ clean-root-dsym:
 	@rm -f shellclaw test_agent test_anthropic test_channel test_cli test_config test_file test_memory test_local_provider test_openai test_provider test_router test_shell test_skill test_telegram test_web_search test_ws
 
 clean: clean-root-dsym
-	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(LOCAL_TEST_O) $(CONTEXT_TEST_OBJS) $(HEARTBEAT_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_DISCORD_O) $(DISCORD_HELPERS_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(HTTP_LWS_O) $(ROUTES_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SERVER_O) $(ASAP_LOG_O) $(RATE_LIMIT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CONTEXT_O) $(CONTEXT_CACHE_O) $(CONTEXT_HTTP_O) $(CONTEXT_GEO_O) $(CRYPTO_O) $(HARDWARE_STUB_O) $(CRON_O) $(ASAP_INVOKE_O) $(SANDBOX_O) $(ALLOWLIST_O)
+	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(LOCAL_TEST_O) $(CONTEXT_TEST_OBJS) $(HEARTBEAT_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_DISCORD_O) $(DISCORD_HELPERS_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(HTTP_LWS_O) $(ROUTES_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SERVER_O) $(ASAP_LOG_O) $(RATE_LIMIT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CONTEXT_O) $(CONTEXT_CACHE_O) $(CONTEXT_HTTP_O) $(CONTEXT_GEO_O) $(CRYPTO_O) $(HARDWARE_STUB_O) $(HARDWARE_INIT_O) $(HARDWARE_TOOLS_O) $(BOARD_DETECT_O) $(HARDWARE_LIBGPIOD_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(CRON_O) $(ASAP_INVOKE_O) $(SANDBOX_O) $(ALLOWLIST_O)
 	rm -f src/gateway/ui_assets.h
 	find . -name '*.gcno' -o -name '*.gcda' -o -name '*.gcov' | xargs rm -f 2>/dev/null || true
-	rm -f $(WS_TEST_O) $(BINDIR)/asap_registry_test.o $(BINDIR)/asap_invoke_test.o $(CONTEXT_TEST_OBJS) $(HEARTBEAT_TEST_O) $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_local_provider $(BINDIR)/test_router $(BINDIR)/test_heartbeat $(BINDIR)/test_crypto $(BINDIR)/test_hardware_stub $(BINDIR)/test_ws $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_discord_helpers $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_context $(BINDIR)/test_manifest $(BINDIR)/test_asap_envelope $(BINDIR)/test_asap_ulid $(BINDIR)/test_asap_client $(BINDIR)/test_asap_registry $(BINDIR)/test_asap_server $(BINDIR)/test_asap_invoke $(BINDIR)/test_asap_log $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static $(BINDIR)/test_sandbox $(BINDIR)/test_allowlist $(BINDIR)/test_rate_limit
+	rm -f $(WS_TEST_O) $(BINDIR)/asap_registry_test.o $(BINDIR)/asap_invoke_test.o $(CONTEXT_TEST_OBJS) $(HEARTBEAT_TEST_O) $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_local_provider $(BINDIR)/test_router $(BINDIR)/test_heartbeat $(BINDIR)/test_crypto $(BINDIR)/test_hardware_stub $(BINDIR)/test_board_detect $(BINDIR)/test_hardware_libgpiod $(BINDIR)/test_hardware_i2c $(BINDIR)/test_hardware_camera $(BINDIR)/test_pin_tables $(BINDIR)/test_hardware_init $(BINDIR)/test_hardware_tools $(BINDIR)/test_registry $(BINDIR)/test_ws $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_discord_helpers $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_context $(BINDIR)/test_manifest $(BINDIR)/test_asap_envelope $(BINDIR)/test_asap_ulid $(BINDIR)/test_asap_client $(BINDIR)/test_asap_registry $(BINDIR)/test_asap_server $(BINDIR)/test_asap_invoke $(BINDIR)/test_asap_log $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static $(BINDIR)/test_sandbox $(BINDIR)/test_allowlist $(BINDIR)/test_rate_limit
 	rm -rf $(BINDIR)/*.dSYM $(DSYMDIR)

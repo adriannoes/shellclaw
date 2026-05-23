@@ -125,6 +125,26 @@ const char *config_brave_api_key_env(const config_t *c);
 /** Name of the env var holding the Tavily API key. Default "TAVILY_API_KEY". */
 const char *config_tavily_api_key_env(const config_t *c);
 
+/** Non-zero when the hardware tool layer is enabled. Default 1. */
+int config_hardware_enabled(const config_t *c);
+/**
+ * Optional board override (e.g. "jetson", "rpi", "stub").
+ * NULL or empty string means auto-detect at runtime.
+ */
+const char *config_hardware_board(const config_t *c);
+/** Non-zero when i2c_bus was set in TOML or SHELLCLAW_I2C_BUS; else use per-board default. */
+int config_hardware_has_i2c_bus(const config_t *c);
+int config_hardware_i2c_bus(const config_t *c);
+/** Camera backend selector: "csi", "usb", or "auto" (default). */
+const char *config_hardware_camera_type(const config_t *c);
+/** Capture resolution string, e.g. "640x480" (default). */
+const char *config_hardware_camera_resolution(const config_t *c);
+/** JPEG quality 1–100 (default 75). */
+int config_hardware_camera_quality(const config_t *c);
+/** Non-zero when gpio_test_pin was set; else use per-board default (13 Jetson, 11 RPi). */
+int config_hardware_has_gpio_test_pin(const config_t *c);
+int config_hardware_gpio_test_pin(const config_t *c);
+
 /** Expand ~ prefix to $HOME in path. Returns malloc'd string. Caller must free. */
 char *config_expand_tilde(const char *path);
 

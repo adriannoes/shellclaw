@@ -50,8 +50,14 @@
 #define ENV_AGENT_LATITUDE           "SHELLCLAW_AGENT_LATITUDE"
 #define ENV_AGENT_LONGITUDE          "SHELLCLAW_AGENT_LONGITUDE"
 #define ENV_AGENT_COUNTRY_CODE       "SHELLCLAW_AGENT_COUNTRY_CODE"
+#define ENV_HARDWARE_BOARD           "SHELLCLAW_BOARD"
+#define ENV_HARDWARE_I2C_BUS         "SHELLCLAW_I2C_BUS"
+#define ENV_HARDWARE_CAMERA_TYPE     "SHELLCLAW_CAMERA_TYPE"
 
 #define DEFAULT_LOCAL_ENDPOINT "http://127.0.0.1:8080/v1/chat/completions"
+#define DEFAULT_CAMERA_TYPE "auto"
+#define DEFAULT_CAMERA_RESOLUTION "640x480"
+#define DEFAULT_CAMERA_QUALITY 75
 #define DEFAULT_LOCAL_MODEL "tinyllama-1.1b-q4"
 
 struct config {
@@ -110,6 +116,15 @@ struct config {
 	char *heartbeat_default_channel;
 	char *brave_api_key_env;
 	char *tavily_api_key_env;
+	int hardware_enabled;
+	char *hardware_board;
+	int hardware_has_i2c_bus;
+	int hardware_i2c_bus;
+	char *hardware_camera_type;
+	char *hardware_camera_resolution;
+	int hardware_camera_quality;
+	int hardware_has_gpio_test_pin;
+	int hardware_gpio_test_pin;
 };
 
 static void set_string(char **dst, const char *src)
@@ -531,6 +546,34 @@ static int parse_web_search(const toml_table_t *root, config_t *cfg)
 	return 0;
 }
 
+static int parse_hardware(const toml_table_t *root, config_t *cfg)
+{
+	const toml_table_t *hw = toml_table_in(root, "hardware");
+	toml_datum_t d;
+	if (!hw) return 0;
+	d = toml_bool_in(hw, "enabled");
+	if (d.ok) cfg->hardware_enabled = d.u.b;
+	d = toml_string_in(hw, "board");
+	if (d.ok) { set_string(&cfg->hardware_board, d.u.s); free(d.u.s); }
+	d = toml_int_in(hw, "i2c_bus");
+	if (d.ok) {
+		cfg->hardware_i2c_bus = (int)d.u.i;
+		cfg->hardware_has_i2c_bus = 1;
+	}
+	d = toml_string_in(hw, "camera_type");
+	if (d.ok) { set_string(&cfg->hardware_camera_type, d.u.s); free(d.u.s); }
+	d = toml_string_in(hw, "camera_resolution");
+	if (d.ok) { set_string(&cfg->hardware_camera_resolution, d.u.s); free(d.u.s); }
+	d = toml_int_in(hw, "camera_quality");
+	if (d.ok) cfg->hardware_camera_quality = (int)d.u.i;
+	d = toml_int_in(hw, "gpio_test_pin");
+	if (d.ok) {
+		cfg->hardware_gpio_test_pin = (int)d.u.i;
+		cfg->hardware_has_gpio_test_pin = 1;
+	}
+	return 0;
+}
+
 static int parse_memory_skills_sandbox(const toml_table_t *root, config_t *cfg)
 {
 	const toml_table_t *mem = toml_table_in(root, "memory");
@@ -639,6 +682,13 @@ static int apply_env_overrides(config_t *cfg)
 	if (v) set_string(&cfg->asap_registry_url, v);
 	v = getenv(ENV_ASAP_REVOCATION_LIST_URL);
 	if (v) set_string(&cfg->asap_revocation_list_url, v);
+	v = getenv(ENV_HARDWARE_BOARD);
+	if (v && v[0]) set_string(&cfg->hardware_board, v);
+	v = getenv(ENV_HARDWARE_I2C_BUS);
+	if (v && parse_int_env(v, &cfg->hardware_i2c_bus, 0, 255))
+		cfg->hardware_has_i2c_bus = 1;
+	v = getenv(ENV_HARDWARE_CAMERA_TYPE);
+	if (v && v[0]) set_string(&cfg->hardware_camera_type, v);
 	return 0;
 }
 
@@ -747,6 +797,10 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	set_string(&cfg->brave_api_key_env, "BRAVE_API_KEY");
 	set_string(&cfg->tavily_api_key_env, "TAVILY_API_KEY");
 	cfg->shell_timeout_sec = DEFAULT_SHELL_TIMEOUT_SEC;
+	cfg->hardware_enabled = 1;
+	set_string(&cfg->hardware_camera_type, DEFAULT_CAMERA_TYPE);
+	set_string(&cfg->hardware_camera_resolution, DEFAULT_CAMERA_RESOLUTION);
+	cfg->hardware_camera_quality = DEFAULT_CAMERA_QUALITY;
 	int err = parse_agent(tab, cfg, errbuf, errbufsz);
 	if (err) goto fail;
 	err = parse_providers(tab, cfg, errbuf, errbufsz);
@@ -761,6 +815,7 @@ int config_load(const char *path, config_t **out, char *errbuf, size_t errbufsz)
 	if (err) goto fail;
 	parse_heartbeat(tab, cfg);
 	parse_web_search(tab, cfg);
+	parse_hardware(tab, cfg);
 	toml_free(tab);
 	tab = NULL;
 	if (apply_env_overrides(cfg) != 0) {
@@ -826,6 +881,9 @@ void config_free(config_t *cfg)
 	set_string(&cfg->tavily_api_key_env, NULL);
 	set_string(&cfg->sandbox_cpu_max, NULL);
 	set_string(&cfg->sandbox_cgroup_base, NULL);
+	set_string(&cfg->hardware_board, NULL);
+	set_string(&cfg->hardware_camera_type, NULL);
+	set_string(&cfg->hardware_camera_resolution, NULL);
 	free(cfg);
 }
 
@@ -952,3 +1010,54 @@ int config_sandbox_enabled(const config_t *c) { return c ? c->sandbox_enabled : 
 size_t config_sandbox_memory_max_bytes(const config_t *c) { return c ? c->sandbox_memory_max_bytes : 0; }
 const char *config_sandbox_cpu_max(const config_t *c) { return c ? c->sandbox_cpu_max : NULL; }
 const char *config_sandbox_cgroup_base(const config_t *c) { return c ? c->sandbox_cgroup_base : NULL; }
+
+int config_hardware_enabled(const config_t *c)
+{
+	return c ? c->hardware_enabled : 1;
+}
+
+const char *config_hardware_board(const config_t *c)
+{
+	return c ? c->hardware_board : NULL;
+}
+
+int config_hardware_has_i2c_bus(const config_t *c)
+{
+	return c ? c->hardware_has_i2c_bus : 0;
+}
+
+int config_hardware_i2c_bus(const config_t *c)
+{
+	return c ? c->hardware_i2c_bus : 0;
+}
+
+const char *config_hardware_camera_type(const config_t *c)
+{
+	if (!c || !c->hardware_camera_type || c->hardware_camera_type[0] == '\0')
+		return DEFAULT_CAMERA_TYPE;
+	return c->hardware_camera_type;
+}
+
+const char *config_hardware_camera_resolution(const config_t *c)
+{
+	if (!c || !c->hardware_camera_resolution || c->hardware_camera_resolution[0] == '\0')
+		return DEFAULT_CAMERA_RESOLUTION;
+	return c->hardware_camera_resolution;
+}
+
+int config_hardware_camera_quality(const config_t *c)
+{
+	if (!c || c->hardware_camera_quality <= 0)
+		return DEFAULT_CAMERA_QUALITY;
+	return c->hardware_camera_quality;
+}
+
+int config_hardware_has_gpio_test_pin(const config_t *c)
+{
+	return c ? c->hardware_has_gpio_test_pin : 0;
+}
+
+int config_hardware_gpio_test_pin(const config_t *c)
+{
+	return c ? c->hardware_gpio_test_pin : 0;
+}

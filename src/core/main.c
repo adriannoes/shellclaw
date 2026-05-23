@@ -22,6 +22,7 @@
 #include "core/dispatch.h"
 #include "core/reload.h"
 #include "channels/channel.h"
+#include "hardware/board_detect.h"
 #include "providers/provider.h"
 #include <curl/curl.h>
 #include <signal.h>
@@ -97,7 +98,7 @@ static void main_loop(int one_shot, config_t **pcfg)
 
 static void print_usage(const char *prog)
 {
-	fprintf(stderr, "Usage: %s [--config <path>] [--verbose] [--daemon] [--version] [-m \"message\"]\n",
+	fprintf(stderr, "Usage: %s [--config <path>] [--verbose] [--daemon] [--detect-board] [--version] [-m \"message\"]\n",
 	        prog);
 }
 
@@ -110,6 +111,10 @@ static int parse_args(int argc, char **argv, const char **config_path_out)
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--version") == 0) {
 			printf("%s\n", VERSION);
+			exit(0);
+		}
+		if (strcmp(argv[i], "--detect-board") == 0) {
+			printf("%s\n", board_name(board_detect()));
 			exit(0);
 		}
 		if (strcmp(argv[i], "--verbose") == 0) {
