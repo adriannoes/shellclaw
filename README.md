@@ -6,10 +6,10 @@ A lightweight AI assistant written in C that runs on **NVIDIA Jetson Orin Nano S
 
 **Two personas, one binary** (see [DR-015](.cursor/strategy/decision-records/decisions.md), [DR-016](.cursor/strategy/decision-records/decisions.md)):
 
-| Persona | Hardware | Headline capability |
+| Persona | Hardware | Headline capability (final form, fully delivered in v1.2) |
 |---|---|---|
-| Edge-AI maker / researcher | Jetson Orin Nano Super 8 GB Dev Kit | Local Llama-3.1-8B Q4 @ 14–18 tok/s or Phi-3-mini Q4 @ 25–35 tok/s via CUDA; GPIO/I2C/CSI camera; NVMe boot |
-| Hobbyist / IoT tinkerer | Raspberry Pi Zero 2 W | < 5 MB RAM, < 500 KB binary on the cheapest viable Linux SBC; GPIO/I2C/CSI camera; cloud LLM primary with TinyLlama emergency fallback |
+| Edge-AI maker / researcher | Jetson Orin Nano Super 8 GB Dev Kit | Local Phi-3-mini Q4 @ 25–35 tok/s or Llama-3.1-8B Q4 @ 14–18 tok/s via CUDA; GPIO + I2C + CSI/USB camera; NVMe boot. CUDA inference + GPIO ships in v1.0; sensors + camera image return in v1.2 |
+| Hobbyist / IoT tinkerer | Raspberry Pi Zero 2 W | < 5 MB RAM, < 500 KB binary on the cheapest viable Linux SBC; GPIO + I2C + CSI/USB camera; cloud LLM primary with TinyLlama 1.1B CPU emergency fallback. Same binary, RPi-validated in v1.1; sensors + camera in v1.2 |
 
 **Roadmap (high level):**
 
@@ -19,8 +19,9 @@ A lightweight AI assistant written in C that runs on **NVIDIA Jetson Orin Nano S
 | 2: Gateway | v0.2.0 | ✅ Done | HTTP server, embedded Web UI, WebSocket chat, cron scheduler, pairing auth, ASAP manifest, skill hot-reload |
 | 3: Protocol | v0.3.0 | ✅ Done | ASAP client/server, registry, `asap_invoke` tool, process sandbox (namespaces + cgroups), Tavily search, `/asap` + `/api/asap/log`, rate limits |
 | 4: Autonomy | v0.4.0 | ✅ Done | Local inference (llama.cpp), provider fallback, Discord channel, systemd service, OTA updates, context tool, dashboard |
-| 5: Edge AI Hardware & Release | v1.0.0 | — | **Jetson Orin Nano Super primary target**: GPIO/I2C/camera, CUDA-accelerated local LLM, Ed25519 signing, ASAP marketplace registration, security audit, full docs |
-| 6: Hobbyist Portability | v1.1.0 | — | **Raspberry Pi Zero 2 W validation**: same binary, RPi-specific install + benchmarks + docs, optional pre-built SD image |
+| 5: Edge AI Hardware & Release | v1.0.0 | — | **Jetson Orin Nano Super primary target**: hardware abstraction (GPIO, I2C, camera CLI skeleton), CUDA-accelerated local LLM (Phi-3-mini default), Ed25519 signing, ASAP marketplace registration, security audit, full docs |
+| 6: Hobbyist Portability | v1.1.0 | — | **Raspberry Pi Zero 2 W validation**: same binary, RPi-specific install + CPU-only local LLM (TinyLlama 1.1B) + benchmarks + docs, optional pre-built SD image |
+| 7: Physical World Hardware | v1.2.0 | — | **Real sensors + camera image return** on both boards: BME280, BH1750, DHT22 (experimental), CSI + USB camera capture, Web UI sensor/camera panels, `home-monitor` + `visual-monitor` skills |
 
 ## What makes ShellClaw different
 
@@ -53,9 +54,11 @@ ShellClaw is **not another OpenClaw clone** in a different language. It is a **h
 
 **Phase 3 configuration (optional):** registry and revocation URLs, Tavily API key name, and sandbox-related keys are documented in [`.env.example`](.env.example). Install **libwebsockets** (`pkg-config` must find it) to build the gateway and run `GATEWAY=1 make test_gateway_http`.
 
-**Phase 5 (v1.0.0, planned):** edge-AI release on Jetson Orin Nano Super — hardware tools (GPIO/I2C/camera), CUDA-accelerated local inference, Ed25519 manifest signing, ASAP marketplace registration, security audit, full documentation.
+**Phase 5 (v1.0.0, planned):** edge-AI release on Jetson Orin Nano Super — hardware abstraction (GPIO, I2C primitives, camera CLI skeleton), CUDA-accelerated local inference with Phi-3-mini default, Ed25519 manifest signing, ASAP marketplace registration, security audit, full documentation. Sensor decoders and the camera image return path intentionally land in v1.2 to keep v1.0 unblocked by hardware acquisition.
 
-**Phase 6 (v1.1.0, planned):** Raspberry Pi Zero 2 W portability — same binary validated and benchmarked on the $15 hobbyist board, with RPi-specific install script and side-by-side docs.
+**Phase 6 (v1.1.0, planned):** Raspberry Pi Zero 2 W portability — same `aarch64` binary validated and benchmarked on the $15 hobbyist board, with RPi-specific install script (TinyLlama 1.1B CPU profile) and side-by-side docs.
+
+**Phase 7 (v1.2.0, planned):** real-world sensing + vision on both boards — BME280 / BH1750 / (experimental) DHT22 sensor decoders, full camera image return path (CSI + USB) for multimodal LLMs, Hardware Web UI sensor and camera panels, `home-monitor` and `visual-monitor` skills.
 
 **WebSocket auth (breaking vs early gateway builds):** browsers cannot send `Authorization` on WebSocket; use subprotocol `bearer.<pairing-token>` when opening `/ws` (see `web/js/app.js`).
 

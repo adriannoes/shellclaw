@@ -24,6 +24,18 @@ model = "daemon-smoke-model"
 
 EOF_CFG
 
+detect_out="$("${BIN}" --detect-board)"
+if [[ -z "${detect_out}" || "${detect_out}" == *$'\n'* ]]; then
+	echo "test_daemon_smoke: --detect-board expected single non-empty line, got: ${detect_out@Q}" >&2
+	exit 1
+fi
+
+stub_out="$(SHELLCLAW_BOARD=stub "${BIN}" --detect-board)"
+if [[ "${stub_out}" != "stub" ]]; then
+	echo "test_daemon_smoke: SHELLCLAW_BOARD=stub expected 'stub', got: ${stub_out@Q}" >&2
+	exit 1
+fi
+
 "${BIN}" --daemon --config "${CFG}"
 
 sleep 1

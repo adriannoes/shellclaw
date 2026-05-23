@@ -1,15 +1,17 @@
 # CI: static analysis, tests, release build. Required for branch protection.
+# PRs target `development` during Phase 5; merge to `main` when the release line is stable.
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
-    branches: [main]
+    branches: [main, development]
 
 jobs:
   ci:
     name: static, test, release
-    runs-on: ubuntu-latest
+    # libgpiod v2 API (gpiod_chip_request_lines, etc.) needs Ubuntu 24.04+ apt packages
+    runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -18,13 +20,19 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libcurl4-openssl-dev libwebsockets-dev cppcheck lcov nodejs
+          sudo apt-get install -y build-essential libcurl4-openssl-dev libwebsockets-dev libgpiod-dev i2c-tools cppcheck lcov nodejs
 
       - name: Static analysis (cppcheck)
         run: make static
 
-      - name: Build and test
+      - name: Build and test (libgpiod present)
         run: make clean && make test
+        env:
+          CI: true
+          GATEWAY: "1"
+
+      - name: Build and test without libgpiod (stub GPIO fallback)
+        run: make clean && LIBGPIOD=0 make test
         env:
           CI: true
           GATEWAY: "1"
@@ -48,7 +56,7 @@ jobs:
           fi
           echo "Binary size: $size bytes (OK)"
 
-      - name: Coverage (core modules >= 80%)
+      - name: Coverage (agent core >= 80%, hardware excluded)
         run: GATEWAY=1 make coverage
 
       - name: ASAP compliance check
