@@ -57,6 +57,31 @@ static int collect_sample(char *linebuf, size_t linebufsz, char *errbuf, size_t 
 	return 0;
 }
 
+static int collect_fail(char *linebuf, size_t linebufsz, char *errbuf, size_t errbufsz)
+{
+	(void)linebuf;
+	(void)linebufsz;
+	if (errbuf && errbufsz > 0)
+		snprintf(errbuf, errbufsz, "tegrastats: forced fail");
+	return -1;
+}
+
+static int test_json_fill_failure_untouched_root(void)
+{
+	cJSON *root;
+	char err[128];
+
+	hardware_tegrastats_set_collect_for_test(collect_fail);
+	root = cJSON_CreateObject();
+	ASSERT(root != NULL);
+	ASSERT(hardware_jetson_gpu_json_fill(root, err, sizeof(err)) != 0);
+	ASSERT(cJSON_GetObjectItemCaseSensitive(root, "available") == NULL);
+	ASSERT(cJSON_GetObjectItemCaseSensitive(root, "gpu_usage") == NULL);
+	cJSON_Delete(root);
+	hardware_tegrastats_set_collect_for_test(NULL);
+	return 0;
+}
+
 static int test_json_fill_with_hooks(void)
 {
 	cJSON *root;
@@ -92,6 +117,8 @@ int main(void)
 	if (test_parse_legacy_gr3d_single_freq() != 0)
 		failures++;
 	if (test_json_fill_with_hooks() != 0)
+		failures++;
+	if (test_json_fill_failure_untouched_root() != 0)
 		failures++;
 	if (failures == 0) {
 		printf("test_hardware_tegrastats: all tests passed\n");

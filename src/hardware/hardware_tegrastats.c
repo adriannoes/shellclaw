@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 
 #define TEGRA_CMD "tegrastats --interval 100 --count 1 2>/dev/null"
 #define NVPMODEL_CMD "nvpmodel -q 2>/dev/null"
@@ -103,10 +104,20 @@ int hardware_tegrastats_parse_line(const char *line, hardware_tegrastats_parsed_
 	return 0;
 }
 
+static int subprocess_ok(int wait_rc)
+{
+	if (wait_rc == -1)
+		return 0;
+	if (!WIFEXITED(wait_rc))
+		return 0;
+	return WEXITSTATUS(wait_rc) == 0;
+}
+
 static int default_collect(char *linebuf, size_t linebufsz, char *errbuf, size_t errbufsz)
 {
 	FILE *fp;
 	char *nl;
+	int wait_rc;
 
 	if (!linebuf || linebufsz == 0) {
 		if (errbuf && errbufsz > 0)
@@ -126,7 +137,13 @@ static int default_collect(char *linebuf, size_t linebufsz, char *errbuf, size_t
 			snprintf(errbuf, errbufsz, "tegrastats: no output");
 		return -1;
 	}
-	pclose(fp);
+	wait_rc = pclose(fp);
+	if (!subprocess_ok(wait_rc)) {
+		linebuf[0] = '\0';
+		if (errbuf && errbufsz > 0)
+			snprintf(errbuf, errbufsz, "tegrastats: command failed");
+		return -1;
+	}
 	nl = strchr(linebuf, '\n');
 	if (nl)
 		*nl = '\0';
@@ -151,6 +168,7 @@ void hardware_tegrastats_read_power_mode(char *buf, size_t bufsz)
 	FILE *fp;
 	char line[256];
 	const char *prefix = "NV Power Mode:";
+	int wait_rc;
 
 	if (!buf || bufsz == 0)
 		return;
@@ -177,24 +195,44 @@ void hardware_tegrastats_read_power_mode(char *buf, size_t bufsz)
 		}
 		break;
 	}
-	pclose(fp);
+	wait_rc = pclose(fp);
+	if (!subprocess_ok(wait_rc))
+		buf[0] = '\0';
 }
 
 int hardware_llama_server_running(void)
 {
 	FILE *fp;
 	char line[32];
+	int wait_rc;
 
 	if (s_test_llama_forced >= 0)
 		return s_test_llama_forced ? 1 : 0;
 	fp = popen("pgrep -x " LLAMA_PROCESS " 2>/dev/null", "r");
 	if (!fp)
 		return 0;
-	if (fgets(line, sizeof(line), fp) && line[0] != '\0') {
-		pclose(fp);
-		return 1;
+	line[0] = '\0';
+	fgets(line, sizeof(line), fp);
+	wait_rc = pclose(fp);
+	if (!subprocess_ok(wait_rc))
+		return 0;
+	return line[0] != '\0' ? 1 : 0;
+}
+
+static int merge_json_children(cJSON *root, cJSON *doc)
+{
+	cJSON *child;
+	cJSON *next;
+
+	if (!root || !doc)
+		return -1;
+	child = doc->child;
+	while (child != NULL) {
+		next = child->next;
+		cJSON_DetachItemViaPointer(doc, child);
+		cJSON_AddItemToObject(root, child->string, child);
+		child = next;
 	}
-	pclose(fp);
 	return 0;
 }
 
@@ -202,42 +240,69 @@ int hardware_jetson_gpu_json_fill(cJSON *root, char *errbuf, size_t errbufsz)
 {
 	char line[4096];
 	hardware_tegrastats_parsed_t parsed;
-	cJSON *llama;
+	cJSON *doc = NULL;
+	cJSON *llama = NULL;
+	cJSON *status_item = NULL;
 	unsigned int mem_pct = 0;
 	int llama_on;
+	int ret = -1;
 
 	if (!root) {
 		if (errbuf && errbufsz > 0)
 			snprintf(errbuf, errbufsz, "gpu: root is NULL");
 		return -1;
 	}
-	if (hardware_tegrastats_collect_line(line, sizeof(line), errbuf, errbufsz) != 0)
+	doc = cJSON_CreateObject();
+	if (!doc) {
+		if (errbuf && errbufsz > 0)
+			snprintf(errbuf, errbufsz, "gpu: out of memory");
 		return -1;
+	}
+	if (hardware_tegrastats_collect_line(line, sizeof(line), errbuf, errbufsz) != 0)
+		goto fail;
 	if (hardware_tegrastats_parse_line(line, &parsed) != 0) {
 		if (errbuf && errbufsz > 0)
 			snprintf(errbuf, errbufsz, "tegrastats: parse failed");
-		return -1;
+		goto fail;
 	}
 	hardware_tegrastats_read_power_mode(parsed.power_mode, sizeof(parsed.power_mode));
 	if (parsed.ram_total_mb > 0)
 		mem_pct = (unsigned int)((parsed.ram_used_mb * 100u) / parsed.ram_total_mb);
-	cJSON_AddBoolToObject(root, "available", 1);
-	cJSON_AddNumberToObject(root, "gpu_usage", (double)parsed.gpu_usage_percent);
-	cJSON_AddNumberToObject(root, "gpu_freq_mhz", (double)parsed.gpu_freq_mhz);
-	cJSON_AddNumberToObject(root, "memory_used_mb", (double)parsed.ram_used_mb);
-	cJSON_AddNumberToObject(root, "memory_total_mb", (double)parsed.ram_total_mb);
-	cJSON_AddNumberToObject(root, "memory_percent", (double)mem_pct);
+	cJSON_AddBoolToObject(doc, "available", 1);
+	cJSON_AddNumberToObject(doc, "gpu_usage", (double)parsed.gpu_usage_percent);
+	cJSON_AddNumberToObject(doc, "gpu_freq_mhz", (double)parsed.gpu_freq_mhz);
+	cJSON_AddNumberToObject(doc, "memory_used_mb", (double)parsed.ram_used_mb);
+	cJSON_AddNumberToObject(doc, "memory_total_mb", (double)parsed.ram_total_mb);
+	cJSON_AddNumberToObject(doc, "memory_percent", (double)mem_pct);
 	if (parsed.has_gpu_temp)
-		cJSON_AddNumberToObject(root, "temperature", (double)parsed.gpu_temp_c);
-	if (parsed.power_mode[0])
-		cJSON_AddItemToObject(root, "power_mode", cJSON_CreateString(parsed.power_mode));
+		cJSON_AddNumberToObject(doc, "temperature", (double)parsed.gpu_temp_c);
+	if (parsed.power_mode[0]) {
+		cJSON *power_mode = cJSON_CreateString(parsed.power_mode);
+		if (!power_mode)
+			goto fail;
+		cJSON_AddItemToObject(doc, "power_mode", power_mode);
+	}
 	llama_on = hardware_llama_server_running();
 	llama = cJSON_CreateObject();
 	if (!llama)
-		return -1;
+		goto fail;
 	cJSON_AddBoolToObject(llama, "running", llama_on ? 1 : 0);
-	cJSON_AddItemToObject(llama, "status",
-			      cJSON_CreateString(llama_on ? "running" : "stopped"));
-	cJSON_AddItemToObject(root, "llama_server", llama);
-	return 0;
+	status_item = cJSON_CreateString(llama_on ? "running" : "stopped");
+	if (!status_item)
+		goto fail;
+	cJSON_AddItemToObject(llama, "status", status_item);
+	status_item = NULL;
+	cJSON_AddItemToObject(doc, "llama_server", llama);
+	llama = NULL;
+	if (merge_json_children(root, doc) != 0)
+		goto fail;
+	ret = 0;
+fail:
+	if (status_item)
+		cJSON_Delete(status_item);
+	if (llama)
+		cJSON_Delete(llama);
+	if (doc)
+		cJSON_Delete(doc);
+	return ret;
 }
