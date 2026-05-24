@@ -268,6 +268,26 @@ static int test_deferred_stubs(void)
 	return 0;
 }
 
+static int test_method_not_allowed(void)
+{
+	char buf[RESP_SZ];
+	int status = 0;
+
+	if (setup_board("enabled = true\nboard = \"jetson\"\n") != 0)
+		return 1;
+	ASSERT(dispatch_post("/api/hardware/board", buf, sizeof(buf), &status) == 1);
+	ASSERT(status == 405);
+	ASSERT(strstr(buf, "Method not allowed") != NULL);
+
+	status = 0;
+	ASSERT(dispatch_get("/api/hardware/camera/snapshot", buf, sizeof(buf), &status) ==
+	       1);
+	ASSERT(status == 405);
+	ASSERT(strstr(buf, "Method not allowed") != NULL);
+	teardown_board();
+	return 0;
+}
+
 static int test_unknown_path_not_handled(void)
 {
 	char buf[RESP_SZ];
@@ -294,6 +314,8 @@ int main(void)
 	if (test_gpu_non_jetson() != 0)
 		failures++;
 	if (test_deferred_stubs() != 0)
+		failures++;
+	if (test_method_not_allowed() != 0)
 		failures++;
 	if (test_unknown_path_not_handled() != 0)
 		failures++;
