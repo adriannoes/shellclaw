@@ -8,6 +8,7 @@
 
 #include "core/config.h"
 #include "gateway/auth.h"
+#include "gateway/lws_compat.h"
 #include <libwebsockets.h>
 #include <pthread.h>
 #include <time.h>
