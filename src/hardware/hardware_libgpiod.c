@@ -267,6 +267,60 @@ done:
 	return ret;
 }
 
+int hardware_libgpiod_pin_status(const hardware_pin_entry_t *entry, char *mode_out,
+				 size_t mode_sz, char *state_out, size_t state_sz)
+{
+	char chip_path[32];
+	struct gpiod_chip *chip = NULL;
+	struct gpiod_line_info *info = NULL;
+	struct gpiod_line_request *request = NULL;
+	enum gpiod_line_direction dir;
+	enum gpiod_line_value val;
+	int as_output = 0;
+	int ret = -1;
+
+	if (!entry || !mode_out || mode_sz == 0 || !state_out || state_sz == 0)
+		return -1;
+	if (!s_libgpiod_ready || entry->sfio_flag)
+		return -1;
+	if (chip_path_for_num(entry->gpiochip_num, chip_path, sizeof(chip_path)) != 0)
+		return -1;
+	pthread_mutex_lock(&s_gpio_mutex);
+	chip = gpiod_chip_open(chip_path);
+	if (!chip)
+		goto done;
+	info = gpiod_chip_get_line_info(chip, entry->line_num);
+	if (!info)
+		goto done;
+	dir = gpiod_line_info_get_direction(info);
+	gpiod_line_info_free(info);
+	info = NULL;
+	if (dir == GPIOD_LINE_DIRECTION_OUTPUT)
+		as_output = 1;
+	else if (dir != GPIOD_LINE_DIRECTION_INPUT)
+		goto done;
+	request = request_line(entry, as_output, GPIOD_LINE_VALUE_INACTIVE, NULL, 0);
+	if (!request)
+		goto done;
+	val = gpiod_line_request_get_value(request, entry->line_num);
+	if (val == GPIOD_LINE_VALUE_ERROR)
+		goto done;
+	if (snprintf(mode_out, mode_sz, "%s", as_output ? "output" : "input") >= (int)mode_sz)
+		goto done;
+	if (snprintf(state_out, state_sz, "%s",
+		     line_value_to_int(val) ? "high" : "low") >= (int)state_sz)
+		goto done;
+	ret = 0;
+done:
+	if (info)
+		gpiod_line_info_free(info);
+	release_request(request);
+	if (chip)
+		gpiod_chip_close(chip);
+	pthread_mutex_unlock(&s_gpio_mutex);
+	return ret;
+}
+
 int hardware_gpio_mode(int pin, const char *mode, char *errbuf, size_t errbufsz)
 {
 	const hardware_pin_entry_t *entry;

@@ -49,6 +49,13 @@ int hardware_gpio_write(int pin, int value, char *errbuf, size_t errbufsz);
 int hardware_gpio_mode(int pin, const char *mode, char *errbuf, size_t errbufsz);
 
 /**
+ * Read kernel direction and level for a mapped GPIO row (not SFIO/power).
+ * @return 0 on success, -1 when the line cannot be queried.
+ */
+int hardware_libgpiod_pin_status(const hardware_pin_entry_t *entry, char *mode_out,
+				 size_t mode_sz, char *state_out, size_t state_sz);
+
+/**
  * Override pin table for unit tests (pass NULL to clear).
  * Only available when compiling tests with SHELLCLAW_HARDWARE_LIBGPIOD_TEST.
  */

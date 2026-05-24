@@ -125,6 +125,26 @@ static int test_enabled_rpi_board(void)
 	return 0;
 }
 
+static int test_resolve_i2c_bus(void)
+{
+	const char *path = "/tmp/shellclaw_test_hw_init_i2c.toml";
+	config_t *cfg = NULL;
+
+	unsetenv("SHELLCLAW_BOARD");
+	ASSERT(write_toml(path, "enabled = true\nboard = \"jetson\"\n") == 0);
+	ASSERT(load_cfg(path, &cfg) == 0);
+	ASSERT(hardware_init(cfg) == 0);
+	ASSERT(hardware_resolve_i2c_bus(cfg) == 7);
+	config_free(cfg);
+	ASSERT(write_toml(path, "enabled = true\nboard = \"jetson\"\ni2c_bus = 1\n") == 0);
+	ASSERT(load_cfg(path, &cfg) == 0);
+	ASSERT(hardware_init(cfg) == 0);
+	ASSERT(hardware_resolve_i2c_bus(cfg) == 1);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
 static int test_gpio_test_pin_override(void)
 {
 	const char *path = "/tmp/shellclaw_test_hw_init_pin.toml";
@@ -146,6 +166,7 @@ int main(void)
 	RUN(test_enabled_stub_board());
 	RUN(test_enabled_jetson_board());
 	RUN(test_enabled_rpi_board());
+	RUN(test_resolve_i2c_bus());
 	RUN(test_gpio_test_pin_override());
 	printf("test_hardware_init: all tests passed\n");
 	return 0;
