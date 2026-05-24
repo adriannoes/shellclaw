@@ -266,7 +266,6 @@ static int add_capabilities_inference(cJSON *capabilities, board_id_t board)
 	cJSON *model_entry;
 	cJSON *id_str;
 	cJSON *quant_str;
-	cJSON *mode_str;
 	const manifest_board_profile_t *profile;
 	int i;
 
@@ -282,7 +281,7 @@ static int add_capabilities_inference(cJSON *capabilities, board_id_t board)
 	}
 	cJSON_AddItemToObject(inference, "modes", modes);
 	for (i = 0; i < profile->mode_count; i++) {
-		mode_str = cJSON_CreateString(profile->modes[i]);
+		cJSON *mode_str = cJSON_CreateString(profile->modes[i]);
 		if (!mode_str) {
 			cJSON_DeleteItemFromObject(capabilities, "inference");
 			return -1;
