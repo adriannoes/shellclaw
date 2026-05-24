@@ -6,11 +6,9 @@
 
 #include "hardware/hardware.h"
 #include "hardware/board_detect.h"
-#include "core/config.h"
-#ifdef HAVE_LIBGPIOD
 #include "hardware/boards/jetson_orin_nano.h"
 #include "hardware/boards/rpi_zero2w.h"
-#endif
+#include "core/config.h"
 #include <string.h>
 
 #define GPIO_TEST_PIN_JETSON_DEFAULT 33
@@ -147,4 +145,25 @@ int hardware_default_i2c_bus(board_id_t board)
 	if (board == BOARD_RPI_ZERO2W)
 		return 1;
 	return 1;
+}
+
+int hardware_resolve_i2c_bus(const config_t *cfg)
+{
+	if (cfg != NULL && config_hardware_has_i2c_bus(cfg))
+		return config_hardware_i2c_bus(cfg);
+	return hardware_default_i2c_bus(hardware_active_board());
+}
+
+const hardware_pin_table_t *hardware_active_pin_table(void)
+{
+	switch (hardware_active_board()) {
+	case BOARD_JETSON_ORIN_NANO:
+		return &jetson_orin_nano_pin_table;
+	case BOARD_RPI_ZERO2W:
+		return &rpi_zero2w_pin_table;
+	case BOARD_STUB:
+	case BOARD_UNKNOWN:
+	default:
+		return NULL;
+	}
 }

@@ -44,6 +44,11 @@ int hardware_active_i2c_backend(void);
 int hardware_active_camera_backend(void);
 
 /**
+ * Pin table for the active board (Jetson / RPi), or NULL for stub/unknown.
+ */
+const hardware_pin_table_t *hardware_active_pin_table(void);
+
+/**
  * Default GPIO test pin for the active board when config omits gpio_test_pin.
  * Jetson: physical pin 33; RPi: physical pin 11.
  */
@@ -54,6 +59,11 @@ int hardware_gpio_test_pin(const config_t *cfg);
  * Jetson Orin Nano: 7; Raspberry Pi Zero 2 W: 1; other boards: 1.
  */
 int hardware_default_i2c_bus(board_id_t board);
+
+/**
+ * I2C bus for tools and gateway: config override or per-board default.
+ */
+int hardware_resolve_i2c_bus(const config_t *cfg);
 
 /**
  * No-op stub used when hardware is disabled in config.

@@ -85,6 +85,7 @@ STATIC_O := $(if $(filter 1,$(GATEWAY)),src/gateway/static.o,)
 HTTP_O     := $(if $(filter 1,$(GATEWAY)),src/gateway/http.o,)
 HTTP_LWS_O := $(if $(filter 1,$(GATEWAY)),src/gateway/http_lws.o,)
 ROUTES_O   := $(if $(filter 1,$(GATEWAY)),src/gateway/routes.o,)
+ROUTES_HARDWARE_O := $(if $(filter 1,$(GATEWAY)),src/gateway/routes_hardware.o,)
 WS_O       := $(if $(filter 1,$(GATEWAY)),src/gateway/ws.o,)
 # Tools (Task 7)
 SHELL_O    := src/tools/shell.o
@@ -98,6 +99,8 @@ CONTEXT_GEO_O := src/tools/context_geo.o
 CRYPTO_O := src/crypto/crypto.o
 HARDWARE_STUB_O := src/hardware/hardware_stub.o
 HARDWARE_INIT_O := src/hardware/hardware_init.o
+HARDWARE_GPIO_SNAPSHOT_O := src/hardware/hardware_gpio_snapshot.o
+HARDWARE_TEGRASTATS_O := src/hardware/hardware_tegrastats.o
 HARDWARE_TOOLS_O := src/tools/hardware_tools.o src/tools/hardware_tools_helpers.o src/tools/hardware_tools_gpio.o src/tools/hardware_tools_i2c.o
 BOARD_DETECT_O := src/hardware/board_detect.o
 HARDWARE_LIBGPIOD_O := $(if $(filter 1,$(LIBGPIOD)),src/hardware/hardware_libgpiod.o,)
@@ -136,8 +139,8 @@ VENDOR_OBJS := $(TOML_O) $(SQLITE3_O) $(CJSON_O)
 OBJS := $(CORE_OBJS) $(VENDOR_OBJS)
 PROVIDER_OBJS := $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O)
 CHANNEL_OBJS := $(CHANNEL_COMMON_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_DISCORD_O) $(DISCORD_HELPERS_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O)
-GATEWAY_OBJS := $(AUTH_O) $(STATIC_O) $(HTTP_O) $(HTTP_LWS_O) $(ROUTES_O) $(WS_O) $(RATE_LIMIT_O)
-TOOL_OBJS := $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CONTEXT_O) $(CONTEXT_CACHE_O) $(CONTEXT_HTTP_O) $(CONTEXT_GEO_O) $(CRYPTO_O) $(HARDWARE_STUB_O) $(HARDWARE_INIT_O) $(HARDWARE_TOOLS_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CRON_O) $(ASAP_INVOKE_O)
+GATEWAY_OBJS := $(AUTH_O) $(STATIC_O) $(HTTP_O) $(HTTP_LWS_O) $(ROUTES_O) $(ROUTES_HARDWARE_O) $(WS_O) $(RATE_LIMIT_O)
+TOOL_OBJS := $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CONTEXT_O) $(CONTEXT_CACHE_O) $(CONTEXT_HTTP_O) $(CONTEXT_GEO_O) $(CRYPTO_O) $(HARDWARE_STUB_O) $(HARDWARE_INIT_O) $(HARDWARE_GPIO_SNAPSHOT_O) $(HARDWARE_TEGRASTATS_O) $(HARDWARE_TOOLS_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CRON_O) $(ASAP_INVOKE_O)
 ASAP_OBJS := $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SERVER_O) $(ASAP_LOG_O)
 SANDBOX_OBJS := $(SANDBOX_O) $(ALLOWLIST_O)
 SHELLCLAW_OBJS := $(OBJS) $(PROVIDER_OBJS) $(CHANNEL_OBJS) $(GATEWAY_OBJS) $(ASAP_OBJS) $(TOOL_OBJS) $(SANDBOX_OBJS)
@@ -263,7 +266,7 @@ WS_TEST_O := src/gateway/ws_test.o
 $(WS_TEST_O): src/gateway/ws.c src/gateway/ws.h
 	$(CC) $(CFLAGS) $(INC) -DSHELLCLAW_WS_TEST -pthread -c -o $@ src/gateway/ws.c
 
-src/gateway/ui_assets.h: web/index.html web/css/style.css web/js/app.js scripts/embed_ui.sh
+src/gateway/ui_assets.h: web/index.html web/hardware.html web/css/style.css web/js/dashboardView.js web/js/app.js web/js/hardwareView.js scripts/embed_ui.sh
 	@mkdir -p src/gateway
 	@chmod +x scripts/embed_ui.sh
 	./scripts/embed_ui.sh
@@ -305,8 +308,11 @@ $(HTTP_O): src/gateway/http.c src/gateway/http.h src/gateway/http_lws.h src/gate
 $(HTTP_LWS_O): src/gateway/http_lws.c src/gateway/http_lws.h src/gateway/routes.h src/gateway/auth.h src/gateway/static.h src/gateway/ws.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -pthread -c -o $@ src/gateway/http_lws.c
 
-$(ROUTES_O): src/gateway/routes.c src/gateway/routes.h src/gateway/http_lws.h src/gateway/auth.h src/gateway/rate_limit.h src/tools/context.h src/asap/manifest.h src/asap/envelope.h src/asap/server.h src/asap/log.h src/core/config.h src/core/memory.h src/core/skill.h src/providers/provider.h src/channels/channel.h src/tools/cron.h
+$(ROUTES_O): src/gateway/routes.c src/gateway/routes.h src/gateway/routes_hardware.h src/gateway/http_lws.h src/gateway/auth.h src/gateway/rate_limit.h src/tools/context.h src/asap/manifest.h src/asap/envelope.h src/asap/server.h src/asap/log.h src/core/config.h src/core/memory.h src/core/skill.h src/providers/provider.h src/channels/channel.h src/tools/cron.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -pthread -c -o $@ src/gateway/routes.c
+
+$(ROUTES_HARDWARE_O): src/gateway/routes_hardware.c src/gateway/routes_hardware.h src/gateway/routes.h src/gateway/http_lws.h src/hardware/hardware.h src/hardware/hardware_gpio_snapshot.h src/hardware/hardware_tegrastats.h src/hardware/board_detect.h src/core/config.h
+	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -pthread -c -o $@ src/gateway/routes_hardware.c
 
 $(WS_O): src/gateway/ws.c src/gateway/ws.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -c -o $@ src/gateway/ws.c
@@ -330,8 +336,14 @@ $(FILE_O): src/tools/file.c src/tools/tool.h src/tools/file.h src/core/config.h
 $(REGISTRY_O): src/tools/registry.c src/tools/tool.h src/tools/shell.h src/tools/web_search.h src/tools/file.h src/tools/context.h src/tools/asap_invoke.h src/tools/hardware_tools.h src/hardware/hardware.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/tools/registry.c
 
-$(HARDWARE_INIT_O): src/hardware/hardware_init.c src/hardware/hardware.h src/hardware/board_detect.h src/core/config.h
+$(HARDWARE_INIT_O): src/hardware/hardware_init.c src/hardware/hardware.h src/hardware/board_detect.h src/hardware/boards/jetson_orin_nano.h src/hardware/boards/rpi_zero2w.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/hardware_init.c
+
+$(HARDWARE_GPIO_SNAPSHOT_O): src/hardware/hardware_gpio_snapshot.c src/hardware/hardware_gpio_snapshot.h src/hardware/hardware.h src/hardware/board_detect.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/hardware_gpio_snapshot.c
+
+$(HARDWARE_TEGRASTATS_O): src/hardware/hardware_tegrastats.c src/hardware/hardware_tegrastats.h vendor/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/hardware/hardware_tegrastats.c
 
 $(HARDWARE_TOOLS_O): src/tools/hardware_tools.c src/tools/hardware_tools_helpers.c src/tools/hardware_tools_gpio.c src/tools/hardware_tools_i2c.c src/tools/hardware_tools.h src/tools/hardware_tools_internal.h src/tools/tool.h src/core/config.h src/hardware/hardware.h src/hardware/board_detect.h vendor/cJSON/cJSON.h
 	$(CC) $(CFLAGS) $(INC) -c -o src/tools/hardware_tools.o src/tools/hardware_tools.c
@@ -476,6 +488,14 @@ test_hardware_init: tests/test_hardware_init.c $(HARDWARE_INIT_O) $(HARDWARE_STU
 	@mkdir -p $(BINDIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_hardware_init.c $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
 
+test_hardware_gpio_snapshot: tests/test_hardware_gpio_snapshot.c $(HARDWARE_GPIO_SNAPSHOT_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_hardware_gpio_snapshot.c $(HARDWARE_GPIO_SNAPSHOT_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
+
+test_hardware_tegrastats: tests/test_hardware_tegrastats.c $(HARDWARE_TEGRASTATS_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_hardware_tegrastats.c $(HARDWARE_TEGRASTATS_O) $(CJSON_O) $(LDLIBS)
+
 test_registry: tests/test_registry.c $(REGISTRY_O) $(HARDWARE_TOOLS_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
 	@mkdir -p $(BINDIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_registry.c $(REGISTRY_O) $(HARDWARE_TOOLS_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
@@ -598,6 +618,15 @@ test_gateway_http: shellclaw tests/test_gateway_http.c $(AUTH_O) $(CONFIG_O) $(T
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_GATEWAY -o $(BINDIR)/$@ tests/test_gateway_http.c $(AUTH_O) $(CRYPTO_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
+test_routes_hardware: tests/test_routes_hardware.c tests/test_routes_json_stub.c $(ROUTES_HARDWARE_O) $(HARDWARE_GPIO_SNAPSHOT_O) $(HARDWARE_TEGRASTATS_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+	@if [ "$(GATEWAY)" != "1" ]; then \
+		if [ "$(CI)" = "true" ]; then echo "test_routes_hardware: GATEWAY=0 in CI — install libwebsockets-dev"; exit 1; fi; \
+		echo "test_routes_hardware: skipped (GATEWAY=0)"; exit 0; \
+	fi
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -DSHELLCLAW_GATEWAY -o $(BINDIR)/$@ tests/test_routes_hardware.c tests/test_routes_json_stub.c $(ROUTES_HARDWARE_O) $(HARDWARE_GPIO_SNAPSHOT_O) $(HARDWARE_TEGRASTATS_O) $(HARDWARE_INIT_O) $(HARDWARE_STUB_O) $(BOARD_DETECT_O) $(HARDWARE_I2C_O) $(HARDWARE_CAMERA_O) $(HARDWARE_LIBGPIOD_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) $(LIBGPIOD_LDLIBS) -pthread
+	$(DSYM_SCRIPT)
+
 test_static: tests/test_static.c src/gateway/ui_assets.h src/gateway/static.o
 	@mkdir -p $(BINDIR)
 	./scripts/embed_ui.sh
@@ -651,7 +680,7 @@ static:
 		--suppress=variableScope:src/hardware/hardware_camera.c \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_board_detect test_hardware_libgpiod test_hardware_i2c test_hardware_camera test_pin_tables test_hardware_init test_hardware_tools test_registry test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_daemon_smoke test_update_script test_install_script test_web_dashboard
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_board_detect test_hardware_libgpiod test_hardware_i2c test_hardware_camera test_pin_tables test_hardware_init test_hardware_gpio_snapshot test_hardware_tegrastats test_hardware_tools test_registry test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_daemon_smoke test_update_script test_install_script test_web_dashboard test_routes_hardware
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -679,6 +708,8 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_hardware_camera
 	$(BINDIR)/test_pin_tables
 	$(BINDIR)/test_hardware_init
+	$(BINDIR)/test_hardware_gpio_snapshot
+	$(BINDIR)/test_hardware_tegrastats
 	$(BINDIR)/test_hardware_tools
 	$(BINDIR)/test_registry
 	$(BINDIR)/test_ws
@@ -691,14 +722,16 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(MAKE) test_web_dashboard
 	$(MAKE) test_auth && $(BINDIR)/test_auth
 	$(MAKE) test_static && $(BINDIR)/test_static
-	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) test_gateway_http && $(BINDIR)/test_gateway_http; \
+	@if [ "$(GATEWAY)" = "1" ]; then \
+		$(BINDIR)/test_routes_hardware && \
+		$(MAKE) test_gateway_http && $(BINDIR)/test_gateway_http; \
 	elif [ "$(CI)" = "true" ]; then echo "GATEWAY=0 in CI — install libwebsockets-dev"; exit 1; fi
 
 COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage GATEWAY=0 test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_board_detect test_hardware_libgpiod test_hardware_i2c test_hardware_camera test_pin_tables test_hardware_init test_hardware_tools test_registry test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_auth
+	$(MAKE) BUILD=coverage GATEWAY=0 test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_board_detect test_hardware_libgpiod test_hardware_i2c test_hardware_camera test_pin_tables test_hardware_init test_hardware_gpio_snapshot test_hardware_tegrastats test_hardware_tools test_registry test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_auth
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage GATEWAY=1 shellclaw test_gateway_http test_static; fi
 	@chmod +x scripts/coverage.sh
 	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh

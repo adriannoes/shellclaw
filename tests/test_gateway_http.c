@@ -24,6 +24,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#ifndef INADDR_LOOPBACK
+#define INADDR_LOOPBACK ((in_addr_t)0x7f000001)
+#endif
+
 #define ASSERT(c) do { if (!(c)) { fprintf(stderr, "FAIL: %s:%d %s\n", __FILE__, __LINE__, #c); return 1; } } while (0)
 
 static char g_test_home[64];
@@ -580,6 +584,115 @@ static int test_api_asap_log(const char *token)
 	return 0;
 }
 
+static int test_api_hardware_board_401(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get(gw_url("/api/hardware/board"), &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
+static int test_api_hardware_gpio_401(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get(gw_url("/api/hardware/gpio"), &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
+static int test_api_hardware_board_get(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(gw_url("/api/hardware/board"), token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	{
+		cJSON *root = cJSON_Parse(body);
+		cJSON *id;
+		cJSON *backends;
+		ASSERT(root != NULL);
+		id = cJSON_GetObjectItem(root, "id");
+		backends = cJSON_GetObjectItem(root, "backends");
+		ASSERT(id != NULL && cJSON_IsString(id));
+		ASSERT(backends != NULL && cJSON_IsObject(backends));
+		cJSON_Delete(root);
+	}
+	free(body);
+	return 0;
+}
+
+static int test_api_hardware_gpio_get(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(gw_url("/api/hardware/gpio"), token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200 || code == 503);
+	free(body);
+	return 0;
+}
+
+static int test_api_hardware_sensors_deferred(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(gw_url("/api/hardware/sensors"), token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	{
+		cJSON *root = cJSON_Parse(body);
+		cJSON *st;
+		cJSON *msg;
+		ASSERT(root != NULL);
+		st = cJSON_GetObjectItem(root, "status");
+		msg = cJSON_GetObjectItem(root, "message");
+		ASSERT(st != NULL && cJSON_IsString(st) &&
+		       strcmp(st->valuestring, "deferred_v12") == 0);
+		ASSERT(msg != NULL && cJSON_IsString(msg) &&
+		       strcmp(msg->valuestring,
+			      "sensor decoders ship in v1.2 (Phase 7)") == 0);
+		cJSON_Delete(root);
+	}
+	free(body);
+	return 0;
+}
+
+static int test_api_hardware_camera_deferred(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_post_auth(gw_url("/api/hardware/camera/snapshot"), token, "{}", &code,
+			       &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	{
+		cJSON *root = cJSON_Parse(body);
+		cJSON *st;
+		cJSON *msg;
+		ASSERT(root != NULL);
+		st = cJSON_GetObjectItem(root, "status");
+		msg = cJSON_GetObjectItem(root, "message");
+		ASSERT(st != NULL && cJSON_IsString(st) &&
+		       strcmp(st->valuestring, "deferred_v12") == 0);
+		ASSERT(msg != NULL && cJSON_IsString(msg) &&
+		       strcmp(msg->valuestring,
+			      "camera image return path ships in v1.2 (Phase 7)") == 0);
+		cJSON_Delete(root);
+	}
+	free(body);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -678,6 +791,14 @@ int main(int argc, char **argv)
 	if (test_asap_invalid_body() != 0) { fprintf(stderr, "test_asap_invalid_body failed\n"); failed++; }
 	if (test_asap_missing_fields() != 0) { fprintf(stderr, "test_asap_missing_fields failed\n"); failed++; }
 	if (test_api_asap_log_401() != 0) { fprintf(stderr, "test_api_asap_log_401 failed\n"); failed++; }
+	if (test_api_hardware_board_401() != 0) {
+		fprintf(stderr, "test_api_hardware_board_401 failed\n");
+		failed++;
+	}
+	if (test_api_hardware_gpio_401() != 0) {
+		fprintf(stderr, "test_api_hardware_gpio_401 failed\n");
+		failed++;
+	}
 	if (token[0]) {
 		if (test_api_config_get(token) != 0) { fprintf(stderr, "test_api_config_get failed\n"); failed++; }
 		if (test_api_status_get(token) != 0) { fprintf(stderr, "test_api_status_get failed\n"); failed++; }
@@ -689,6 +810,22 @@ int main(int argc, char **argv)
 		if (test_api_cron_create_delete(token) != 0) { fprintf(stderr, "test_api_cron_create_delete failed\n"); failed++; }
 		if (test_api_sessions(token) != 0) { fprintf(stderr, "test_api_sessions failed\n"); failed++; }
 		if (test_api_asap_log(token) != 0) { fprintf(stderr, "test_api_asap_log failed\n"); failed++; }
+		if (test_api_hardware_board_get(token) != 0) {
+			fprintf(stderr, "test_api_hardware_board_get failed\n");
+			failed++;
+		}
+		if (test_api_hardware_gpio_get(token) != 0) {
+			fprintf(stderr, "test_api_hardware_gpio_get failed\n");
+			failed++;
+		}
+		if (test_api_hardware_sensors_deferred(token) != 0) {
+			fprintf(stderr, "test_api_hardware_sensors_deferred failed\n");
+			failed++;
+		}
+		if (test_api_hardware_camera_deferred(token) != 0) {
+			fprintf(stderr, "test_api_hardware_camera_deferred failed\n");
+			failed++;
+		}
 	}
 	kill(pid, SIGTERM);
 	waitpid(pid, NULL, 0);

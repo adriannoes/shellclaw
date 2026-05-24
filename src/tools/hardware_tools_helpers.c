@@ -129,11 +129,7 @@ int hw_tools_resolve_i2c_bus(cJSON *root, int *bus_out, char *result_buf, size_t
 		*bus_out = item->valueint;
 		return 0;
 	}
-	if (g_hw_cfg != NULL && config_hardware_has_i2c_bus(g_hw_cfg)) {
-		*bus_out = config_hardware_i2c_bus(g_hw_cfg);
-		return 0;
-	}
-	*bus_out = hardware_default_i2c_bus(hardware_active_board());
+	*bus_out = hardware_resolve_i2c_bus(g_hw_cfg);
 	return 0;
 }
 

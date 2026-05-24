@@ -9,6 +9,8 @@
 #include "hardware/pin_table.h"
 #include <stddef.h>
 
+struct gpiod_chip;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -47,6 +49,40 @@ int hardware_gpio_write(int pin, int value, char *errbuf, size_t errbufsz);
  * Configure pin direction. @p mode is "input" or "output".
  */
 int hardware_gpio_mode(int pin, const char *mode, char *errbuf, size_t errbufsz);
+
+/** Max gpiochip devices opened during one GPIO snapshot pass. */
+#define HARDWARE_LIBGPIOD_SNAPSHOT_MAX_CHIPS 8
+
+/**
+ * Chip cache for batched read-only GPIO snapshot (one mutex hold per fill).
+ * Only touch via #hardware_libgpiod_snapshot_begin / _pin_status / _end.
+ */
+typedef struct hardware_libgpiod_snapshot_ctx {
+	struct gpiod_chip *chips[HARDWARE_LIBGPIOD_SNAPSHOT_MAX_CHIPS];
+	unsigned int chip_nums[HARDWARE_LIBGPIOD_SNAPSHOT_MAX_CHIPS];
+	int chip_count;
+	int locked;
+} hardware_libgpiod_snapshot_ctx_t;
+
+/**
+ * Begin a batched read-only snapshot (acquires GPIO mutex until end).
+ * @return 0 on success, -1 when the backend is not ready.
+ */
+int hardware_libgpiod_snapshot_begin(hardware_libgpiod_snapshot_ctx_t *ctx);
+
+/**
+ * Read kernel direction and level for one GPIO row during a snapshot pass.
+ * Output lines report mode @c "output" with an empty @p state_out (JSON null).
+ * Input lines are requested as input only to read high/low.
+ * @return 0 on success, -1 when the line cannot be queried.
+ */
+int hardware_libgpiod_snapshot_pin_status(hardware_libgpiod_snapshot_ctx_t *ctx,
+					  const hardware_pin_entry_t *entry,
+					  char *mode_out, size_t mode_sz, char *state_out,
+					  size_t state_sz);
+
+/** Close cached chips and release the GPIO mutex from snapshot_begin. */
+void hardware_libgpiod_snapshot_end(hardware_libgpiod_snapshot_ctx_t *ctx);
 
 /**
  * Override pin table for unit tests (pass NULL to clear).
