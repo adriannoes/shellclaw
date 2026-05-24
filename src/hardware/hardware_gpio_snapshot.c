@@ -35,7 +35,12 @@ static int is_power_row(const hardware_pin_entry_t *entry)
 	       entry->line_num >= HARDWARE_PWR_LINE_BASE;
 }
 
+#ifdef HAVE_LIBGPIOD
+static int append_pin_object(cJSON *pins_array, const hardware_pin_entry_t *entry,
+			     hardware_libgpiod_snapshot_ctx_t *snap_ctx)
+#else
 static int append_pin_object(cJSON *pins_array, const hardware_pin_entry_t *entry)
+#endif
 {
 	cJSON *obj;
 	const char *mode = "unavailable";
@@ -59,11 +64,16 @@ static int append_pin_object(cJSON *pins_array, const hardware_pin_entry_t *entr
 		cJSON_AddItemToObject(obj, "state", cJSON_CreateNull());
 	} else if (hardware_active_gpio_backend() == HARDWARE_GPIO_BACKEND_LIBGPIOD) {
 #ifdef HAVE_LIBGPIOD
-		if (hardware_libgpiod_is_available() &&
-		    hardware_libgpiod_pin_status(entry, mode_buf, sizeof(mode_buf),
-						 state_buf, sizeof(state_buf)) == 0) {
+		if (snap_ctx != NULL &&
+		    hardware_libgpiod_snapshot_pin_status(snap_ctx, entry, mode_buf,
+							  sizeof(mode_buf), state_buf,
+							  sizeof(state_buf)) == 0) {
 			cJSON_AddItemToObject(obj, "mode", cJSON_CreateString(mode_buf));
-			cJSON_AddItemToObject(obj, "state", cJSON_CreateString(state_buf));
+			if (state_buf[0] != '\0')
+				cJSON_AddItemToObject(obj, "state",
+						      cJSON_CreateString(state_buf));
+			else
+				cJSON_AddItemToObject(obj, "state", cJSON_CreateNull());
 		} else
 #endif
 		{
@@ -82,6 +92,10 @@ int hardware_gpio_snapshot_fill(cJSON *pins_array, char *errbuf, size_t errbufsz
 {
 	const hardware_pin_table_t *table;
 	int physical;
+#ifdef HAVE_LIBGPIOD
+	hardware_libgpiod_snapshot_ctx_t snap_ctx;
+	int snap_active = 0;
+#endif
 
 	if (!pins_array) {
 		if (errbuf && errbufsz > 0)
@@ -96,20 +110,41 @@ int hardware_gpio_snapshot_fill(cJSON *pins_array, char *errbuf, size_t errbufsz
 				 board_name(hardware_active_board()));
 		return -1;
 	}
+#ifdef HAVE_LIBGPIOD
+	if (hardware_active_gpio_backend() == HARDWARE_GPIO_BACKEND_LIBGPIOD &&
+	    hardware_libgpiod_is_available() &&
+	    hardware_libgpiod_snapshot_begin(&snap_ctx) == 0)
+		snap_active = 1;
+#endif
 	for (physical = 1; physical <= HARDWARE_HEADER_PIN_COUNT; physical++) {
 		const hardware_pin_entry_t *entry = find_physical_pin(table, physical);
 		if (!entry) {
+#ifdef HAVE_LIBGPIOD
+			if (snap_active)
+				hardware_libgpiod_snapshot_end(&snap_ctx);
+#endif
 			if (errbuf && errbufsz > 0)
 				snprintf(errbuf, errbufsz,
 					 "gpio snapshot: missing header pin %d in table",
 					 physical);
 			return -1;
 		}
+#ifdef HAVE_LIBGPIOD
+		if (append_pin_object(pins_array, entry, snap_active ? &snap_ctx : NULL) !=
+		    0) {
+			if (snap_active)
+				hardware_libgpiod_snapshot_end(&snap_ctx);
+#else
 		if (append_pin_object(pins_array, entry) != 0) {
+#endif
 			if (errbuf && errbufsz > 0)
 				snprintf(errbuf, errbufsz, "gpio snapshot: out of memory");
 			return -1;
 		}
 	}
+#ifdef HAVE_LIBGPIOD
+	if (snap_active)
+		hardware_libgpiod_snapshot_end(&snap_ctx);
+#endif
 	return 0;
 }

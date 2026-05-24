@@ -101,6 +101,38 @@ static int gpio_mockup_present(void)
 	return strstr(label, "mockup") != NULL;
 }
 
+static int test_mockup_snapshot_output_readonly(void)
+{
+	static const hardware_pin_entry_t pins[] = {
+		{ 1, 0, 0, 0, "mock0" },
+	};
+	static const hardware_pin_table_t table = {
+		.entries = pins,
+		.count = 1,
+	};
+	hardware_libgpiod_snapshot_ctx_t ctx;
+	char errbuf[128];
+	char mode[16];
+	char state[8];
+	int value = 0;
+
+	if (!gpio_mockup_present())
+		return 0;
+	ASSERT(hardware_libgpiod_init(&table) == 0);
+	ASSERT(hardware_gpio_mode(1, "output", errbuf, sizeof(errbuf)) == 0);
+	ASSERT(hardware_gpio_write(1, 1, errbuf, sizeof(errbuf)) == 0);
+	ASSERT(hardware_libgpiod_snapshot_begin(&ctx) == 0);
+	ASSERT(hardware_libgpiod_snapshot_pin_status(&ctx, &pins[0], mode, sizeof(mode),
+						      state, sizeof(state)) == 0);
+	ASSERT(strcmp(mode, "output") == 0);
+	ASSERT(state[0] == '\0');
+	hardware_libgpiod_snapshot_end(&ctx);
+	ASSERT(hardware_gpio_read(1, &value, errbuf, sizeof(errbuf)) == 0);
+	ASSERT(value == 1);
+	hardware_libgpiod_shutdown();
+	return 0;
+}
+
 static int test_mockup_read_write(void)
 {
 	static const hardware_pin_entry_t pins[] = {
@@ -139,6 +171,7 @@ int main(void)
 	RUN(test_sfio_rejection());
 	RUN(test_gpio_validation_and_non_sfio_paths());
 	RUN(test_mockup_read_write());
+	RUN(test_mockup_snapshot_output_readonly());
 #endif
 	printf("test_hardware_libgpiod: all tests passed\n");
 	return 0;
