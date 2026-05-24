@@ -16,6 +16,7 @@
 #include "hardware/board_detect.h"
 #include "cJSON.h"
 #include <dirent.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -411,6 +412,87 @@ static int test_jcs_canonicalize_sorted_keys(void)
 	return 0;
 }
 
+static int test_jcs_rejects_invalid_inputs(void)
+{
+	cJSON *nan_node;
+	unsigned char *out = NULL;
+	size_t out_len = 0;
+
+	ASSERT(jcs_canonicalize(NULL, &out, &out_len) == -1);
+	nan_node = cJSON_CreateNumber(NAN);
+	ASSERT(nan_node != NULL);
+	ASSERT(jcs_canonicalize(nan_node, &out, &out_len) == -1);
+	cJSON_Delete(nan_node);
+	return 0;
+}
+
+static int test_jcs_escapes_primitives_and_arrays(void)
+{
+	cJSON *root;
+	unsigned char *out;
+	size_t out_len;
+	const char *expect =
+	    "{\"arr\":[null,true,false,42,1.5,\"a\\tb\\nc\"],\"empty\":{}}";
+
+	root = cJSON_Parse(
+	    "{\"empty\":{},\"arr\":[null,true,false,42,1.5,\"a\\tb\\nc\"]}");
+	ASSERT(root != NULL);
+	ASSERT(jcs_canonicalize(root, &out, &out_len) == 0);
+	ASSERT(out_len == strlen(expect));
+	ASSERT(memcmp(out, expect, out_len) == 0);
+	free(out);
+	cJSON_Delete(root);
+	return 0;
+}
+
+static int test_manifest_hardware_io_from_config(void)
+{
+	FILE *f = fopen(TMP_CONFIG, "w");
+	config_t *cfg = NULL;
+	char errbuf[256];
+	char *json;
+	cJSON *parsed;
+	cJSON *io;
+	cJSON *entry;
+
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[asap]\npublic_base_url = \"https://edge.example/\"\n");
+	fprintf(f, "[hardware]\nclass = \"custom_class\"\nmodel = \"custom_model\"\n");
+	fprintf(f, "io = [\"spi\", \"i2c\"]\n");
+	fclose(f);
+	ASSERT(config_load(TMP_CONFIG, &cfg, errbuf, sizeof(errbuf)) == 0);
+	json = manifest_build_json(cfg);
+	ASSERT(json != NULL);
+	ASSERT(strstr(json, "https://edge.example/asap") != NULL);
+	ASSERT(strstr(json, "custom_class") != NULL);
+	ASSERT(strstr(json, "spi") != NULL);
+	parsed = cJSON_Parse(json);
+	ASSERT(parsed != NULL);
+	io = cJSON_GetObjectItem(
+	    cJSON_GetObjectItem(cJSON_GetObjectItem(parsed, "capabilities"), "hardware"),
+	    "io");
+	ASSERT(io != NULL && cJSON_GetArraySize(io) == 2);
+	entry = cJSON_GetArrayItem(io, 0);
+	ASSERT(entry != NULL && strcmp(entry->valuestring, "spi") == 0);
+	cJSON_Delete(parsed);
+	free(json);
+	config_free(cfg);
+	unlink(TMP_CONFIG);
+	return 0;
+}
+
+static int test_manifest_build_signed_without_keys(void)
+{
+	char *signed_json;
+
+	manifest_keys_reset_for_test();
+	manifest_keys_set_dir_for_test(NULL);
+	signed_json = manifest_build_signed_json(NULL);
+	ASSERT(signed_json == NULL);
+	return 0;
+}
+
 static int test_signed_manifest_structure_and_verify(void)
 {
 	char dir[128];
@@ -694,6 +776,22 @@ int main(int argc, char **argv)
 	}
 	if (test_jcs_canonicalize_sorted_keys() != 0) {
 		fprintf(stderr, "test_jcs_canonicalize_sorted_keys failed\n");
+		failed++;
+	}
+	if (test_jcs_rejects_invalid_inputs() != 0) {
+		fprintf(stderr, "test_jcs_rejects_invalid_inputs failed\n");
+		failed++;
+	}
+	if (test_jcs_escapes_primitives_and_arrays() != 0) {
+		fprintf(stderr, "test_jcs_escapes_primitives_and_arrays failed\n");
+		failed++;
+	}
+	if (test_manifest_hardware_io_from_config() != 0) {
+		fprintf(stderr, "test_manifest_hardware_io_from_config failed\n");
+		failed++;
+	}
+	if (test_manifest_build_signed_without_keys() != 0) {
+		fprintf(stderr, "test_manifest_build_signed_without_keys failed\n");
 		failed++;
 	}
 	if (test_signed_manifest_structure_and_verify() != 0) {
