@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/routes.h"
+#include "gateway/routes_hardware.h"
 #include "gateway/auth.h"
 #include "gateway/rate_limit.h"
 #include "channels/channel.h"
@@ -828,6 +829,8 @@ int dispatch_route(http_server_ctx_t *ctx, struct lws *wsi, int method,
 		else json_error(buf, size, status, 405, "Method not allowed");
 		return 0;
 	}
+	if (routes_hardware_dispatch(ctx, wsi, method, uri, uri_len, buf, size, status))
+		return 0;
 	if (path_eq(uri, uri_len, "/asap") && method == HTTP_POST) {
 		char client_ip[64] = {0};
 		lws_get_peer_simple(wsi, client_ip, sizeof client_ip);
