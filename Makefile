@@ -48,7 +48,10 @@ endif
 # Vendor code (toml, sqlite3, cJSON) may emit warnings with GCC on Linux; exclude -Werror
 VENDOR_CFLAGS := $(filter-out -Werror,$(CFLAGS))
 # TweetNaCl 20140427 (unmodified): sign-compare in FOR() and sigma[] string init on Clang/GCC -Wextra
-TWEETNACL_CFLAGS := $(CFLAGS) -Wno-error=sign-compare -Wno-error=unterminated-string-initialization
+# -Wunterminated-string-initialization exists on newer Clang/GCC only (not Ubuntu CI GCC 13).
+TWEETNACL_WNO_UNTERM := $(shell $(CC) -Wno-error=unterminated-string-initialization -E -x c -o /dev/null /dev/null 2>&1 \
+	| grep -qE 'unrecognized|unknown option|no option' || echo -Wno-error=unterminated-string-initialization)
+TWEETNACL_CFLAGS := $(CFLAGS) -Wno-error=sign-compare $(TWEETNACL_WNO_UNTERM)
 
 # Core
 CONFIG_O  := src/core/config.o
