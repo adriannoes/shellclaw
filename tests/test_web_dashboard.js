@@ -84,6 +84,12 @@ assert(rpiHtml.indexOf('data-hw-panel="camera"') !== -1, 'camera panel');
 assert(rpiHtml.indexOf('Coming in v1.2 (Phase 7)') !== -1, 'deferred note');
 assert(hw.deferredPlaceholderMarkup('Sensors').indexOf('hw-deferred-card') !== -1, 'deferred card');
 
+const boardPanel = hw.boardPanelMarkup(jetsonBoard, { bus: 7, addresses: [0x76] });
+assert(boardPanel.indexOf('hw-i2c-scan') !== -1, 'board panel scan button');
+assert(boardPanel.indexOf('0x76') !== -1, 'board panel i2c addresses');
+assert(hw.boardPanelMarkup(jetsonBoard, { loading: true }).indexOf('Scanning I2C') !== -1,
+  'board panel i2c loading');
+
 async function testHardwareFetchMocks() {
   const responses = {
     '/api/hardware/board': jetsonBoard,

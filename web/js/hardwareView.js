@@ -116,6 +116,8 @@
         '<p class="dash-kv"><span class="dash-label">Addresses</span> ' +
         (hex ? escapeHtml(hex) : '<span class="status-note">none detected</span>') +
         '</p>';
+    } else if (i2c && i2c.loading) {
+      i2cBlock = '<p class="status-note">Scanning I2C bus…</p>';
     } else if (i2c && i2c.error) {
       i2cBlock = '<p class="status-warn">' + escapeHtml(i2c.error) + '</p>';
     }
@@ -128,6 +130,7 @@
       '<table class="dash-table"><thead><tr><th>Subsystem</th><th>Backend</th></tr></thead><tbody>' +
       (rows || '<tr><td colspan="2" class="status-note">No backend info.</td></tr>') +
       '</tbody></table>' +
+      '<p><button type="button" class="hw-i2c-scan">Scan I2C</button></p>' +
       i2cBlock
     );
   }
@@ -226,18 +229,32 @@
     );
   }
 
-  function bindTabs(root) {
+  function activateTab(root, tabId) {
     const tabs = root.querySelectorAll('.hw-tab');
     const panels = root.querySelectorAll('.hw-panel');
+    tabs.forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-hw-tab') === tabId);
+    });
+    panels.forEach(function (p) {
+      p.classList.toggle('active', p.getAttribute('data-hw-panel') === tabId);
+    });
+  }
+
+  function bindTabs(root, onSelect) {
+    const tabs = root.querySelectorAll('.hw-tab');
     tabs.forEach(function (btn) {
       btn.addEventListener('click', function () {
         const id = btn.getAttribute('data-hw-tab');
-        tabs.forEach(function (b) { b.classList.toggle('active', b === btn); });
-        panels.forEach(function (p) {
-          p.classList.toggle('active', p.getAttribute('data-hw-panel') === id);
-        });
+        activateTab(root, id);
+        if (onSelect) onSelect(id);
       });
     });
+  }
+
+  function bindI2cScanButton(root, onScan) {
+    const btn = root.querySelector('.hw-i2c-scan');
+    if (!btn || !onScan) return;
+    btn.addEventListener('click', function () { onScan(); });
   }
 
   function createApi() {
@@ -275,9 +292,6 @@
       const tasks = [
         apiClient.api('GET', '/api/hardware/gpio').catch(function (e) {
           return { pins: [], error: String(e) };
-        }),
-        apiClient.api('GET', '/api/hardware/i2c-scan').catch(function (e) {
-          return { error: String(e) };
         })
       ];
       if (showGpu) {
@@ -288,10 +302,15 @@
       return Promise.all(tasks).then(function (parts) {
         let idx = 0;
         const gpio = parts[idx++];
-        const i2c = parts[idx++];
         const gpu = showGpu ? parts[idx++] : { available: false };
-        return { board: board, boardId: boardId, gpio: gpio, i2c: i2c, gpu: gpu };
+        return { board: board, boardId: boardId, gpio: gpio, gpu: gpu };
       });
+    });
+  }
+
+  function fetchI2cScan(apiClient) {
+    return apiClient.api('GET', '/api/hardware/i2c-scan').catch(function (e) {
+      return { error: String(e) };
     });
   }
 
@@ -304,16 +323,48 @@
       return;
     }
     let timer = null;
+    let lastData = null;
+    let lastError = null;
+    let i2cData = null;
+    let i2cLoading = false;
     function paint(data, loadError) {
+      const active = root.querySelector('.hw-tab.active');
+      const activeTabId = active ? active.getAttribute('data-hw-tab') : null;
+      lastData = data;
+      lastError = loadError;
       root.innerHTML = hardwarePageMarkup({
         board: data && data.board,
         boardId: data && data.boardId,
         gpio: data && data.gpio,
-        i2c: data && data.i2c,
+        i2c: i2cData,
         gpu: data && data.gpu,
         loadError: loadError
       });
-      bindTabs(root);
+      bindTabs(root, function (tabId) {
+        if (tabId === 'board') loadI2cIfNeeded();
+      });
+      bindI2cScanButton(root, function () { loadI2c(true); });
+      if (activeTabId) {
+        activateTab(root, activeTabId);
+        if (activeTabId === 'board') loadI2cIfNeeded();
+      } else {
+        loadI2cIfNeeded();
+      }
+    }
+    function loadI2c(force) {
+      if (i2cLoading && !force) return;
+      i2cLoading = true;
+      i2cData = { loading: true };
+      if (lastData) paint(lastData, lastError);
+      fetchI2cScan(apiClient).then(function (result) {
+        i2cData = result;
+        i2cLoading = false;
+        if (lastData) paint(lastData, lastError);
+      });
+    }
+    function loadI2cIfNeeded() {
+      if (i2cData != null || i2cLoading) return;
+      loadI2c(false);
     }
     function refresh() {
       loadHardwareData(apiClient)
