@@ -67,11 +67,19 @@ hot_reload = true
 
 [asap]
 enabled = false
-agent_urn = "urn:asap:agent:shellclaw-home-01"
-agent_name = "ShellClaw Home Agent"
+agent_urn = "urn:asap:agent:shellclaw"
+agent_name = "ShellClaw"
+description = "C-native edge-AI ASAP agent on NVIDIA Jetson Orin Nano Super (CUDA, GPIO, I2C)."
+# Production: set to your HTTPS origin before marketplace registration (example.com is dev-only).
+public_base_url = "https://shellclaw.example.com"
 registry_url = "https://raw.githubusercontent.com/adriannoes/asap-protocol/main/registry.json"
 
+[asap.skill_descriptions]
+# assistant = "Override text for manifest capabilities.skills[].description"
+
 [hardware]
-gpio_enabled = false
-i2c_enabled = false
-camera_enabled = false
+enabled = true
+# board = "jetson"  # optional override; auto-detect when unset
+class = "edge_accelerator"
+model = "jetson_orin_nano_super_8gb"
+io = ["gpio", "i2c"]
