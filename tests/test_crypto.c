@@ -152,6 +152,27 @@ static int test_ed25519_empty_message_sign(void)
 	return 0;
 }
 
+static int test_base64_roundtrip_and_rejects(void)
+{
+	const uint8_t raw[] = { 0x00U, 0xffU, 0x10U, 0x20U };
+	char enc[32];
+	uint8_t dec[8];
+	int n;
+
+	ASSERT(crypto_base64_encode(raw, sizeof(raw), enc, sizeof(enc)) > 0);
+	ASSERT(strcmp(enc, "AP8QIA==") == 0);
+	n = crypto_base64_decode(enc, dec, sizeof(dec));
+	ASSERT(n == (int)sizeof(raw));
+	ASSERT(memcmp(dec, raw, sizeof(raw)) == 0);
+	ASSERT(crypto_base64_encode(NULL, 1U, enc, sizeof(enc)) == -1);
+	ASSERT(crypto_base64_encode(raw, sizeof(raw), NULL, sizeof(enc)) == -1);
+	ASSERT(crypto_base64_encode(raw, sizeof(raw), enc, 4U) == -1);
+	ASSERT(crypto_base64_decode("AP8", dec, sizeof(dec)) == -1);
+	ASSERT(crypto_base64_decode("AP8!IA==", dec, sizeof(dec)) == -1);
+	ASSERT(crypto_base64_decode(NULL, dec, sizeof(dec)) == -1);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_read_urandom());
@@ -162,6 +183,7 @@ int main(void)
 	RUN(test_ed25519_rfc8032_vector2());
 	RUN(test_ed25519_keypair_fails_without_rng());
 	RUN(test_ed25519_empty_message_sign());
+	RUN(test_base64_roundtrip_and_rejects());
 	printf("test_crypto: all tests passed\n");
 	return 0;
 }

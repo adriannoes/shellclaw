@@ -786,6 +786,82 @@ static int test_manifest_keys_rejects_invalid_pub_size(void)
 	return 0;
 }
 
+static int test_manifest_keys_rejects_invalid_priv_size(void)
+{
+	char dir[128];
+	char priv_path[512];
+	char pub_path[512];
+	FILE *f;
+	unsigned char buf[CRYPTO_ED25519_PUBLIC_KEY_SIZE];
+
+	ASSERT(test_runner_mkdtemp_path("shellclaw_manifest_bad_priv", dir, sizeof(dir)) == 0);
+	snprintf(priv_path, sizeof(priv_path), "%s/ed25519.priv", dir);
+	snprintf(pub_path, sizeof(pub_path), "%s/ed25519.pub", dir);
+	f = fopen(priv_path, "wb");
+	ASSERT(f);
+	ASSERT(fwrite(buf, 1, 4, f) == 4);
+	fclose(f);
+	ASSERT(chmod(priv_path, 0600) == 0);
+	f = fopen(pub_path, "wb");
+	ASSERT(f);
+	ASSERT(fwrite(buf, 1, sizeof(buf), f) == sizeof(buf));
+	fclose(f);
+	manifest_keys_set_dir_for_test(dir);
+	ASSERT(manifest_keys_load() != 0);
+	manifest_keys_reset_for_test();
+	manifest_keys_set_dir_for_test(NULL);
+	{
+		char cmd[512];
+		snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", dir);
+		(void)system(cmd);
+	}
+	return 0;
+}
+
+static int test_manifest_keys_rotate_rejects_loose_priv(void)
+{
+	char dir[128];
+	char priv_path[512];
+	char err[256];
+
+	ASSERT(test_runner_mkdtemp_path("shellclaw_manifest_rotate_perm", dir, sizeof(dir)) == 0);
+	snprintf(priv_path, sizeof(priv_path), "%s/ed25519.priv", dir);
+	manifest_keys_set_dir_for_test(dir);
+	crypto_test_set_randombytes_seed(MANIFEST_KEYS_TEST_SEED);
+	ASSERT(manifest_keys_load() == 0);
+	crypto_test_clear_randombytes_seed();
+	ASSERT(chmod(priv_path, 0644) == 0);
+	manifest_keys_reset_for_test();
+	ASSERT(manifest_keys_rotate(err, sizeof(err)) != 0);
+	ASSERT(strstr(err, "permissions") != NULL);
+	manifest_keys_reset_for_test();
+	manifest_keys_set_dir_for_test(NULL);
+	{
+		char cmd[512];
+		snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", dir);
+		(void)system(cmd);
+	}
+	return 0;
+}
+
+static int test_manifest_keys_rejects_overlong_home(void)
+{
+	char home[520];
+	char cmd[576];
+
+	memset(home, 'h', 507U);
+	home[507U] = '\0';
+	setenv("SHELLCLAW_HOME", home, 1);
+	manifest_keys_reset_for_test();
+	manifest_keys_set_dir_for_test(NULL);
+	ASSERT(manifest_keys_load() != 0);
+	manifest_keys_reset_for_test();
+	unsetenv("SHELLCLAW_HOME");
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", home);
+	(void)system(cmd);
+	return 0;
+}
+
 static int find_one_backup(const char *keys_dir, const char *prefix, char *out, size_t out_sz)
 {
 	DIR *d;
@@ -1054,6 +1130,18 @@ int main(int argc, char **argv)
 	}
 	if (test_manifest_keys_rejects_invalid_pub_size() != 0) {
 		fprintf(stderr, "test_manifest_keys_rejects_invalid_pub_size failed\n");
+		failed++;
+	}
+	if (test_manifest_keys_rejects_invalid_priv_size() != 0) {
+		fprintf(stderr, "test_manifest_keys_rejects_invalid_priv_size failed\n");
+		failed++;
+	}
+	if (test_manifest_keys_rotate_rejects_loose_priv() != 0) {
+		fprintf(stderr, "test_manifest_keys_rotate_rejects_loose_priv failed\n");
+		failed++;
+	}
+	if (test_manifest_keys_rejects_overlong_home() != 0) {
+		fprintf(stderr, "test_manifest_keys_rejects_overlong_home failed\n");
 		failed++;
 	}
 	if (test_signed_manifest_structure_and_verify() != 0) {
