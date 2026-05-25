@@ -556,6 +556,236 @@ static int test_signed_manifest_structure_and_verify(void)
 	return 0;
 }
 
+
+static int test_jcs_string_escape_coverage(void)
+{
+	cJSON *root;
+	unsigned char *out;
+	size_t out_len;
+	const char *expect =
+	    "{\"ctl\":\"\\u0001\",\"q\":\"\\\"\\\\\\b\\f\\r\\t\"}";
+
+	root = cJSON_Parse("{\"q\":\"\\\"\\\\\\b\\f\\r\\t\",\"ctl\":\"\\u0001\"}");
+	ASSERT(root != NULL);
+	ASSERT(jcs_canonicalize(root, &out, &out_len) == 0);
+	ASSERT(out_len == strlen(expect));
+	ASSERT(memcmp(out, expect, out_len) == 0);
+	free(out);
+	cJSON_Delete(root);
+	return 0;
+}
+
+static int test_jcs_rejects_non_finite_number(void)
+{
+	cJSON *root;
+	unsigned char *out = NULL;
+	size_t out_len = 0;
+
+	root = cJSON_CreateNumber(INFINITY);
+	ASSERT(root != NULL);
+	ASSERT(jcs_canonicalize(root, &out, &out_len) == -1);
+	cJSON_Delete(root);
+	return 0;
+}
+
+static int test_manifest_board_from_config(void)
+{
+	FILE *f = fopen(TMP_CONFIG, "w");
+	config_t *cfg = NULL;
+	char errbuf[256];
+	char *json;
+	cJSON *parsed;
+
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[hardware]\nboard = \"jetson\"\n");
+	fclose(f);
+	ASSERT(config_load(TMP_CONFIG, &cfg, errbuf, sizeof(errbuf)) == 0);
+	json = manifest_build_json(cfg);
+	ASSERT(json != NULL);
+	ASSERT(strstr(json, "local_cuda") != NULL);
+	ASSERT(strstr(json, "jetson_orin_nano_super_8gb") != NULL);
+	parsed = cJSON_Parse(json);
+	ASSERT(parsed != NULL);
+	ASSERT(assert_manifest_shape(parsed, "urn:asap:agent:shellclaw", SHELLCLAW_RELEASE_VERSION,
+		"edge_accelerator", "jetson_orin_nano_super_8gb", "cloud",
+		"Phi-3-mini-4k-instruct-Q4_K_M") == 0);
+	cJSON_Delete(parsed);
+	free(json);
+	config_free(cfg);
+	unlink(TMP_CONFIG);
+	return 0;
+}
+
+static int test_manifest_builtin_and_unknown_skill_descriptions(void)
+{
+	const char *dir = "/tmp/shellclaw_test_manifest_skills_builtin";
+	char cmd[256];
+	FILE *sf;
+	config_t *cfg = NULL;
+	char errbuf[256];
+	char *json;
+	cJSON *parsed;
+	cJSON *skills;
+	int i;
+
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\" && mkdir -p \"%s\"", dir, dir);
+	ASSERT(system(cmd) == 0);
+	sf = fopen("/tmp/shellclaw_test_manifest_skills_builtin/assistant.md", "w");
+	ASSERT(sf);
+	fprintf(sf, "\n");
+	fclose(sf);
+	sf = fopen("/tmp/shellclaw_test_manifest_skills_builtin/gpio_control.md", "w");
+	ASSERT(sf);
+	fprintf(sf, "\n");
+	fclose(sf);
+	sf = fopen("/tmp/shellclaw_test_manifest_skills_builtin/edge_only_skill.md", "w");
+	ASSERT(sf);
+	fprintf(sf, "\n");
+	fclose(sf);
+	sf = fopen(TMP_CONFIG, "w");
+	ASSERT(sf);
+	fprintf(sf, "[agent]\nmodel = \"test\"\n[skills]\ndir = \"%s\"\n", dir);
+	fclose(sf);
+	ASSERT(config_load(TMP_CONFIG, &cfg, errbuf, sizeof(errbuf)) == 0);
+	json = manifest_build_json(cfg);
+	ASSERT(json != NULL);
+	parsed = cJSON_Parse(json);
+	ASSERT(parsed != NULL);
+	skills = cJSON_GetObjectItem(cJSON_GetObjectItem(parsed, "capabilities"), "skills");
+	ASSERT(skills != NULL);
+	for (i = 0; i < cJSON_GetArraySize(skills); i++) {
+		cJSON *s = cJSON_GetArrayItem(skills, i);
+		const char *sid = cJSON_GetObjectItem(s, "id")->valuestring;
+		const char *desc = cJSON_GetObjectItem(s, "description")->valuestring;
+		if (strcmp(sid, "assistant") == 0)
+			ASSERT(strcmp(desc, "General assistant on edge hardware") == 0);
+		if (strcmp(sid, "gpio_control") == 0)
+			ASSERT(strcmp(desc, "GPIO pin control") == 0);
+		if (strcmp(sid, "edge_only_skill") == 0)
+			ASSERT(strcmp(desc, "edge_only_skill") == 0);
+	}
+	cJSON_Delete(parsed);
+	free(json);
+	config_free(cfg);
+	unlink(TMP_CONFIG);
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", dir);
+	(void)system(cmd);
+	return 0;
+}
+
+static int test_manifest_hardware_skips_empty_io_entries(void)
+{
+	FILE *f = fopen(TMP_CONFIG, "w");
+	config_t *cfg = NULL;
+	char errbuf[256];
+	char *json;
+	cJSON *parsed;
+	cJSON *io;
+
+	ASSERT(f);
+	fprintf(f, "[agent]\nmodel = \"test\"\n");
+	fprintf(f, "[hardware]\nio = [\"\", \"spi\"]\n");
+	fclose(f);
+	ASSERT(config_load(TMP_CONFIG, &cfg, errbuf, sizeof(errbuf)) == 0);
+	json = manifest_build_json(cfg);
+	ASSERT(json != NULL);
+	parsed = cJSON_Parse(json);
+	ASSERT(parsed != NULL);
+	io = cJSON_GetObjectItem(
+	    cJSON_GetObjectItem(cJSON_GetObjectItem(parsed, "capabilities"), "hardware"),
+	    "io");
+	ASSERT(io != NULL && cJSON_GetArraySize(io) == 1);
+	ASSERT(strcmp(cJSON_GetArrayItem(io, 0)->valuestring, "spi") == 0);
+	cJSON_Delete(parsed);
+	free(json);
+	config_free(cfg);
+	unlink(TMP_CONFIG);
+	return 0;
+}
+
+static int test_manifest_keys_uses_shellclaw_home(void)
+{
+	char dir[128];
+	char priv_path[512];
+	char pub_path[512];
+	struct stat st;
+	char cmd[512];
+
+	ASSERT(test_runner_mkdtemp_path("shellclaw_manifest_home", dir, sizeof(dir)) == 0);
+	setenv("SHELLCLAW_HOME", dir, 1);
+	manifest_keys_reset_for_test();
+	manifest_keys_set_dir_for_test(NULL);
+	crypto_test_set_randombytes_seed(MANIFEST_KEYS_TEST_SEED);
+	ASSERT(manifest_keys_load() == 0);
+	snprintf(priv_path, sizeof(priv_path), "%s/keys/ed25519.priv", dir);
+	snprintf(pub_path, sizeof(pub_path), "%s/keys/ed25519.pub", dir);
+	ASSERT(stat(priv_path, &st) == 0);
+	ASSERT(stat(pub_path, &st) == 0);
+	crypto_test_clear_randombytes_seed();
+	manifest_keys_reset_for_test();
+	unsetenv("SHELLCLAW_HOME");
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", dir);
+	(void)system(cmd);
+	return 0;
+}
+
+
+static int test_manifest_keys_create_rolls_back_on_pub_failure(void)
+{
+	char dir[128];
+	char priv_path[512];
+	char cmd[512];
+
+	ASSERT(test_runner_mkdtemp_path("shellclaw_manifest_pub_fail", dir, sizeof(dir)) == 0);
+	snprintf(priv_path, sizeof(priv_path), "%s/ed25519.priv", dir);
+	manifest_keys_set_dir_for_test(dir);
+	manifest_keys_test_set_fail_pub_write(1);
+	crypto_test_set_randombytes_seed(MANIFEST_KEYS_TEST_SEED);
+	ASSERT(manifest_keys_load() != 0);
+	ASSERT(access(priv_path, F_OK) != 0);
+	crypto_test_clear_randombytes_seed();
+	manifest_keys_reset_for_test();
+	manifest_keys_test_set_fail_pub_write(0);
+	manifest_keys_set_dir_for_test(NULL);
+	snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", dir);
+	(void)system(cmd);
+	return 0;
+}
+
+static int test_manifest_keys_rejects_invalid_pub_size(void)
+{
+	char dir[128];
+	char priv_path[512];
+	char pub_path[512];
+	FILE *f;
+	unsigned char buf[CRYPTO_ED25519_PRIVATE_KEY_SIZE];
+
+	ASSERT(test_runner_mkdtemp_path("shellclaw_manifest_bad_pub", dir, sizeof(dir)) == 0);
+	snprintf(priv_path, sizeof(priv_path), "%s/ed25519.priv", dir);
+	snprintf(pub_path, sizeof(pub_path), "%s/ed25519.pub", dir);
+	memset(buf, 0xcd, sizeof(buf));
+	f = fopen(priv_path, "wb");
+	ASSERT(f);
+	ASSERT(fwrite(buf, 1, sizeof(buf), f) == sizeof(buf));
+	fclose(f);
+	ASSERT(chmod(priv_path, 0600) == 0);
+	f = fopen(pub_path, "wb");
+	ASSERT(f);
+	ASSERT(fwrite(buf, 1, 8, f) == 8);
+	fclose(f);
+	manifest_keys_set_dir_for_test(dir);
+	ASSERT(manifest_keys_load() != 0);
+	manifest_keys_reset_for_test();
+	manifest_keys_set_dir_for_test(NULL);
+	{
+		char cmd[512];
+		snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", dir);
+		(void)system(cmd);
+	}
+	return 0;
+}
+
 static int find_one_backup(const char *keys_dir, const char *prefix, char *out, size_t out_sz)
 {
 	DIR *d;
@@ -792,6 +1022,38 @@ int main(int argc, char **argv)
 	}
 	if (test_manifest_build_signed_without_keys() != 0) {
 		fprintf(stderr, "test_manifest_build_signed_without_keys failed\n");
+		failed++;
+	}
+	if (test_jcs_string_escape_coverage() != 0) {
+		fprintf(stderr, "test_jcs_string_escape_coverage failed\n");
+		failed++;
+	}
+	if (test_jcs_rejects_non_finite_number() != 0) {
+		fprintf(stderr, "test_jcs_rejects_non_finite_number failed\n");
+		failed++;
+	}
+	if (test_manifest_board_from_config() != 0) {
+		fprintf(stderr, "test_manifest_board_from_config failed\n");
+		failed++;
+	}
+	if (test_manifest_builtin_and_unknown_skill_descriptions() != 0) {
+		fprintf(stderr, "test_manifest_builtin_and_unknown_skill_descriptions failed\n");
+		failed++;
+	}
+	if (test_manifest_hardware_skips_empty_io_entries() != 0) {
+		fprintf(stderr, "test_manifest_hardware_skips_empty_io_entries failed\n");
+		failed++;
+	}
+	if (test_manifest_keys_uses_shellclaw_home() != 0) {
+		fprintf(stderr, "test_manifest_keys_uses_shellclaw_home failed\n");
+		failed++;
+	}
+	if (test_manifest_keys_create_rolls_back_on_pub_failure() != 0) {
+		fprintf(stderr, "test_manifest_keys_create_rolls_back_on_pub_failure failed\n");
+		failed++;
+	}
+	if (test_manifest_keys_rejects_invalid_pub_size() != 0) {
+		fprintf(stderr, "test_manifest_keys_rejects_invalid_pub_size failed\n");
 		failed++;
 	}
 	if (test_signed_manifest_structure_and_verify() != 0) {
