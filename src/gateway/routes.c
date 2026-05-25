@@ -630,7 +630,7 @@ static void handle_well_known(http_server_ctx_t *ctx, const char *uri, int uri_l
                              char *buf, size_t size, int *status)
 {
 	if (path_eq(uri, uri_len, "/.well-known/asap/manifest.json")) {
-		char *json = manifest_build_json(ctx ? ctx->cfg : NULL);
+		char *json = manifest_build_signed_json(ctx ? ctx->cfg : NULL);
 		if (!json) {
 			json_error(buf, size, status, 500, "Internal error");
 			return;

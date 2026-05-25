@@ -101,6 +101,16 @@ int config_gateway_allow_bind_all(const config_t *c);
 int config_asap_enabled(const config_t *c);
 const char *config_asap_agent_urn(const config_t *c);
 const char *config_asap_agent_name(const config_t *c);
+/** Short agent description for ASAP manifest (required by upstream schema). */
+const char *config_asap_description(const config_t *c);
+/**
+ * Public HTTP base URL (no trailing path). Manifest builds endpoints.asap as base + "/asap".
+ */
+const char *config_asap_public_base_url(const config_t *c);
+/**
+ * Optional per-skill description override from [asap.skill_descriptions]; NULL if unset.
+ */
+const char *config_asap_skill_description(const config_t *c, const char *skill_id);
 const char *config_asap_registry_url(const config_t *c);
 /**
  * Optional URL for the revoked-agents list (e.g. GET revoked_agents.json).
@@ -132,6 +142,14 @@ int config_hardware_enabled(const config_t *c);
  * NULL or empty string means auto-detect at runtime.
  */
 const char *config_hardware_board(const config_t *c);
+/** Manifest hardware.class override; NULL uses board-specific default at manifest build time. */
+const char *config_hardware_class(const config_t *c);
+/** Manifest hardware.model override; NULL uses board-specific default. */
+const char *config_hardware_model(const config_t *c);
+/** Count of manifest hardware.io strings from [hardware].io; 0 means use board default. */
+int config_hardware_io_count(const config_t *c);
+/** IO capability string at index (e.g. "gpio"); NULL if out of range. */
+const char *config_hardware_io_entry(const config_t *c, int index);
 /** Non-zero when i2c_bus was set in TOML or SHELLCLAW_I2C_BUS; else use per-board default. */
 int config_hardware_has_i2c_bus(const config_t *c);
 int config_hardware_i2c_bus(const config_t *c);

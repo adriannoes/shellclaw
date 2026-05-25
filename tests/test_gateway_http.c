@@ -343,7 +343,11 @@ static int test_manifest(void)
 	ASSERT(r == 0);
 	ASSERT(code == 200);
 	ASSERT(body != NULL);
-	ASSERT(strstr(body, "id") != NULL);
+	ASSERT(strstr(body, "\"manifest\"") != NULL);
+	ASSERT(strstr(body, "\"signature\"") != NULL);
+	ASSERT(strstr(body, "\"trust_level\":\"self-signed\"") != NULL ||
+	       strstr(body, "\"trust_level\": \"self-signed\"") != NULL);
+	ASSERT(strstr(body, "\"public_key\"") != NULL);
 	ASSERT(strstr(body, "urn:asap:agent") != NULL);
 	ASSERT(strstr(body, "skills") != NULL);
 	ASSERT(strstr(body, "endpoints") != NULL);
