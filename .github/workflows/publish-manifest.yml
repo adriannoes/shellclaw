@@ -1,0 +1,78 @@
+# Publish SignedManifest to GitHub Pages on release tags (Phase 5 task 6.1).
+# Target URL: https://<owner>.github.io/<repo>/manifest.json
+name: Publish manifest
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  publish-manifest:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      SHELLCLAW_ASAP_PUBLIC_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libcurl4-openssl-dev libwebsockets-dev libgpiod-dev
+
+      - name: Build shellclaw (gateway)
+        run: make clean && GATEWAY=1 make shellclaw
+        env:
+          CI: true
+
+      - name: Dump live SignedManifest
+        run: |
+          chmod +x scripts/dump_manifest.sh
+          mkdir -p docs
+          ./scripts/dump_manifest.sh -o docs/manifest.json
+          test -s docs/manifest.json
+          : > docs/.nojekyll
+
+      - name: Validate manifest JSON (optional)
+        run: |
+          python3 -c "import json; json.load(open('docs/manifest.json'))"
+          if command -v pip3 >/dev/null 2>&1; then
+            pip3 install --quiet 'asap>=0.1' 2>/dev/null || true
+          fi
+          if python3 -c "from asap.models.entities import Manifest" 2>/dev/null; then
+            python3 - <<'PY'
+import json
+from asap.models.entities import Manifest
+with open("docs/manifest.json") as f:
+    data = json.load(f)
+Manifest.model_validate(data["manifest"])
+print("inner manifest: Pydantic OK")
+PY
+          else
+            echo "asap package not installed; skipped Pydantic validation"
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
