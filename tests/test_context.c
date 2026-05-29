@@ -105,6 +105,8 @@ int main(void)
 		fprintf(stderr, "dbg out1:%.800s\n", out1);
 	CHECK(strstr(out1, "Berlin") != NULL, "Berlin substring");
 	CHECK(strstr(out1, "99.6") != NULL, "hot max temp");
+	CHECK(strstr(out1, "DayX") != NULL, "holiday name from HY_OK stub");
+	CHECK(strstr(out1, "holiday_line") != NULL, "dashboard holiday_line populated");
 
 	tool_context_test_set_http_bodies(GEO_OK, WX_B, HY_OK);
 
@@ -158,6 +160,23 @@ int main(void)
 		CHECK(strstr(snap, "Berlin") != NULL, "snapshot contains Berlin");
 		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
 		free(snap);
+	}
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, "{\"not\":\"forecast\"}", HY_OK);
+	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "execute with bad weather JSON");
+	CHECK(strstr(out1, "open-meteo parse failure") != NULL, "weather parse failure surfaced");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	{
+		char *cold = tool_context_snapshot_json();
+		CHECK(cold != NULL, "cold snapshot alloc");
+		CHECK(strstr(cold, "Dashboard cache empty") != NULL, "cold snapshot hints empty cache");
+		free(cold);
 	}
 
 	tool_context_test_reset();
