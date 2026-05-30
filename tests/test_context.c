@@ -212,6 +212,19 @@ int main(void)
 	      "year-span marks Jan 1 as tomorrow holiday");
 
 	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	{
+		/* 64 bytes fits the snprintf error string but not a full merged context JSON. */
+		char tiny[64];
+		CHECK(tool_context_get()->execute("{}", tiny, sizeof(tiny)) != 0,
+		      "small buffer must fail when payload exceeds capacity");
+		CHECK(strstr(tiny, "get_context payload too large") != NULL,
+		      "small buffer error names oversized payload");
+	}
+
+	tool_context_test_reset();
 
 	curl_global_cleanup();
 	puts("test_context OK");
