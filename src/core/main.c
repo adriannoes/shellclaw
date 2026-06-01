@@ -16,7 +16,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 
-#include "asap/manifest.h"
+#include "asap/manifest_keys.h"
 #include "core/bootstrap.h"
 #include "core/config.h"
 #include "core/daemon.h"

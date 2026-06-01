@@ -38,11 +38,10 @@ jobs:
           GATEWAY: "1"
 
       - name: AddressSanitizer + UBSan
-        run: |
-          make clean
-          CFLAGS="-std=c11 -Wall -Wextra -Werror -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer" \
-          LDFLAGS="-fsanitize=address,undefined" \
-          GATEWAY=1 make test
+        run: make test-sanitize
+        env:
+          CI: true
+          GATEWAY: "1"
 
       - name: Release build
         run: make clean && make release

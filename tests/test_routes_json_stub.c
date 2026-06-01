@@ -3,6 +3,8 @@
  * @brief Minimal json_error/json_print_to_buf for routes_hardware unit tests.
  */
 #include "cJSON.h"
+
+struct lws;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +49,14 @@ void json_error(char *buf, size_t size, int *status, int code, const char *msg)
 		buf[len] = '\0';
 		free(s);
 	}
+}
+
+const char *http_request_bearer_token(struct lws *wsi, char *buf, size_t buf_size)
+{
+	(void)wsi;
+	(void)buf;
+	(void)buf_size;
+	return NULL;
 }
 
 int json_print_to_buf(cJSON *obj, char *buf, size_t size, int *status)

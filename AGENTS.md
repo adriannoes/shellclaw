@@ -9,6 +9,7 @@ ShellClaw is a C99 AI agent for edge hardware (Jetson / Raspberry Pi). Read this
 | Build | `make shellclaw` → `build/shellclaw` |
 | Run all tests | `make test` |
 | Static analysis | `make static` (requires cppcheck) |
+| ASan + UBSan tests | `make test-sanitize` (requires Clang/GCC sanitizer support) |
 | Coverage (core ≥ 80%) | `make coverage` (requires lcov) |
 | Full CI locally | `chmod +x scripts/ci-local.sh && ./scripts/ci-local.sh` (Ubuntu 24.04+; on Mac use `CI=true make test`) |
 | Pre-PR check | `CI=true make clean && CI=true make test` |

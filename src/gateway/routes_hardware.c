@@ -6,6 +6,7 @@
 
 #include "gateway/routes_hardware.h"
 #include "gateway/http_lws.h"
+#include "gateway/uri_match.h"
 #include <string.h>
 #include "gateway/routes.h"
 #include "hardware/hardware.h"
@@ -14,12 +15,6 @@
 #include "hardware/board_detect.h"
 #include "core/config.h"
 #include "cJSON.h"
-
-static int path_eq_local(const char *uri, int uri_len, const char *path)
-{
-	size_t plen = strlen(path);
-	return (uri_len == (int)plen && strncmp(uri, path, plen) == 0);
-}
 
 static const char *board_display_name(board_id_t id)
 {
@@ -234,51 +229,66 @@ static void handle_hardware_gpu(char *buf, size_t size, int *status)
 	cJSON_Delete(root);
 }
 
+typedef void (*hw_get_fn)(const config_t *cfg, char *buf, size_t size, int *status);
+typedef void (*hw_get_fn_no_cfg)(char *buf, size_t size, int *status);
+
+typedef struct {
+	const char *path;
+	int needs_cfg;
+	int post_only;
+	union {
+		hw_get_fn with_cfg;
+		hw_get_fn_no_cfg no_cfg;
+	} get;
+	const char *deferred_msg;
+} hw_route_t;
+
+static void hw_dispatch_get(const hw_route_t *route, const config_t *cfg,
+			    char *buf, size_t size, int *status)
+{
+	if (route->deferred_msg) {
+		handle_hardware_deferred_v12(buf, size, status, route->deferred_msg);
+		return;
+	}
+	if (route->needs_cfg)
+		route->get.with_cfg(cfg, buf, size, status);
+	else
+		route->get.no_cfg(buf, size, status);
+}
+
 int routes_hardware_dispatch(http_server_ctx_t *ctx, struct lws *wsi, int method,
 			     const char *uri, int uri_len, char *buf, size_t size,
 			     int *status)
 {
+	static const hw_route_t routes[] = {
+		{ "/api/hardware/board", 1, 0, { .with_cfg = handle_hardware_board }, NULL },
+		{ "/api/hardware/gpio", 0, 0, { .no_cfg = handle_hardware_gpio }, NULL },
+		{ "/api/hardware/i2c-scan", 1, 0, { .with_cfg = handle_hardware_i2c_scan }, NULL },
+		{ "/api/hardware/gpu", 0, 0, { .no_cfg = handle_hardware_gpu }, NULL },
+		{ "/api/hardware/sensors", 0, 0, { .no_cfg = NULL }, DEFERRED_SENSORS_MSG },
+		{ "/api/hardware/camera/snapshot", 0, 1, { .no_cfg = NULL },
+		  DEFERRED_CAMERA_MSG },
+	};
+	size_t i;
+
 	(void)wsi;
 	if (!ctx || !uri || uri_len <= 0 || !buf || !status)
 		return 0;
-	if (path_eq_local(uri, uri_len, "/api/hardware/board")) {
+	for (i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
+		const hw_route_t *route = &routes[i];
+
+		if (!uri_exact_eq(uri, uri_len, route->path))
+			continue;
+		if (route->post_only) {
+			if (method == HTTP_POST)
+				handle_hardware_deferred_v12(buf, size, status,
+							     route->deferred_msg);
+			else
+				json_error(buf, size, status, 405, "Method not allowed");
+			return 1;
+		}
 		if (method == HTTP_GET)
-			handle_hardware_board(ctx->cfg, buf, size, status);
-		else
-			json_error(buf, size, status, 405, "Method not allowed");
-		return 1;
-	}
-	if (path_eq_local(uri, uri_len, "/api/hardware/gpio")) {
-		if (method == HTTP_GET)
-			handle_hardware_gpio(buf, size, status);
-		else
-			json_error(buf, size, status, 405, "Method not allowed");
-		return 1;
-	}
-	if (path_eq_local(uri, uri_len, "/api/hardware/i2c-scan")) {
-		if (method == HTTP_GET)
-			handle_hardware_i2c_scan(ctx->cfg, buf, size, status);
-		else
-			json_error(buf, size, status, 405, "Method not allowed");
-		return 1;
-	}
-	if (path_eq_local(uri, uri_len, "/api/hardware/gpu")) {
-		if (method == HTTP_GET)
-			handle_hardware_gpu(buf, size, status);
-		else
-			json_error(buf, size, status, 405, "Method not allowed");
-		return 1;
-	}
-	if (path_eq_local(uri, uri_len, "/api/hardware/sensors")) {
-		if (method == HTTP_GET)
-			handle_hardware_deferred_v12(buf, size, status, DEFERRED_SENSORS_MSG);
-		else
-			json_error(buf, size, status, 405, "Method not allowed");
-		return 1;
-	}
-	if (path_eq_local(uri, uri_len, "/api/hardware/camera/snapshot")) {
-		if (method == HTTP_POST)
-			handle_hardware_deferred_v12(buf, size, status, DEFERRED_CAMERA_MSG);
+			hw_dispatch_get(route, ctx->cfg, buf, size, status);
 		else
 			json_error(buf, size, status, 405, "Method not allowed");
 		return 1;

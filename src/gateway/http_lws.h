@@ -50,6 +50,12 @@ int http_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user,
                 void *in, size_t len);
 
+/**
+ * Extract Bearer token from HTTP headers into @p buf.
+ * @return Pointer into @p buf past "Bearer ", or NULL if missing/invalid.
+ */
+const char *http_request_bearer_token(struct lws *wsi, char *buf, size_t buf_size);
+
 #ifdef __cplusplus
 }
 #endif

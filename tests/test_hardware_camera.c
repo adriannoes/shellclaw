@@ -161,6 +161,99 @@ static int test_unsafe_output_path_rejected(void)
 	return 0;
 }
 
+static int test_output_path_traversal_rejected(void)
+{
+	char result[256];
+	char err[128];
+	RUN(setup_mock());
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 75, 0,
+				       0, "/tmp/../etc/passwd.jpg", result,
+				       sizeof(result), err, sizeof(err)) == -1);
+	ASSERT(strstr(err, "unsafe output path") != NULL);
+	ASSERT(s_spawn_called == 0);
+	teardown();
+	return 0;
+}
+
+static int test_resolution_injection_rejected(void)
+{
+	char result[256];
+	char err[128];
+	RUN(setup_mock());
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480;rm -rf /",
+				       75, 0, 0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == -1);
+	ASSERT(strstr(err, "resolution") != NULL);
+	ASSERT(s_spawn_called == 0);
+	teardown();
+	return 0;
+}
+
+static int test_camera_type_injection_rejected(void)
+{
+	char result[256];
+	char err[128];
+	RUN(setup_mock());
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi|sh", "640x480", 75, 0,
+				       0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == -1);
+	ASSERT(strstr(err, "camera_type") != NULL);
+	ASSERT(s_spawn_called == 0);
+	teardown();
+	return 0;
+}
+
+/** sensor_id is int 0-3; argv must use numeric sensor-id= only (no shell tokens). */
+static int test_sensor_id_injection_rejected(void)
+{
+	char result[256];
+	char err[128];
+	const char *const *argv;
+	int i;
+	int found_sensor = 0;
+	RUN(setup_mock());
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 75, 2,
+				       0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == 0);
+	argv = hardware_camera_last_argv_for_test();
+	ASSERT(argv != NULL);
+	for (i = 0; argv[i] != NULL; i++) {
+		if (strncmp(argv[i], "sensor-id=", 10) == 0) {
+			found_sensor = 1;
+			ASSERT(strcmp(argv[i], "sensor-id=2") == 0);
+			ASSERT(argv_has_shell_metachar(argv[i]) == 0);
+		}
+	}
+	ASSERT(found_sensor == 1);
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 75, 4,
+				       0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == -1);
+	ASSERT(strstr(err, "sensor_id") != NULL);
+	teardown();
+	return 0;
+}
+
+static int test_no_shell_invocation(void)
+{
+	const char *const *argv;
+	int i;
+	char result[256];
+	char err[128];
+	RUN(setup_mock());
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 75, 0,
+				       0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == 0);
+	argv = hardware_camera_last_argv_for_test();
+	ASSERT(argv != NULL);
+	for (i = 0; argv[i] != NULL; i++) {
+		ASSERT(strcmp(argv[i], "sh") != 0);
+		ASSERT(strcmp(argv[i], "/bin/sh") != 0);
+		ASSERT(strstr(argv[i], " -c ") == NULL);
+	}
+	teardown();
+	return 0;
+}
+
 static int test_jetson_csi_argv_no_shell_metacharacters(void)
 {
 	char result[256];
@@ -256,6 +349,11 @@ int main(void)
 	RUN(test_stub_board_unavailable());
 	RUN(test_capture_argument_validation());
 	RUN(test_unsafe_output_path_rejected());
+	RUN(test_output_path_traversal_rejected());
+	RUN(test_resolution_injection_rejected());
+	RUN(test_camera_type_injection_rejected());
+	RUN(test_sensor_id_injection_rejected());
+	RUN(test_no_shell_invocation());
 	RUN(test_jetson_csi_argv_no_shell_metacharacters());
 	RUN(test_spawn_failure_unavailable());
 	RUN(test_usb_backend_argv());
