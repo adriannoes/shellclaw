@@ -147,6 +147,20 @@ int main(void)
 	CHECK(strstr(out_fallback, "geolocation unavailable") != NULL,
 	      "expects geo error text");
 
+	/* Buffer too small for serialized payload must fail closed (no truncation). */
+	{
+		char tiny[32];
+
+		tool_context_test_reset();
+		tool_context_test_set_unix_time(t_march9_2027());
+		tool_context_set_config(NULL);
+		tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+		CHECK(tool_context_get()->execute("{}", tiny, sizeof(tiny)) == -1,
+		      "execute with tiny buffer returns error");
+		CHECK(strstr(tiny, "payload too large for buffer") != NULL,
+		      "tiny buffer gets explicit overflow error");
+	}
+
 	tool_context_test_reset();
 	tool_context_test_set_unix_time(t_march9_2027());
 	tool_context_set_config(NULL);
