@@ -6,6 +6,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/auth.h"
+#include "gateway/rate_limit.h"
 #include "core/config.h"
 #include "cJSON.h"
 #include <curl/curl.h>
@@ -64,6 +65,8 @@ static int pick_ephemeral_port(void)
 }
 
 static int http_get(const char *url, long *code_out, char **body_out);
+static int http_post_raw(const char *url, const void *data, size_t data_len,
+			 const char *content_length, long *code_out, char **body_out);
 static int http_post(const char *url, const char *json, long *code_out, char **body_out);
 
 static int wait_for_health(int max_attempts)
@@ -118,13 +121,25 @@ static int http_get(const char *url, long *code_out, char **body_out)
 
 static int http_post(const char *url, const char *json, long *code_out, char **body_out)
 {
+	return http_post_raw(url, json, json ? strlen(json) : 0, NULL, code_out, body_out);
+}
+
+static int http_post_raw(const char *url, const void *data, size_t data_len,
+			 const char *content_length, long *code_out, char **body_out)
+{
 	CURL *curl = curl_easy_init();
+	char cl_hdr[64];
 	if (!curl) return -1;
 	*body_out = NULL;
 	struct curl_slist *headers = NULL;
 	headers = curl_slist_append(headers, "Content-Type: application/json");
+	if (content_length && content_length[0] != '\0') {
+		snprintf(cl_hdr, sizeof(cl_hdr), "Content-Length: %s", content_length);
+		headers = curl_slist_append(headers, cl_hdr);
+	}
 	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)data_len);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
@@ -352,6 +367,43 @@ static int test_manifest(void)
 	ASSERT(strstr(body, "skills") != NULL);
 	ASSERT(strstr(body, "endpoints") != NULL);
 	free(body);
+	return 0;
+}
+
+static int test_manifest_rejects_loose_priv(void)
+{
+	long code;
+	char *body = NULL;
+	char priv_path[512];
+	int r;
+
+	ASSERT(test_manifest() == 0);
+	snprintf(priv_path, sizeof(priv_path), "%s/.shellclaw/keys/ed25519.priv",
+		 g_test_home);
+	ASSERT(chmod(priv_path, 0777) == 0);
+	body = NULL;
+	r = http_get(gw_url("/.well-known/asap/manifest.json"), &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 500);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "Signing key unavailable") != NULL);
+	ASSERT(strstr(body, g_test_home) == NULL);
+	ASSERT(strstr(body, "ed25519") == NULL);
+	free(body);
+	return 0;
+}
+
+static int test_asap_body_over_max(void)
+{
+	long code;
+	char *body = NULL;
+	const char payload[] = "{}";
+	int r = http_post_raw(gw_url("/asap"), payload, sizeof(payload) - 1, "1000001",
+			      &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 413);
+	if (body)
+		free(body);
 	return 0;
 }
 
@@ -670,6 +722,17 @@ static int test_api_hardware_sensors_deferred(const char *token)
 	return 0;
 }
 
+static int test_api_hardware_camera_snapshot_401(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_post(gw_url("/api/hardware/camera/snapshot"), "{}", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
 static int test_api_hardware_camera_deferred(const char *token)
 {
 	long code;
@@ -791,7 +854,15 @@ int main(int argc, char **argv)
 	if (test_api_status_401() != 0) { fprintf(stderr, "test_api_status_401 failed\n"); failed++; }
 	if (test_api_context_snapshot_401() != 0) { fprintf(stderr, "test_api_context_snapshot_401 failed\n"); failed++; }
 	if (test_manifest() != 0) { fprintf(stderr, "test_manifest failed\n"); failed++; }
+	if (test_manifest_rejects_loose_priv() != 0) {
+		fprintf(stderr, "test_manifest_rejects_loose_priv failed\n");
+		failed++;
+	}
 	if (test_health_wellknown() != 0) { fprintf(stderr, "test_health_wellknown failed\n"); failed++; }
+	if (test_asap_body_over_max() != 0) {
+		fprintf(stderr, "test_asap_body_over_max failed\n");
+		failed++;
+	}
 	if (test_asap_invalid_body() != 0) { fprintf(stderr, "test_asap_invalid_body failed\n"); failed++; }
 	if (test_asap_missing_fields() != 0) { fprintf(stderr, "test_asap_missing_fields failed\n"); failed++; }
 	if (test_api_asap_log_401() != 0) { fprintf(stderr, "test_api_asap_log_401 failed\n"); failed++; }
@@ -801,6 +872,10 @@ int main(int argc, char **argv)
 	}
 	if (test_api_hardware_gpio_401() != 0) {
 		fprintf(stderr, "test_api_hardware_gpio_401 failed\n");
+		failed++;
+	}
+	if (test_api_hardware_camera_snapshot_401() != 0) {
+		fprintf(stderr, "test_api_hardware_camera_snapshot_401 failed\n");
 		failed++;
 	}
 	if (token[0]) {

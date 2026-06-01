@@ -16,11 +16,8 @@ echo "==> clean + test (CI=true, -Werror, libgpiod present)"
 make clean && make test
 echo "==> clean + test without libgpiod (stub GPIO fallback)"
 make clean && LIBGPIOD=0 make test
-echo "==> AddressSanitizer + UBSan"
-make clean
-CFLAGS="-std=c11 -Wall -Wextra -Werror -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer" \
-LDFLAGS="-fsanitize=address,undefined" CC="${CC:-cc}" \
-make test
+echo "==> AddressSanitizer + UBSan (make test-sanitize)"
+make test-sanitize
 echo "==> release build"
 make clean && make release
 size=$(stat -f%z build/shellclaw 2>/dev/null || stat -c%s build/shellclaw)

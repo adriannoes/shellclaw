@@ -66,6 +66,8 @@ static int path_chars_safe(const char *path)
 	const char *p;
 	if (!path || path[0] == '\0')
 		return 0;
+	if (strstr(path, "..") != NULL)
+		return 0;
 	for (p = path; *p; p++) {
 		unsigned char c = (unsigned char)*p;
 		if (c == ';' || c == '|' || c == '&' || c == '$' || c == '`' ||
@@ -87,18 +89,28 @@ static int parse_resolution(const char *resolution, unsigned int *w, unsigned in
 	unsigned int width = 0;
 	unsigned int height = 0;
 	int n;
+	int consumed = 0;
 	if (!resolution || resolution[0] == '\0') {
 		set_err(errbuf, errbufsz, "camera: missing resolution");
 		return -1;
 	}
-	n = sscanf(resolution, "%ux%u", &width, &height);
-	if (n != 2 || width == 0 || height == 0 || width > 4096u || height > 4096u) {
+	n = sscanf(resolution, "%ux%u%n", &width, &height, &consumed);
+	if (n != 2 || width == 0 || height == 0 || width > 4096u || height > 4096u ||
+	    resolution[consumed] != '\0') {
 		set_err(errbuf, errbufsz, "camera: invalid resolution (expected WxH)");
 		return -1;
 	}
 	*w = width;
 	*h = height;
 	return 0;
+}
+
+static int camera_type_allowed(const char *camera_type)
+{
+	if (!camera_type || camera_type[0] == '\0')
+		return 1;
+	return strcmp(camera_type, "auto") == 0 || strcmp(camera_type, "csi") == 0 ||
+	       strcmp(camera_type, "usb") == 0;
 }
 
 static int camera_type_is_usb(const char *camera_type)
@@ -322,23 +334,16 @@ int hardware_camera_is_available(void)
 	return s_camera_ready ? 1 : 0;
 }
 
-int hardware_camera_capture(board_id_t board, const char *camera_type,
-			    const char *resolution, int quality, int sensor_id,
-			    int video_index, const char *output_path, char *result_path,
-			    size_t result_pathsz, char *errbuf, size_t errbufsz)
+static int validate_capture_inputs(board_id_t board, const char *camera_type,
+				   const char *resolution, int quality, int sensor_id,
+				   int video_index, char *result_path, size_t result_pathsz,
+				   unsigned int *width_out, unsigned int *height_out,
+				   camera_cli_kind_t *kind_out, char *errbuf, size_t errbufsz)
 {
-	char *argv[HARDWARE_CAMERA_ARGV_MAX];
-	char arg0[ARG_BUF_SZ];
-	char arg1[CAPS_BUF_SZ];
-	char arg2[ARG_BUF_SZ];
-	char rpi_wbuf[16];
-	char rpi_hbuf[16];
-	char out_path[256];
 	unsigned int width = 0;
 	unsigned int height = 0;
 	camera_cli_kind_t kind;
 	const char *prog;
-	(void)quality;
 
 	if (!s_camera_ready) {
 		set_err(errbuf, errbufsz, "camera: backend not initialized");
@@ -360,9 +365,12 @@ int hardware_camera_capture(board_id_t board, const char *camera_type,
 		set_err(errbuf, errbufsz, "camera: video_index must be 0-99");
 		return -1;
 	}
+	if (!camera_type_allowed(camera_type)) {
+		set_err(errbuf, errbufsz, "camera: invalid camera_type");
+		return -1;
+	}
 	if (parse_resolution(resolution, &width, &height, errbuf, errbufsz) != 0)
 		return -1;
-
 	kind = resolve_cli(board, camera_type);
 	if (kind == CAMERA_CLI_NONE) {
 		set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
@@ -373,18 +381,41 @@ int hardware_camera_capture(board_id_t board, const char *camera_type,
 		set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
 		return -1;
 	}
-	(void)prog;
+	*width_out = width;
+	*height_out = height;
+	*kind_out = kind;
+	return 0;
+}
 
+static int prepare_capture_output_path(const char *output_path, char *out_path,
+				       size_t out_pathsz, char *errbuf, size_t errbufsz)
+{
 	if (output_path && output_path[0] != '\0') {
 		if (!path_chars_safe(output_path)) {
 			set_err(errbuf, errbufsz, "camera: unsafe output path");
 			return -1;
 		}
-		snprintf(out_path, sizeof(out_path), "%s", output_path);
-	} else if (make_temp_output(out_path, sizeof(out_path)) != 0) {
+		snprintf(out_path, out_pathsz, "%s", output_path);
+		return 0;
+	}
+	if (make_temp_output(out_path, out_pathsz) != 0) {
 		set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
 		return -1;
 	}
+	return 0;
+}
+
+static int build_argv_and_run(camera_cli_kind_t kind, unsigned int width,
+			      unsigned int height, int sensor_id, int video_index,
+			      const char *out_path, char *result_path, size_t result_pathsz,
+			      char *errbuf, size_t errbufsz)
+{
+	char *argv[HARDWARE_CAMERA_ARGV_MAX];
+	char arg0[ARG_BUF_SZ];
+	char arg1[CAPS_BUF_SZ];
+	char arg2[ARG_BUF_SZ];
+	char rpi_wbuf[16];
+	char rpi_hbuf[16];
 
 	memset(argv, 0, sizeof(argv));
 	if (kind == CAMERA_CLI_JETSON_CSI) {
@@ -404,7 +435,6 @@ int hardware_camera_capture(board_id_t board, const char *camera_type,
 		set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
 		return -1;
 	}
-
 	if (run_cli(argv, errbuf, errbufsz) != 0)
 		return -1;
 	if (!output_jpeg_valid(out_path)) {
@@ -413,4 +443,25 @@ int hardware_camera_capture(board_id_t board, const char *camera_type,
 	}
 	snprintf(result_path, result_pathsz, "%s", out_path);
 	return 0;
+}
+
+int hardware_camera_capture(board_id_t board, const char *camera_type,
+			    const char *resolution, int quality, int sensor_id,
+			    int video_index, const char *output_path, char *result_path,
+			    size_t result_pathsz, char *errbuf, size_t errbufsz)
+{
+	char out_path[256];
+	unsigned int width = 0;
+	unsigned int height = 0;
+	camera_cli_kind_t kind = CAMERA_CLI_NONE;
+
+	if (validate_capture_inputs(board, camera_type, resolution, quality, sensor_id,
+				    video_index, result_path, result_pathsz, &width, &height,
+				    &kind, errbuf, errbufsz) != 0)
+		return -1;
+	if (prepare_capture_output_path(output_path, out_path, sizeof(out_path), errbuf,
+					errbufsz) != 0)
+		return -1;
+	return build_argv_and_run(kind, width, height, sensor_id, video_index, out_path,
+				  result_path, result_pathsz, errbuf, errbufsz);
 }
