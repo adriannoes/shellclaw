@@ -151,6 +151,18 @@ int main(void)
 	tool_context_test_set_unix_time(t_march9_2027());
 	tool_context_set_config(NULL);
 	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	{
+		char tiny[32];
+		CHECK(tool_context_get()->execute("{}", tiny, sizeof(tiny)) == -1,
+		      "tiny buffer must fail");
+		CHECK(strstr(tiny, "payload too large") != NULL,
+		      "expects payload too large error");
+	}
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
 	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "snapshot priming exec");
 	{
 		char *snap = tool_context_snapshot_json();
