@@ -305,6 +305,17 @@ static int test_api_config_401(void)
 	return 0;
 }
 
+static int test_api_config_invalid_bearer_401(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(gw_url("/api/config"), "not-a-valid-token", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
 static int test_asap_invalid_body(void)
 {
 	long code;
@@ -671,6 +682,10 @@ int main(int argc, char **argv)
 		failed++;
 	}
 	if (test_api_config_401() != 0) { fprintf(stderr, "test_api_config_401 failed\n"); failed++; }
+	if (test_api_config_invalid_bearer_401() != 0) {
+		fprintf(stderr, "test_api_config_invalid_bearer_401 failed\n");
+		failed++;
+	}
 	if (test_api_status_401() != 0) { fprintf(stderr, "test_api_status_401 failed\n"); failed++; }
 	if (test_api_context_snapshot_401() != 0) { fprintf(stderr, "test_api_context_snapshot_401 failed\n"); failed++; }
 	if (test_manifest() != 0) { fprintf(stderr, "test_manifest failed\n"); failed++; }

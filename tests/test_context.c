@@ -105,6 +105,7 @@ int main(void)
 		fprintf(stderr, "dbg out1:%.800s\n", out1);
 	CHECK(strstr(out1, "Berlin") != NULL, "Berlin substring");
 	CHECK(strstr(out1, "99.6") != NULL, "hot max temp");
+	CHECK(strstr(out1, "DayX") != NULL, "holiday localName in execute output");
 
 	tool_context_test_set_http_bodies(GEO_OK, WX_B, HY_OK);
 
@@ -150,6 +151,14 @@ int main(void)
 	tool_context_test_reset();
 	tool_context_test_set_unix_time(t_march9_2027());
 	tool_context_set_config(NULL);
+	{
+		char *cold = tool_context_snapshot_json();
+		CHECK(cold != NULL, "minimal snapshot before execute");
+		CHECK(strstr(cold, "dashboard") != NULL, "minimal snapshot has dashboard");
+		CHECK(strstr(cold, "Berlin") == NULL, "minimal snapshot has no geo yet");
+		free(cold);
+	}
+
 	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
 	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "snapshot priming exec");
 	{
@@ -157,6 +166,7 @@ int main(void)
 		CHECK(snap != NULL, "snapshot_json alloc");
 		CHECK(strstr(snap, "Berlin") != NULL, "snapshot contains Berlin");
 		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
+		CHECK(strstr(snap, "DayX") != NULL, "snapshot dashboard includes holiday");
 		free(snap);
 	}
 
