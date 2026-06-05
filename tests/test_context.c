@@ -41,6 +41,13 @@ static const char *WX_B = "{\"daily\":{\"time\":[\"2027-03-09\"],"
 
 static const char *HY_OK = "[{\"date\":\"2027-03-10\",\"localName\":\"DayX\"}]";
 
+static const char *HY_BOTH =
+	"[{\"date\":\"2027-03-09\",\"localName\":\"TodayH\"},{\"date\":\"2027-03-10\",\"localName\":\"DayX\"}]";
+
+static const char *WX_FAIL = "{\"status\":\"fail\"}";
+
+static const char *GEO_BAD = "{not json";
+
 static time_t t_march9_2027(void)
 {
 	struct tm tm;
@@ -150,7 +157,7 @@ int main(void)
 	tool_context_test_reset();
 	tool_context_test_set_unix_time(t_march9_2027());
 	tool_context_set_config(NULL);
-	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_BOTH);
 	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "snapshot priming exec");
 	{
 		char *snap = tool_context_snapshot_json();
@@ -159,6 +166,40 @@ int main(void)
 		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
 		free(snap);
 	}
+	CHECK(strstr(out1, "\"is_public_holiday_today\":true") != NULL ||
+		      strstr(out1, "\"is_public_holiday_today\": true") != NULL,
+	      "expects today holiday flag");
+	CHECK(strstr(out1, "\"is_public_holiday_tomorrow\":true") != NULL ||
+		      strstr(out1, "\"is_public_holiday_tomorrow\": true") != NULL,
+	      "expects tomorrow holiday flag");
+	CHECK(strstr(out1, "weather_line") != NULL, "expects dashboard weather_line");
+	CHECK(strstr(out1, "location_line") != NULL, "expects dashboard location_line");
+	CHECK(strstr(out1, "holiday_line") != NULL, "expects dashboard holiday_line");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "payload priming exec");
+	CHECK(tool->execute("{}", out1, 64) == -1, "payload too large for tiny buffer");
+	CHECK(strstr(out1, "payload too large for buffer") != NULL, "expects payload size error");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_FAIL, HY_OK);
+	CHECK(tool_context_get()->execute("{}", out2, sizeof(out2)) == 0, "weather fail exec");
+	CHECK(strstr(out2, "open-meteo unavailable") != NULL, "expects weather API failure text");
+	CHECK(strstr(out2, "\"available\":false") != NULL ||
+		      strstr(out2, "\"available\": false") != NULL,
+	      "expects weather unavailable flag");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_BAD, WX_A, HY_OK);
+	CHECK(tool_context_get()->execute("{}", out3, sizeof(out3)) == 0, "geo malformed exec");
+	CHECK(strstr(out3, "geolocation unavailable") != NULL, "expects geo parse failure text");
 
 	tool_context_test_reset();
 
