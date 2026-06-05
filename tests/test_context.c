@@ -43,6 +43,13 @@ static const char *HY_OK = "[{\"date\":\"2027-03-10\",\"localName\":\"DayX\"}]";
 
 static const char *HY_NEW_YEAR = "[{\"date\":\"2027-12-31\",\"localName\":\"Silvester\"},"
 				 "{\"date\":\"2028-01-01\",\"localName\":\"Neujahr\"}]";
+static const char *HY_BOTH =
+	"[{\"date\":\"2027-03-09\",\"localName\":\"TodayH\"},{\"date\":\"2027-03-10\",\"localName\":\"DayX\"}]";
+
+static const char *WX_FAIL = "{\"status\":\"fail\"}";
+
+static const char *GEO_BAD = "{not json";
+
 
 static time_t t_march9_2027(void)
 {
@@ -235,6 +242,36 @@ int main(void)
 		CHECK(strstr(cold, "Dashboard cache empty") != NULL, "cold snapshot hints empty cache");
 		free(cold);
 	}
+
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_BOTH);
+	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "holiday flags exec");
+	CHECK(strstr(out1, "\"is_public_holiday_today\":true") != NULL ||
+		      strstr(out1, "\"is_public_holiday_today\": true") != NULL,
+	      "expects today holiday flag");
+	CHECK(strstr(out1, "\"is_public_holiday_tomorrow\":true") != NULL ||
+		      strstr(out1, "\"is_public_holiday_tomorrow\": true") != NULL,
+	      "expects tomorrow holiday flag");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_FAIL, HY_OK);
+	CHECK(tool_context_get()->execute("{}", out2, sizeof(out2)) == 0, "weather fail exec");
+	CHECK(strstr(out2, "open-meteo unavailable") != NULL, "expects weather API failure text");
+	CHECK(strstr(out2, "\"available\":false") != NULL ||
+		      strstr(out2, "\"available\": false") != NULL,
+	      "expects weather unavailable flag");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_BAD, WX_A, HY_OK);
+	CHECK(tool_context_get()->execute("{}", out3, sizeof(out3)) == 0, "geo malformed exec");
+	CHECK(strstr(out3, "geolocation unavailable") != NULL, "expects geo parse failure text");
 
 	tool_context_test_reset();
 	tool_context_test_set_unix_time(t_march9_2027());
