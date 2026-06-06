@@ -41,6 +41,9 @@ static const char *WX_B = "{\"daily\":{\"time\":[\"2027-03-09\"],"
 
 static const char *HY_OK = "[{\"date\":\"2027-03-10\",\"localName\":\"DayX\"}]";
 
+/** Sentinel for SHELLCLAW_CONTEXT_TEST fake HTTP (see context_http.c). */
+static const char *HTTP_FAIL = "__CTX_HTTP_FAIL__";
+
 static time_t t_march9_2027(void)
 {
 	struct tm tm;
@@ -146,6 +149,41 @@ int main(void)
 	      "expects some unavailable slice");
 	CHECK(strstr(out_fallback, "geolocation unavailable") != NULL,
 	      "expects geo error text");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, HTTP_FAIL, HY_OK);
+	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "weather unavailable exec");
+	CHECK(strstr(out1, "open-meteo unavailable") != NULL, "expects weather unavailable error");
+	CHECK(strstr(out1, "Berlin") != NULL, "geo still present when weather fails");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, "not-valid-json", HY_OK);
+	CHECK(tool_context_get()->execute("{}", out2, sizeof(out2)) == 0, "weather parse failure exec");
+	CHECK(strstr(out2, "open-meteo parse failure") != NULL, "expects weather parse error");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HTTP_FAIL);
+	CHECK(tool_context_get()->execute("{}", out3, sizeof(out3)) == 0, "holidays unavailable exec");
+	CHECK(strstr(out3, "Berlin") != NULL, "geo present when holidays fail");
+	CHECK(strstr(out3, "99.6") != NULL, "weather present when holidays fail");
+	CHECK(strstr(out3, "nager fetch failed") != NULL, "expects holidays fetch error");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	{
+		char *snap_before = tool_context_snapshot_json();
+		CHECK(snap_before != NULL, "minimal snapshot alloc");
+		CHECK(strstr(snap_before, "dashboard") != NULL, "minimal snapshot has dashboard");
+		CHECK(strstr(snap_before, "Berlin") == NULL, "minimal snapshot has no geo yet");
+		free(snap_before);
+	}
 
 	tool_context_test_reset();
 	tool_context_test_set_unix_time(t_march9_2027());

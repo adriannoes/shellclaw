@@ -118,6 +118,8 @@ const provider_t *provider_stub_get(void);
 /** Second stub backend with optional forced chat failure (router / recovery tests). */
 const provider_t *provider_stub_b_get(void);
 void provider_stub_b_set_chat_should_fail(int should_fail);
+/** Optional error text when stub-b chat fails (router terminal-failure tests). */
+void provider_stub_b_set_chat_fail_message(const char *msg);
 
 /** Anthropic (Claude) provider. Messages API, tool_use. */
 const provider_t *provider_anthropic_get(void);

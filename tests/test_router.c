@@ -292,6 +292,125 @@ static int test_recovery_throttled_before_interval(void)
 	return 0;
 }
 
+static int test_fallback_chain_skips_unknown_provider(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *p;
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"bogus\", \"stub\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	p = provider_router_get(cfg);
+	ASSERT(p != NULL);
+	ASSERT(p->init(cfg) == 0);
+	p->cleanup();
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_fallback_chain_all_unknown_init_fails(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *p;
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"bogus\", \"also-unknown\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	p = provider_router_get(cfg);
+	ASSERT(p != NULL);
+	ASSERT(p->init(cfg) == -1);
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_terminal_error_stops_fallback_chain(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *router;
+	provider_message_t msg;
+	provider_response_t resp;
+	char snap[64];
+	char err_snap[256];
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"stub-b\", \"stub\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	router = provider_router_get(cfg);
+	ASSERT(router != NULL);
+	ASSERT(router->init(cfg) == 0);
+	provider_stub_b_set_chat_fail_message("OpenAI API HTTP 401");
+	provider_stub_b_set_chat_should_fail(1);
+	memset(&msg, 0, sizeof(msg));
+	msg.role = "user";
+	msg.content = "hi";
+	memset(&resp, 0, sizeof(resp));
+	ASSERT(router->chat(&msg, 1, NULL, 0, &resp) == -1);
+	provider_router_active_backend_snapshot(snap, sizeof(snap));
+	ASSERT(strcmp(snap, "stub-b") == 0);
+	provider_router_last_error_snapshot(err_snap, sizeof(err_snap));
+	ASSERT(strstr(err_snap, "HTTP 401") != NULL);
+	provider_response_clear(&resp);
+	provider_stub_b_set_chat_should_fail(0);
+	provider_stub_b_set_chat_fail_message(NULL);
+	router->cleanup();
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_api_status_json_after_fallback(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *router;
+	provider_message_t msg;
+	provider_response_t resp;
+	char *json;
+	cJSON *root;
+	cJSON *arr;
+	cJSON *stub_b;
+	cJSON *stub;
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"stub-b\", \"stub\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	router = provider_router_get(cfg);
+	ASSERT(router != NULL);
+	ASSERT(router->init(cfg) == 0);
+	provider_stub_b_set_chat_should_fail(1);
+	memset(&msg, 0, sizeof(msg));
+	msg.role = "user";
+	msg.content = "hi";
+	memset(&resp, 0, sizeof(resp));
+	ASSERT(router->chat(&msg, 1, NULL, 0, &resp) == 0);
+	provider_response_clear(&resp);
+	json = provider_router_api_status_json();
+	ASSERT(json != NULL);
+	root = cJSON_Parse(json);
+	ASSERT(root != NULL);
+	arr = cJSON_GetObjectItem(root, "providers");
+	ASSERT(arr != NULL && cJSON_IsArray(arr));
+	ASSERT(cJSON_GetArraySize(arr) == 2);
+	stub_b = cJSON_GetArrayItem(arr, 0);
+	stub = cJSON_GetArrayItem(arr, 1);
+	ASSERT(stub_b != NULL && stub != NULL);
+	ASSERT(strcmp(cJSON_GetObjectItem(stub_b, "role")->valuestring, "unavailable") == 0);
+	ASSERT(cJSON_IsFalse(cJSON_GetObjectItem(stub_b, "reachable")));
+	ASSERT(strcmp(cJSON_GetObjectItem(stub, "role")->valuestring, "fallback") == 0);
+	cJSON_Delete(root);
+	free(json);
+	provider_stub_b_set_chat_should_fail(0);
+	router->cleanup();
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
 static int test_status_changed_callback_on_recovery(void)
 {
 	char path[128];
@@ -339,6 +458,10 @@ int main(void)
 	RUN(test_fallback_chain_stub_init_smoke());
 	RUN(test_api_status_json_after_stub_init());
 	RUN(test_fallback_chain_stub_b_to_stub_chat());
+	RUN(test_fallback_chain_skips_unknown_provider());
+	RUN(test_fallback_chain_all_unknown_init_fails());
+	RUN(test_terminal_error_stops_fallback_chain());
+	RUN(test_api_status_json_after_fallback());
 	RUN(test_error_401_terminal());
 	RUN(test_error_503_retries());
 	RUN(test_error_transport_retries());
