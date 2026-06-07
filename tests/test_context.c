@@ -161,6 +161,19 @@ int main(void)
 	}
 
 	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	{
+		char tiny_buf[64];
+		CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "prime large snapshot");
+		CHECK(tool_context_get()->execute("{}", tiny_buf, sizeof(tiny_buf)) == -1,
+		      "small buffer must fail");
+		CHECK(strstr(tiny_buf, "payload too large for buffer") != NULL,
+		      "expects buffer size error");
+	}
+
+	tool_context_test_reset();
 
 	curl_global_cleanup();
 	puts("test_context OK");

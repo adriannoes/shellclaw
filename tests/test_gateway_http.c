@@ -182,6 +182,33 @@ static int http_post_auth(const char *url, const char *bearer, const char *json,
 	return (res == CURLE_OK) ? 0 : -1;
 }
 
+static int http_put_auth(const char *url, const char *bearer, const char *body,
+			 long *code_out, char **body_out)
+{
+	CURL *curl = curl_easy_init();
+	if (!curl) return -1;
+	*body_out = NULL;
+	struct curl_slist *headers = NULL;
+	char auth_hdr[256];
+	snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", bearer);
+	headers = curl_slist_append(headers, auth_hdr);
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+	CURLcode res = curl_easy_perform(curl);
+	long code = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	if (code_out) *code_out = code;
+	return (res == CURLE_OK) ? 0 : -1;
+}
+
 static int http_delete_auth(const char *url, const char *bearer, long *code_out, char **body_out)
 {
 	CURL *curl = curl_easy_init();
@@ -457,6 +484,71 @@ static int test_api_config_get(const char *token)
 	return 0;
 }
 
+static int test_api_config_put_401(void)
+{
+	long code;
+	char *body = NULL;
+	const char *valid_toml =
+		"[agent]\nmodel = \"blocked\"\n[providers]\nfallback_chain = [ \"stub\" ]\n";
+	int r = http_put_auth(gw_url("/api/config"), "invalid-token", valid_toml, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
+static int test_api_config_put_invalid_toml(const char *token)
+{
+	long code;
+	char *body = NULL;
+	long get_code;
+	char *before = NULL;
+	int r = http_get_auth(gw_url("/api/config"), token, &get_code, &before);
+	ASSERT(r == 0 && get_code == 200 && before != NULL);
+	r = http_put_auth(gw_url("/api/config"), token, "[[[not valid toml", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 400);
+	ASSERT(body != NULL);
+	free(body);
+	body = NULL;
+	r = http_get_auth(gw_url("/api/config"), token, &get_code, &body);
+	ASSERT(r == 0 && get_code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strcmp(body, before) == 0);
+	free(before);
+	free(body);
+	return 0;
+}
+
+static int test_api_config_put_valid(const char *token, int port, const char *config_path)
+{
+	long code;
+	char *body = NULL;
+	char put_toml[512];
+	char disk_buf[4096];
+	FILE *disk_fp;
+	snprintf(put_toml, sizeof(put_toml),
+		 "[agent]\nmodel = \"integration_updated\"\n"
+		 "[providers]\nfallback_chain = [ \"stub\" ]\n"
+		 "[gateway]\nenabled = true\nhost = \"127.0.0.1\"\nport = %d\n"
+		 "[memory]\ndb_path = \"%s/.shellclaw/memory.db\"\n"
+		 "[skills]\ndir = \"%s/.shellclaw/skills\"\n",
+		 port, g_test_home, g_test_home);
+	int r = http_put_auth(gw_url("/api/config"), token, put_toml, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"ok\"") != NULL);
+	free(body);
+	disk_fp = fopen(config_path, "r");
+	ASSERT(disk_fp != NULL);
+	ASSERT(fread(disk_buf, 1, sizeof(disk_buf) - 1, disk_fp) > 0);
+	disk_buf[sizeof(disk_buf) - 1] = '\0';
+	fclose(disk_fp);
+	ASSERT(strstr(disk_buf, "integration_updated") != NULL);
+	return 0;
+}
+
 static int test_api_skills_list(const char *token)
 {
 	long code;
@@ -671,6 +763,7 @@ int main(int argc, char **argv)
 		failed++;
 	}
 	if (test_api_config_401() != 0) { fprintf(stderr, "test_api_config_401 failed\n"); failed++; }
+	if (test_api_config_put_401() != 0) { fprintf(stderr, "test_api_config_put_401 failed\n"); failed++; }
 	if (test_api_status_401() != 0) { fprintf(stderr, "test_api_status_401 failed\n"); failed++; }
 	if (test_api_context_snapshot_401() != 0) { fprintf(stderr, "test_api_context_snapshot_401 failed\n"); failed++; }
 	if (test_manifest() != 0) { fprintf(stderr, "test_manifest failed\n"); failed++; }
@@ -680,6 +773,14 @@ int main(int argc, char **argv)
 	if (test_api_asap_log_401() != 0) { fprintf(stderr, "test_api_asap_log_401 failed\n"); failed++; }
 	if (token[0]) {
 		if (test_api_config_get(token) != 0) { fprintf(stderr, "test_api_config_get failed\n"); failed++; }
+		if (test_api_config_put_invalid_toml(token) != 0) {
+			fprintf(stderr, "test_api_config_put_invalid_toml failed\n");
+			failed++;
+		}
+		if (test_api_config_put_valid(token, port, config_path) != 0) {
+			fprintf(stderr, "test_api_config_put_valid failed\n");
+			failed++;
+		}
 		if (test_api_status_get(token) != 0) { fprintf(stderr, "test_api_status_get failed\n"); failed++; }
 		if (test_api_context_snapshot_get(token) != 0) { fprintf(stderr, "test_api_context_snapshot_get failed\n"); failed++; }
 		if (test_api_skills_list(token) != 0) { fprintf(stderr, "test_api_skills_list failed\n"); failed++; }
