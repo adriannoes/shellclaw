@@ -191,6 +191,87 @@ static int test_error_401_terminal(void)
 	return 0;
 }
 
+static int test_fallback_chain_401_does_not_switch_backend(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *router;
+	provider_message_t msg;
+	provider_response_t resp;
+	char snap[64];
+	char last_err[256];
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"stub-b\", \"stub\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	router = provider_router_get(cfg);
+	ASSERT(router != NULL);
+	ASSERT(router->init(cfg) == 0);
+	provider_stub_b_set_error_message("OpenAI API HTTP 401");
+	provider_stub_b_set_chat_should_fail(1);
+	memset(&msg, 0, sizeof(msg));
+	msg.role = "user";
+	msg.content = "hi";
+	memset(&resp, 0, sizeof(resp));
+	ASSERT(router->chat(&msg, 1, NULL, 0, &resp) != 0);
+	provider_response_clear(&resp);
+	provider_router_active_backend_snapshot(snap, sizeof(snap));
+	ASSERT(strcmp(snap, "stub-b") == 0);
+	provider_router_last_error_snapshot(last_err, sizeof(last_err));
+	ASSERT(strstr(last_err, "401") != NULL);
+	provider_stub_b_set_chat_should_fail(0);
+	provider_stub_b_set_error_message(NULL);
+	router->cleanup();
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_fallback_chain_all_backends_fail_records_last_error(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *router;
+	provider_message_t msg;
+	provider_response_t resp;
+	char last_err[256];
+	char *status_json = NULL;
+	cJSON *root = NULL;
+	cJSON *last_error = NULL;
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"stub-b\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	router = provider_router_get(cfg);
+	ASSERT(router != NULL);
+	ASSERT(router->init(cfg) == 0);
+	provider_stub_b_set_error_message("Local provider HTTP 503");
+	provider_stub_b_set_chat_should_fail(1);
+	memset(&msg, 0, sizeof(msg));
+	msg.role = "user";
+	msg.content = "hi";
+	memset(&resp, 0, sizeof(resp));
+	ASSERT(router->chat(&msg, 1, NULL, 0, &resp) != 0);
+	provider_response_clear(&resp);
+	provider_router_last_error_snapshot(last_err, sizeof(last_err));
+	ASSERT(strstr(last_err, "503") != NULL);
+	status_json = provider_router_api_status_json();
+	ASSERT(status_json != NULL);
+	root = cJSON_Parse(status_json);
+	ASSERT(root != NULL);
+	last_error = cJSON_GetObjectItemCaseSensitive(root, "last_error");
+	ASSERT(cJSON_IsString(last_error) && last_error->valuestring != NULL);
+	ASSERT(strstr(last_error->valuestring, "503") != NULL);
+	cJSON_Delete(root);
+	free(status_json);
+	provider_stub_b_set_chat_should_fail(0);
+	provider_stub_b_set_error_message(NULL);
+	router->cleanup();
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
 static int test_error_503_retries(void)
 {
 	ASSERT(provider_error_allows_fallback_retry("OpenAI API HTTP 503") != 0);
@@ -340,6 +421,8 @@ int main(void)
 	RUN(test_api_status_json_after_stub_init());
 	RUN(test_fallback_chain_stub_b_to_stub_chat());
 	RUN(test_error_401_terminal());
+	RUN(test_fallback_chain_401_does_not_switch_backend());
+	RUN(test_fallback_chain_all_backends_fail_records_last_error());
 	RUN(test_error_503_retries());
 	RUN(test_error_transport_retries());
 	RUN(test_error_empty_retries());

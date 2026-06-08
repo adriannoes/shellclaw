@@ -29,6 +29,10 @@ static const char *GEO_OK = "{\"status\":\"success\",\"city\":\"Berlin\",\"count
 			    "\"countryCode\":\"DE\",\"timezone\":\"Europe/Berlin\","
 			    "\"lat\":52.5,\"lon\":13.405}";
 
+static const char *GEO_MISSING_LAT = "{\"status\":\"success\",\"city\":\"Berlin\",\"country\":\"Germany\","
+				     "\"countryCode\":\"DE\",\"timezone\":\"Europe/Berlin\","
+				     "\"lon\":13.405}";
+
 static const char *GEO_FAIL = "{\"status\":\"fail\"}";
 
 static const char *WX_A = "{\"daily\":{\"time\":[\"2027-03-09\"],"
@@ -158,6 +162,36 @@ int main(void)
 		CHECK(strstr(snap, "Berlin") != NULL, "snapshot contains Berlin");
 		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
 		free(snap);
+	}
+
+	tool_context_test_reset();
+	{
+		char tmpl_geo[] = "/tmp/shellclaw_test_context_geo_XXXXXX";
+		int fd_geo = mkstemp(tmpl_geo);
+		CHECK(fd_geo >= 0, "mkstemp geo malformed");
+		close(fd_geo);
+		CHECK(write_agent_fallback_toml(tmpl_geo) == 0, "write cfg geo malformed");
+		CHECK(config_load(tmpl_geo, &cfg, errbuf, sizeof(errbuf)) == 0, "config_load geo malformed");
+		tool_context_test_set_unix_time(t_march9_2027());
+		tool_context_set_config(cfg);
+		tool_context_test_set_http_bodies(GEO_MISSING_LAT, WX_A, HY_OK);
+		CHECK(tool_context_get()->execute("{}", out_fallback, sizeof(out_fallback)) == 0,
+		      "geo missing lat uses agent fallback");
+		CHECK(strstr(out_fallback, "agent_fallback") != NULL, "expects agent_fallback source");
+		config_free(cfg);
+		cfg = NULL;
+		unlink(tmpl_geo);
+	}
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	{
+		char tiny[48];
+		CHECK(tool_context_get()->execute("{}", tiny, sizeof(tiny)) != 0,
+		      "tiny buffer should fail");
+		CHECK(strstr(tiny, "too large") != NULL, "expects buffer overflow error");
 	}
 
 	tool_context_test_reset();

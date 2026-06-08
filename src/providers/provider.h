@@ -119,6 +119,9 @@ const provider_t *provider_stub_get(void);
 const provider_t *provider_stub_b_get(void);
 void provider_stub_b_set_chat_should_fail(int should_fail);
 
+/** Override stub-b chat error text (tests only). Resets to default when msg is NULL. */
+void provider_stub_b_set_error_message(const char *msg);
+
 /** Anthropic (Claude) provider. Messages API, tool_use. */
 const provider_t *provider_anthropic_get(void);
 
