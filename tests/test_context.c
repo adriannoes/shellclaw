@@ -53,6 +53,33 @@ static time_t t_march9_2027(void)
 	return mktime(&tm);
 }
 
+static char *make_huge_weather_json(size_t pad_len)
+{
+	char *buf;
+	char *padding;
+	size_t i;
+	const char prefix[] =
+		"{\"daily\":{\"time\":[\"2027-03-09\"],"
+		"\"temperature_2m_max\":[99.6],\"temperature_2m_min\":[11.3],"
+		"\"precipitation_sum\":[0.5],\"weathercode\":[1],\"padding\":\"";
+	const char suffix[] = "\"}}";
+
+	padding = malloc(pad_len + 1u);
+	buf = malloc(strlen(prefix) + pad_len + strlen(suffix) + 1u);
+	if (padding == NULL || buf == NULL) {
+		free(padding);
+		free(buf);
+		return NULL;
+	}
+	for (i = 0; i < pad_len; i++)
+		padding[i] = 'x';
+	padding[pad_len] = '\0';
+	snprintf(buf, strlen(prefix) + pad_len + strlen(suffix) + 1u, "%s%s%s", prefix, padding,
+	         suffix);
+	free(padding);
+	return buf;
+}
+
 static int write_agent_fallback_toml(const char *path)
 {
 	FILE *fp;
@@ -158,6 +185,21 @@ int main(void)
 		CHECK(strstr(snap, "Berlin") != NULL, "snapshot contains Berlin");
 		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
 		free(snap);
+	}
+
+	{
+		char tiny_out[64];
+		char *huge_wx = make_huge_weather_json(12000u);
+
+		CHECK(huge_wx != NULL, "huge weather json alloc");
+		tool_context_test_reset();
+		tool_context_test_set_unix_time(t_march9_2027());
+		tool_context_set_config(NULL);
+		tool_context_test_set_http_bodies(GEO_OK, huge_wx, HY_OK);
+		CHECK(tool_context_get()->execute("{}", tiny_out, sizeof(tiny_out)) == -1,
+		      "payload too large returns -1");
+		CHECK(strstr(tiny_out, "payload too large") != NULL, "payload too large error text");
+		free(huge_wx);
 	}
 
 	tool_context_test_reset();
