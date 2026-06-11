@@ -324,6 +324,18 @@ static int test_api_config_401(void)
 	return 0;
 }
 
+static int test_api_config_invalid_bearer(const char *valid_token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(gw_url("/api/config"), "not-a-valid-paired-token", &code, &body);
+	(void)valid_token;
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
 static int test_asap_invalid_body(void)
 {
 	long code;
@@ -879,6 +891,10 @@ int main(int argc, char **argv)
 		failed++;
 	}
 	if (token[0]) {
+		if (test_api_config_invalid_bearer(token) != 0) {
+			fprintf(stderr, "test_api_config_invalid_bearer failed\n");
+			failed++;
+		}
 		if (test_api_config_get(token) != 0) { fprintf(stderr, "test_api_config_get failed\n"); failed++; }
 		if (test_api_status_get(token) != 0) { fprintf(stderr, "test_api_status_get failed\n"); failed++; }
 		if (test_api_context_snapshot_get(token) != 0) { fprintf(stderr, "test_api_context_snapshot_get failed\n"); failed++; }
