@@ -1,12 +1,14 @@
 /**
  * @file bootstrap_dispatch_stub.c
- * @brief Minimal bootstrap surface for dispatch unit tests (avoids full subsystem init).
+ * @brief Minimal bootstrap surface for dispatch/reload unit tests (avoids full subsystem init).
  */
 #define _POSIX_C_SOURCE 200809L
 
 #include "core/bootstrap.h"
 #include "providers/provider.h"
 #include "tools/tool.h"
+#include <stdio.h>
+#include <string.h>
 
 #define MAX_TOOLS 8
 
@@ -14,6 +16,7 @@ static config_t *g_cfg;
 static const provider_t *g_provider;
 static const tool_t *g_tools[MAX_TOOLS];
 static size_t g_tool_count;
+static char g_config_path[512];
 
 config_t *bootstrap_get_cfg(void)
 {
@@ -23,6 +26,19 @@ config_t *bootstrap_get_cfg(void)
 void bootstrap_set_cfg(config_t *cfg)
 {
 	g_cfg = cfg;
+}
+
+void bootstrap_set_config_path(const char *path)
+{
+	if (path != NULL)
+		snprintf(g_config_path, sizeof(g_config_path), "%s", path);
+	else
+		g_config_path[0] = '\0';
+}
+
+const char *bootstrap_get_config_path(void)
+{
+	return (g_config_path[0] != '\0') ? g_config_path : NULL;
 }
 
 const provider_t *bootstrap_get_provider(void)
