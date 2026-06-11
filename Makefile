@@ -149,6 +149,7 @@ CONTEXT_TEST_OBJS := $(CONTEXT_TEST_O) $(CONTEXT_HTTP_TEST_O) $(CONTEXT_GEO_TEST
 BOOTSTRAP_DISPATCH_STUB_O := tests/stubs/bootstrap_dispatch_stub.o
 TOOL_RELOAD_STUB_O := tests/stubs/tool_reload_stub.o
 RELOAD_CHANNEL_STUB_O := tests/stubs/reload_channel_stub.o
+HTTP_RELOAD_STUB_O := tests/stubs/http_reload_stub.o
 CORE_OBJS := $(CONFIG_O) $(MAIN_O) $(MEMORY_O) $(SKILL_O) $(AGENT_O) $(DAEMON_O) $(RELOAD_O) $(BOOTSTRAP_O) $(DISPATCH_O)
 VENDOR_OBJS := $(TOML_O) $(SQLITE3_O) $(CJSON_O)
 OBJS := $(CORE_OBJS) $(VENDOR_OBJS)
@@ -201,6 +202,9 @@ $(TOOL_RELOAD_STUB_O): tests/stubs/tool_reload_stub.c src/tools/tool.h
 
 $(RELOAD_CHANNEL_STUB_O): tests/stubs/reload_channel_stub.c src/channels/channel.h src/channels/heartbeat.h src/core/config.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ tests/stubs/reload_channel_stub.c
+
+$(HTTP_RELOAD_STUB_O): tests/stubs/http_reload_stub.c src/gateway/http.h src/core/config.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ tests/stubs/http_reload_stub.c
 
 $(DISPATCH_O): src/core/dispatch.c src/core/dispatch.h src/core/agent.h src/core/bootstrap.h src/core/memory.h src/channels/channel.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/core/dispatch.c
@@ -621,7 +625,7 @@ test_dispatch: tests/test_dispatch.c $(DISPATCH_O) $(BOOTSTRAP_DISPATCH_STUB_O) 
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_dispatch.c $(DISPATCH_O) $(BOOTSTRAP_DISPATCH_STUB_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(PROVIDER_COMMON_O) $(MEMORY_O) $(SQLITE3_O) $(SKILL_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) -pthread
 	$(DSYM_SCRIPT)
 
-RELOAD_TEST_OBJS := $(RELOAD_O) $(BOOTSTRAP_DISPATCH_STUB_O) $(TOOL_RELOAD_STUB_O) $(RELOAD_CHANNEL_STUB_O) $(CONFIG_O) $(TOML_O) \
+RELOAD_TEST_OBJS := $(RELOAD_O) $(BOOTSTRAP_DISPATCH_STUB_O) $(TOOL_RELOAD_STUB_O) $(RELOAD_CHANNEL_STUB_O) $(HTTP_RELOAD_STUB_O) $(CONFIG_O) $(TOML_O) \
 	$(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(PROVIDER_COMMON_O) $(CJSON_O)
 
 
