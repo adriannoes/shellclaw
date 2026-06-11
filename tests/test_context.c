@@ -169,14 +169,20 @@ int main(void)
 	tool_context_set_config(NULL);
 	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
 	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "snapshot priming exec");
+	CHECK(strstr(out1, "\"location_line\"") != NULL, "execute payload has location_line");
+	CHECK(strstr(out1, "Berlin, DE") != NULL, "location_line shows city and country code");
+	CHECK(strstr(out1, "\"weather_line\"") != NULL, "execute payload has weather_line");
+	CHECK(strstr(out1, "99.6C") != NULL, "weather_line includes max temperature");
+	CHECK(strstr(out1, "2027-03-09") != NULL, "weather_line includes reference day");
+	CHECK(strstr(out1, "\"holiday_line\"") != NULL, "execute payload has holiday_line");
+	CHECK(strstr(out1, "DayX") != NULL, "holiday_line includes next holiday name");
+	CHECK(strstr(out1, "2027-03-10") != NULL, "holiday_line includes next holiday date");
 	{
 		char *snap = tool_context_snapshot_json();
 		CHECK(snap != NULL, "snapshot_json alloc");
-		CHECK(strstr(snap, "Berlin") != NULL, "snapshot contains Berlin");
-		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
-		CHECK(strstr(snap, "weather_line") != NULL, "dashboard contains weather_line");
-		CHECK(strstr(snap, "location_line") != NULL, "dashboard contains location_line");
-		CHECK(strstr(snap, "holiday_line") != NULL, "dashboard contains holiday_line");
+		CHECK(strstr(snap, "Berlin, DE") != NULL, "snapshot location_line");
+		CHECK(strstr(snap, "99.6C") != NULL, "snapshot weather_line");
+		CHECK(strstr(snap, "next DayX on 2027-03-10") != NULL, "snapshot holiday_line");
 		free(snap);
 	}
 
