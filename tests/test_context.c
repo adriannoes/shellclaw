@@ -31,6 +31,12 @@ static const char *GEO_OK = "{\"status\":\"success\",\"city\":\"Berlin\",\"count
 
 static const char *GEO_FAIL = "{\"status\":\"fail\"}";
 
+static const char *GEO_MISSING_LAT =
+	"{\"status\":\"success\",\"city\":\"Berlin\",\"country\":\"Germany\","
+	"\"countryCode\":\"DE\",\"timezone\":\"Europe/Berlin\",\"lon\":13.405}";
+
+static const char *GEO_INVALID_JSON = "not-json";
+
 static const char *WX_A = "{\"daily\":{\"time\":[\"2027-03-09\"],"
 		       "\"temperature_2m_max\":[99.6],\"temperature_2m_min\":[11.3],"
 		       "\"precipitation_sum\":[0.5],\"weathercode\":[1]}}";
@@ -159,6 +165,45 @@ int main(void)
 		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
 		free(snap);
 	}
+
+	tool_context_test_reset();
+	{
+		char tmpl_missing_lat[] = "/tmp/shellclaw_test_context_lat_XXXXXX";
+		fd = mkstemp(tmpl_missing_lat);
+		CHECK(fd >= 0, "mkstemp failed for missing-lat fallback");
+		close(fd);
+		CHECK(write_agent_fallback_toml(tmpl_missing_lat) == 0, "write cfg for missing-lat fallback");
+		CHECK(config_load(tmpl_missing_lat, &cfg, errbuf, sizeof(errbuf)) == 0, "config_load missing-lat");
+		tool_context_test_set_unix_time(t_march9_2027());
+		tool_context_set_config(cfg);
+		tool_context_test_set_http_bodies(GEO_MISSING_LAT, WX_A, HY_OK);
+		CHECK(tool_context_get()->execute("{}", out_fallback, sizeof(out_fallback)) == 0,
+		      "missing lat with agent coords falls back");
+		CHECK(strstr(out_fallback, "agent_fallback") != NULL, "expects agent_fallback for missing lat");
+		CHECK(strstr(out_fallback, "\"country_code\":\"FR\"") != NULL, "expects FR from agent TOML");
+		config_free(cfg);
+		cfg = NULL;
+		unlink(tmpl_missing_lat);
+	}
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_MISSING_LAT, WX_A, HY_OK);
+	CHECK(tool_context_get()->execute("{}", out_fallback, sizeof(out_fallback)) == 0,
+	      "missing lat without agent coords");
+	CHECK(strstr(out_fallback, "\"available\":false") != NULL ||
+		      strstr(out_fallback, "\"available\": false") != NULL,
+	      "expects unavailable geo when lat missing and no agent coords");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_INVALID_JSON, WX_A, HY_OK);
+	CHECK(tool_context_get()->execute("{}", out_fallback, sizeof(out_fallback)) == 0,
+	      "invalid geo JSON without agent coords");
+	CHECK(strstr(out_fallback, "geolocation unavailable") != NULL,
+	      "expects geo error for invalid JSON");
 
 	tool_context_test_reset();
 
