@@ -48,6 +48,9 @@ static const char *HY_BOTH =
 
 static const char *WX_FAIL = "{\"status\":\"fail\"}";
 
+/** Sentinel for SHELLCLAW_CONTEXT_TEST fake HTTP (see context_http.c). */
+static const char *HTTP_FAIL = "__CTX_HTTP_FAIL__";
+
 static const char *GEO_BAD = "{not json";
 
 
@@ -272,6 +275,16 @@ int main(void)
 	tool_context_test_set_http_bodies(GEO_BAD, WX_A, HY_OK);
 	CHECK(tool_context_get()->execute("{}", out3, sizeof(out3)) == 0, "geo malformed exec");
 	CHECK(strstr(out3, "geolocation unavailable") != NULL, "expects geo parse failure text");
+
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HTTP_FAIL);
+	CHECK(tool_context_get()->execute("{}", out3, sizeof(out3)) == 0, "holidays unavailable exec");
+	CHECK(strstr(out3, "Berlin") != NULL, "geo present when holidays fail");
+	CHECK(strstr(out3, "99.6") != NULL, "weather present when holidays fail");
+	CHECK(strstr(out3, "nager fetch failed") != NULL, "expects holidays fetch error");
 
 	tool_context_test_reset();
 	tool_context_test_set_unix_time(t_march9_2027());
