@@ -41,6 +41,9 @@ static const char *WX_B = "{\"daily\":{\"time\":[\"2027-03-09\"],"
 
 static const char *HY_OK = "[{\"date\":\"2027-03-10\",\"localName\":\"DayX\"}]";
 
+static const char *HY_NEW_YEAR = "[{\"date\":\"2027-12-31\",\"localName\":\"Silvester\"},"
+				 "{\"date\":\"2028-01-01\",\"localName\":\"Neujahr\"}]";
+
 static time_t t_march9_2027(void)
 {
 	struct tm tm;
@@ -50,6 +53,18 @@ static time_t t_march9_2027(void)
 	tm.tm_mon = 2;
 	tm.tm_mday = 9;
 	tm.tm_hour = 10;
+	return mktime(&tm);
+}
+
+static time_t t_dec31_2027(void)
+{
+	struct tm tm;
+
+	memset(&tm, 0, sizeof(tm));
+	tm.tm_year = 127;
+	tm.tm_mon = 11;
+	tm.tm_mday = 31;
+	tm.tm_hour = 12;
 	return mktime(&tm);
 }
 
@@ -157,8 +172,44 @@ int main(void)
 		CHECK(snap != NULL, "snapshot_json alloc");
 		CHECK(strstr(snap, "Berlin") != NULL, "snapshot contains Berlin");
 		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
+		CHECK(strstr(snap, "weather_line") != NULL, "dashboard contains weather_line");
+		CHECK(strstr(snap, "location_line") != NULL, "dashboard contains location_line");
+		CHECK(strstr(snap, "holiday_line") != NULL, "dashboard contains holiday_line");
 		free(snap);
 	}
+
+	tool_context_test_reset();
+	{
+		char tmpl2[] = "/tmp/shellclaw_test_context2_XXXXXX";
+		int fd2 = mkstemp(tmpl2);
+		CHECK(fd2 >= 0, "mkstemp for minimal snapshot");
+		close(fd2);
+		CHECK(write_agent_fallback_toml(tmpl2) == 0, "write cfg for minimal snapshot");
+		CHECK(config_load(tmpl2, &cfg, errbuf, sizeof(errbuf)) == 0, "config_load minimal");
+		tool_context_set_config(cfg);
+		{
+			char *snap = tool_context_snapshot_json();
+			CHECK(snap != NULL, "minimal snapshot alloc");
+			CHECK(strstr(snap, "location_hint") != NULL, "minimal snapshot has location_hint");
+			CHECK(strstr(snap, "48.8566") != NULL, "minimal snapshot shows agent latitude");
+			free(snap);
+		}
+		config_free(cfg);
+		cfg = NULL;
+		unlink(tmpl2);
+	}
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_dec31_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_NEW_YEAR);
+	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "year-span execute");
+	CHECK(strstr(out1, "Silvester") != NULL || strstr(out1, "2027-12-31") != NULL,
+	      "year-span holidays include Dec 31 entry");
+	CHECK(strstr(out1, "is_public_holiday_tomorrow") != NULL &&
+		      (strstr(out1, "\"is_public_holiday_tomorrow\":true") != NULL ||
+		       strstr(out1, "\"is_public_holiday_tomorrow\": true") != NULL),
+	      "year-span marks Jan 1 as tomorrow holiday");
 
 	tool_context_test_reset();
 
