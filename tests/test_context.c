@@ -161,6 +161,19 @@ int main(void)
 	}
 
 	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	{
+		char tiny[64];
+
+		CHECK(tool_context_get()->execute("{}", tiny, sizeof(tiny)) == -1,
+		      "tiny buffer must fail when payload exceeds max_len");
+		CHECK(strstr(tiny, "payload too large") != NULL,
+		      "expects structured overflow error");
+	}
+
+	tool_context_test_reset();
 
 	curl_global_cleanup();
 	puts("test_context OK");
