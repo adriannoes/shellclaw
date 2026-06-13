@@ -68,7 +68,12 @@ ShellClaw is C99/C11. Follow the project rule files (summarized here — full de
 | Coverage (core ≥ 80%) | `make coverage` |
 | Performance harness | `make bench` / [`scripts/bench.sh`](scripts/bench.sh) (bash + curl; optional `python3` on macOS for sub-ms timestamps) |
 
-Tests must run headless with no manual setup or secrets. Hardware-specific on-device tests use `SHELLCLAW_HW_TEST=1` (Jetson only; see slice 04 task 12.x in dev planning).
+Tests must run headless with no manual setup or secrets. Hardware-specific on-device tests use `SHELLCLAW_HW_TEST=1` (Jetson only; see slice 04 task 12.x in dev planning):
+
+```bash
+export SHELLCLAW_HW_TEST=1
+make test_hardware_on_device   # skip on laptop; runs GPIO + I2C + llama-server smoke on Jetson
+```
 
 ## Documentation
 
@@ -88,7 +93,9 @@ When your change affects behavior, update the relevant doc (or add a link from R
 
 CI compile-only smoke does not exercise real GPIO file descriptors. Before tagging a release (e.g. `v1.0.0`), run **both** rituals below.
 
-### 1. `gpio-mockup` local validation (all platforms with libgpiod)
+### 1. `gpio-mockup` local validation (Linux only; requires libgpiod)
+
+**Platform:** `gpio-mockup` is a Linux kernel module — not available on macOS or Windows. Run on Ubuntu 24.04+ (or any Linux host with `libgpiod` 2.x and kernel mockup support) before tagging a release.
 
 Confirms the libgpiod backend opens and exercises a real device fd at least once per release:
 
@@ -103,7 +110,14 @@ sudo rmmod gpio-mockup
 
 ### 2. Jetson on-device sign-off
 
-On a wired Jetson Orin Nano Super, complete the manual checklist in [`.cursor/dev-planning/tasks/phase5/04-release-quality.md`](.cursor/dev-planning/tasks/phase5/04-release-quality.md) (install, health, GPIO/I2C smoke, `make test_hardware_on_device`, quality gates).
+On a wired Jetson Orin Nano Super (with `llama-server` on port 8080):
+
+```bash
+export SHELLCLAW_HW_TEST=1
+make test_hardware_on_device   # GPIO (gpio_test_pin), I2C scan, llama HTTP smoke
+```
+
+Without `SHELLCLAW_HW_TEST=1`, the runner exits 0 immediately (CI-safe). Also complete the manual checklist in [`.cursor/dev-planning/tasks/phase5/04-release-quality.md`](.cursor/dev-planning/tasks/phase5/04-release-quality.md) (install, health, quality gates).
 
 **Do not gate v1.0 on:** BME280 / BH1750 sensor reads, CSI/USB camera capture end-to-end, or `home-monitor` / `visual-monitor` skills — those ship in **v1.2 (Phase 7)**.
 

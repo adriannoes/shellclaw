@@ -71,6 +71,8 @@ Same metrics as MAXN_SUPER; expect lower LLM tok/s and GPU clocks. Re-run `./scr
 
 Captured on a developer workstation for relative overhead (not a release gate).
 
+**Operator step:** fill the x86 column by running `GATEWAY=1 make shellclaw && ./scripts/bench.sh --json > bench-x86.jsonl` on your laptop, then copy non-`skip` metrics into the table below. Jetson NVMe/microSD columns stay `_run on device_` until Fase B sign-off.
+
 | Metric | Example / placeholder | How |
 |--------|----------------------|-----|
 | Cold start | _run locally_ | `./scripts/bench.sh --section cold_start` |

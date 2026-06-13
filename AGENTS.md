@@ -12,6 +12,7 @@ ShellClaw is a C99 AI agent for edge hardware (Jetson / Raspberry Pi). Read this
 | ASan + UBSan tests | `make test-sanitize` (requires Clang/GCC sanitizer support) |
 | Coverage (core ≥ 80%) | `make coverage` (requires lcov) |
 | Full CI locally | `chmod +x scripts/ci-local.sh && ./scripts/ci-local.sh` (Ubuntu 24.04+; on Mac use `CI=true make test`) |
+| Jetson on-device HW | `SHELLCLAW_HW_TEST=1 make test_hardware_on_device` (also runs when `SHELLCLAW_HW_TEST=1 make test`) |
 | Pre-PR check | `CI=true make clean && CI=true make test` |
 
 Gateway tests need libwebsockets: `GATEWAY=1 make test_gateway_http`.

@@ -61,13 +61,18 @@ log() { printf '%s\n' "$*"; }
 log_err() { printf '%s\n' "$*" >&2; }
 
 now_ms() {
-	if date +%s%3N >/dev/null 2>&1; then
-		date +%s%3N
+	local ms=""
+	# BSD date accepts %3N but prints a literal "N"; require digits-only output.
+	if ms="$(date +%s%3N 2>/dev/null)" && [[ "${ms}" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "${ms}"
 		return
 	fi
-	if command -v gdate >/dev/null 2>&1 && gdate +%s%3N >/dev/null 2>&1; then
-		gdate +%s%3N
-		return
+	if command -v gdate >/dev/null 2>&1; then
+		ms="$(gdate +%s%3N 2>/dev/null || true)"
+		if [[ "${ms}" =~ ^[0-9]+$ ]]; then
+			printf '%s\n' "${ms}"
+			return
+		fi
 	fi
 	if command -v python3 >/dev/null 2>&1; then
 		python3 - <<'PY'

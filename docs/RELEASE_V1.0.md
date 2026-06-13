@@ -34,7 +34,19 @@ curl -sf http://127.0.0.1:18789/.well-known/asap/manifest.json | python3 -m json
 GATEWAY=1 ./scripts/bench.sh --json > /tmp/bench-x86.jsonl
 ```
 
-**gpio-mockup** (laptop, before tag): [`CONTRIBUTING.md`](../CONTRIBUTING.md) § Pre-tag release ritual.
+### Phase A results (2026-06-01, macOS arm64)
+
+| Step | Result |
+|------|--------|
+| `CI=true GATEWAY=1 make test` | **PASS** (all targets green) |
+| `dump_manifest.sh` | **PASS** — SignedManifest with `urn:asap:agent:shellclaw` |
+| `validate_manifest.sh` | **SKIP** — `asap` PyPI package not installed (CI-safe skip) |
+| `bench.sh --json` | **PASS** — cold start 932 ms, sandbox 3231 µs, HTTP RTT 172 ms, agent loop 1195 ms (see [`BENCHMARKS.md`](BENCHMARKS.md) x86 table) |
+| `run_asap_compliance.sh` | **FAIL** (3/3) — health schema missing `agent_id`/`version`/`uptime_seconds`; manifest signature verify failed; `/asap` POST 400 (known v1.0 gaps; see [`ASAP.md`](ASAP.md)) |
+| `gpio-mockup` | **BLOCKED** on macOS — Linux-only kernel module |
+| `test_hardware_on_device` (no gate) | **PASS** — exits 0 skip |
+
+**gpio-mockup** (Linux laptop, before tag): [`CONTRIBUTING.md`](../CONTRIBUTING.md) § Pre-tag release ritual.
 
 ```bash
 sudo modprobe gpio-mockup gpio_mockup_ranges=-1,32

@@ -771,6 +771,10 @@ test_download_model:
 	@chmod +x tests/test_download_model.sh scripts/download_model.sh
 	@./tests/test_download_model.sh
 
+test_hardware_on_device: shellclaw
+	@chmod +x tests/test_hardware_on_device.sh
+	@SHELLCLAW_TEST_BIN="$(BINDIR)/shellclaw" ./tests/test_hardware_on_device.sh
+
 test_web_dashboard:
 	@if [ "$${CI:-}" = "true" ] && ! command -v node >/dev/null 2>&1; then \
 		echo "test_web_dashboard: node required when CI=true" >&2; exit 1; \
@@ -845,6 +849,7 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_rate_limit
 	$(MAKE) test_install_script
 	$(MAKE) test_download_model
+	@if [ "$(SHELLCLAW_HW_TEST)" = "1" ]; then $(MAKE) test_hardware_on_device; fi
 	$(MAKE) test_web_dashboard
 	$(MAKE) test_auth && $(BINDIR)/test_auth
 	$(MAKE) test_static && $(BINDIR)/test_static
