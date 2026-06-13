@@ -37,10 +37,42 @@ static int test_ed25519_sign_verify_roundtrip(void)
 	return 0;
 }
 
+static int test_ed25519_sign_null_args(void)
+{
+	uint8_t key[CRYPTO_ED25519_PUBLIC_KEY_SIZE];
+	uint8_t sig[CRYPTO_ED25519_SIGNATURE_SIZE];
+	const uint8_t msg[] = "test";
+	uint8_t small[4];
+
+	ASSERT(crypto_read_urandom(key, sizeof(key)) == 0);
+	ASSERT(crypto_ed25519_sign(NULL, sizeof(key), msg, sizeof(msg) - 1U, sig, sizeof(sig)) == -1);
+	ASSERT(crypto_ed25519_sign(key, 0, msg, sizeof(msg) - 1U, sig, sizeof(sig)) == -1);
+	ASSERT(crypto_ed25519_sign(key, sizeof(key), NULL, 0, sig, sizeof(sig)) == -1);
+	ASSERT(crypto_ed25519_sign(key, sizeof(key), msg, sizeof(msg) - 1U, NULL, sizeof(sig)) == -1);
+	ASSERT(crypto_ed25519_sign(key, sizeof(key), msg, sizeof(msg) - 1U, small, sizeof(small)) == -1);
+	return 0;
+}
+
+static int test_ed25519_verify_null_args(void)
+{
+	uint8_t key[CRYPTO_ED25519_PUBLIC_KEY_SIZE];
+	uint8_t sig[CRYPTO_ED25519_SIGNATURE_SIZE];
+	const uint8_t msg[] = "test";
+
+	ASSERT(crypto_read_urandom(key, sizeof(key)) == 0);
+	ASSERT(crypto_ed25519_sign(key, sizeof(key), msg, sizeof(msg) - 1U, sig, sizeof(sig)) == 0);
+	ASSERT(crypto_ed25519_verify(NULL, sizeof(key), msg, sizeof(msg) - 1U, sig, sizeof(sig)) == -1);
+	ASSERT(crypto_ed25519_verify(key, sizeof(key), NULL, 0, sig, sizeof(sig)) == -1);
+	ASSERT(crypto_ed25519_verify(key, sizeof(key), msg, sizeof(msg) - 1U, NULL, sizeof(sig)) == -1);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_read_urandom());
 	RUN(test_ed25519_sign_verify_roundtrip());
+	RUN(test_ed25519_sign_null_args());
+	RUN(test_ed25519_verify_null_args());
 	printf("test_crypto: all tests passed\n");
 	return 0;
 }

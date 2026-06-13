@@ -100,6 +100,26 @@ static int test_auth_validate_token(void)
 	return 0;
 }
 
+static int test_auth_pairing_code_single_use(void)
+{
+	const char *path = "/tmp/shellclaw_test_tokens_singleuse.json";
+	unlink(path);
+	auth_ctx_t *ctx = auth_init(path);
+	ASSERT(ctx != NULL);
+	char *code = auth_get_or_create_pairing_code(ctx);
+	ASSERT(code != NULL);
+	char token[64] = {0};
+	ASSERT(auth_pair(ctx, code, token, sizeof(token)) == 0);
+	{
+		char token2[64] = {0};
+		ASSERT(auth_pair(ctx, code, token2, sizeof(token2)) != 0);
+	}
+	free(code);
+	auth_cleanup(ctx);
+	unlink(path);
+	return 0;
+}
+
 static int test_auth_multi_token(void)
 {
 	const char *path = "/tmp/shellclaw_test_tokens_multi.json";
@@ -214,6 +234,7 @@ int main(void)
 	if (test_auth_get_pairing_code_when_empty() != 0) { fprintf(stderr, "test_auth_get_pairing_code_when_empty failed\n"); failed++; }
 	if (test_auth_pair_valid_code() != 0) { fprintf(stderr, "test_auth_pair_valid_code failed\n"); failed++; }
 	if (test_auth_pair_invalid_code() != 0) { fprintf(stderr, "test_auth_pair_invalid_code failed\n"); failed++; }
+	if (test_auth_pairing_code_single_use() != 0) { fprintf(stderr, "test_auth_pairing_code_single_use failed\n"); failed++; }
 	if (test_auth_validate_token() != 0) { fprintf(stderr, "test_auth_validate_token failed\n"); failed++; }
 	if (test_auth_multi_token() != 0) { fprintf(stderr, "test_auth_multi_token failed\n"); failed++; }
 	if (test_pair_lockout_triggers_after_max_fails() != 0) { fprintf(stderr, "test_pair_lockout_triggers_after_max_fails failed\n"); failed++; }

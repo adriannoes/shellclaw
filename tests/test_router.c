@@ -152,6 +152,34 @@ static int test_api_status_json_after_stub_init(void)
 	return 0;
 }
 
+static int test_all_backends_fail_returns_error(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *router;
+	provider_message_t msg;
+	provider_response_t resp;
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"stub-b\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	router = provider_router_get(cfg);
+	ASSERT(router != NULL);
+	ASSERT(router->init(cfg) == 0);
+	provider_stub_b_set_chat_should_fail(1);
+	memset(&msg, 0, sizeof(msg));
+	msg.role = "user";
+	msg.content = "hi";
+	memset(&resp, 0, sizeof(resp));
+	ASSERT(router->chat(&msg, 1, NULL, 0, &resp) != 0);
+	provider_response_clear(&resp);
+	provider_stub_b_set_chat_should_fail(0);
+	router->cleanup();
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
 static int test_fallback_chain_stub_b_to_stub_chat(void)
 {
 	char path[128];
@@ -338,6 +366,7 @@ int main(void)
 	RUN(test_default_provider_key_still_reads_anthropic());
 	RUN(test_fallback_chain_stub_init_smoke());
 	RUN(test_api_status_json_after_stub_init());
+	RUN(test_all_backends_fail_returns_error());
 	RUN(test_fallback_chain_stub_b_to_stub_chat());
 	RUN(test_error_401_terminal());
 	RUN(test_error_503_retries());

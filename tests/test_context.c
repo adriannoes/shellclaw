@@ -41,6 +41,8 @@ static const char *WX_B = "{\"daily\":{\"time\":[\"2027-03-09\"],"
 
 static const char *HY_OK = "[{\"date\":\"2027-03-10\",\"localName\":\"DayX\"}]";
 
+static const char *HY_TODAY = "[{\"date\":\"2027-03-09\",\"localName\":\"TestHoliday\"}]";
+
 static time_t t_march9_2027(void)
 {
 	struct tm tm;
@@ -158,6 +160,33 @@ int main(void)
 		CHECK(strstr(snap, "Berlin") != NULL, "snapshot contains Berlin");
 		CHECK(strstr(snap, "dashboard") != NULL, "snapshot contains dashboard key");
 		free(snap);
+	}
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_TODAY);
+	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "holiday today exec");
+	CHECK(strstr(out1, "\"is_public_holiday_today\":true") != NULL ||
+		      strstr(out1, "\"is_public_holiday_today\": true") != NULL,
+	      "expects is_public_holiday_today=true");
+
+	tool_context_test_reset();
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	{
+		char tiny[8];
+		CHECK(tool_context_get()->execute("{}", tiny, sizeof(tiny)) == -1,
+		      "tiny buffer must return -1");
+		CHECK(strstr(tiny, "error") != NULL, "tiny buffer must contain error key");
+	}
+	CHECK(tool_context_get()->execute("{}", NULL, 0) == -1, "null buf zero len returns -1");
+	CHECK(tool_context_get()->execute("{}", NULL, 128) == -1, "null buf non-zero len returns -1");
+	{
+		char out_guard[128];
+		CHECK(tool_context_get()->execute("{}", out_guard, 0) == -1,
+		      "zero max_len returns -1");
 	}
 
 	tool_context_test_reset();
