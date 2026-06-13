@@ -332,6 +332,13 @@ int main(void)
 		CHECK(strstr(tiny, "get_context payload too large") != NULL,
 		      "small buffer error names oversized payload");
 	}
+	CHECK(tool_context_get()->execute("{}", NULL, 0) == -1, "null buf zero len returns -1");
+	CHECK(tool_context_get()->execute("{}", NULL, 128) == -1, "null buf non-zero len returns -1");
+	{
+		char out_guard[128];
+		CHECK(tool_context_get()->execute("{}", out_guard, 0) == -1,
+		      "zero max_len returns -1");
+	}
 
 	tool_context_test_reset();
 
