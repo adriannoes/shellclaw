@@ -9,13 +9,8 @@ const dash = require('../web/js/dashboardView.js');
 const hw = require('../web/js/hardwareView.js');
 const escapeHtml = dash.escapeHtml;
 const coerceBool = dash.coerceBool;
-
-function pickStatusSlice(wsMsg) {
-  if (!wsMsg || typeof wsMsg !== 'object') return null;
-  const o = JSON.parse(JSON.stringify(wsMsg));
-  delete o.type;
-  return o;
-}
+const pickStatusSlice = dash.pickStatusSlice;
+const mergeStatusWithWs = dash.mergeStatusWithWs;
 
 function assert(cond, msg) {
   if (!cond) {
@@ -42,6 +37,29 @@ assert(html.indexOf('Dashboard') !== -1, 'dashboardMarkup');
 
 const slice = pickStatusSlice({ type: 'provider_status', active_provider: 'stub', providers: [] });
 assert(slice && slice.type === undefined && slice.active_provider === 'stub', 'pickStatusSlice');
+
+const prevStatus = {
+  active_provider: 'primary',
+  providers: [{ name: 'primary', role: 'primary', reachable: true }],
+  generated_at: '2026-01-01T00:00:00Z'
+};
+const wsDelta = {
+  type: 'provider_status',
+  active_provider: 'fallback',
+  providers: [{ name: 'fallback', role: 'fallback', reachable: true }],
+  last_error: 'primary unreachable'
+};
+const merged = mergeStatusWithWs(prevStatus, wsDelta);
+assert(merged.active_provider === 'fallback', 'merge active_provider');
+assert(merged.providers.length === 1 && merged.providers[0].name === 'fallback', 'merge providers');
+assert(merged.last_error === 'primary unreachable', 'merge last_error');
+assert(merged.generated_at === '2026-01-01T00:00:00Z', 'preserve generated_at');
+
+const clearedErr = mergeStatusWithWs(prevStatus, { type: 'provider_status', last_error: null });
+assert(clearedErr.last_error === null, 'merge clears last_error when null');
+
+assert(mergeStatusWithWs(null, wsDelta) === null, 'merge null prev');
+assert(mergeStatusWithWs(prevStatus, null) === prevStatus, 'merge null ws');
 
 const jetsonBoard = {
   id: 'jetson_orin_nano',
