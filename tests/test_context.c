@@ -162,6 +162,19 @@ int main(void)
 
 	tool_context_test_reset();
 
+	/* Small result buffer must fail closed when serialized JSON exceeds max_len. */
+	tool_context_test_set_unix_time(t_march9_2027());
+	tool_context_set_config(NULL);
+	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
+	{
+		char tiny[32];
+		CHECK(tool_context_get()->execute("{}", tiny, sizeof(tiny)) != 0,
+		      "expects failure when output buffer is too small");
+		CHECK(strstr(tiny, "payload too large") != NULL, "expects payload-too-large error");
+	}
+
+	tool_context_test_reset();
+
 	curl_global_cleanup();
 	puts("test_context OK");
 	return 0;
