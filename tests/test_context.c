@@ -153,6 +153,12 @@ int main(void)
 	tool_context_test_set_http_bodies(GEO_OK, WX_A, HY_OK);
 	CHECK(tool_context_get()->execute("{}", out1, sizeof(out1)) == 0, "snapshot priming exec");
 	{
+		char tiny[80];
+		CHECK(tool_context_get()->execute("{}", tiny, sizeof(tiny)) == -1,
+		      "tiny buffer must fail");
+		CHECK(strstr(tiny, "too large") != NULL, "expects buffer size error");
+	}
+	{
 		char *snap = tool_context_snapshot_json();
 		CHECK(snap != NULL, "snapshot_json alloc");
 		CHECK(strstr(snap, "Berlin") != NULL, "snapshot contains Berlin");
