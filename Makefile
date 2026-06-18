@@ -547,6 +547,17 @@ test_rate_limit: tests/test_rate_limit.c src/gateway/rate_limit.c src/gateway/ra
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -pthread -o $(BINDIR)/$@ tests/test_rate_limit.c src/gateway/rate_limit.c -pthread
 	$(DSYM_SCRIPT)
 
+RELOAD_TEST_O := $(BINDIR)/reload_test.o
+
+$(RELOAD_TEST_O): src/core/reload.c src/core/reload.h src/core/bootstrap.h src/core/config.h src/channels/channel.h src/channels/heartbeat.h src/providers/provider.h src/tools/tool.h
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections $(INC) -c -o $@ src/core/reload.c
+
+test_reload: tests/test_reload.c $(RELOAD_TEST_O) $(CONFIG_O) $(TOML_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) -ffunction-sections $(LDFLAGS) -Wl,--gc-sections $(INC) -o $(BINDIR)/$@ tests/test_reload.c $(RELOAD_TEST_O) $(CONFIG_O) $(TOML_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
 test_daemon_smoke: shellclaw
 	@chmod +x tests/test_daemon_smoke.sh scripts/install.sh scripts/update.sh
 	SHELLCLAW_TEST_BIN="$(BINDIR)/shellclaw" ./tests/test_daemon_smoke.sh
@@ -577,7 +588,7 @@ static:
 		--suppress=constParameterCallback \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_daemon_smoke test_update_script test_install_script test_web_dashboard
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_daemon_smoke test_update_script test_install_script test_web_dashboard
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -605,6 +616,7 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_sandbox
 	$(BINDIR)/test_allowlist
 	$(BINDIR)/test_rate_limit
+	$(BINDIR)/test_reload
 	$(MAKE) test_install_script
 	$(MAKE) test_web_dashboard
 	$(MAKE) test_auth && $(BINDIR)/test_auth
@@ -616,7 +628,7 @@ COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage GATEWAY=0 test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_auth
+	$(MAKE) BUILD=coverage GATEWAY=0 test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_auth
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage GATEWAY=1 shellclaw test_gateway_http test_static; fi
 	@chmod +x scripts/coverage.sh
 	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh
