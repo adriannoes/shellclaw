@@ -425,9 +425,9 @@ $(DISPATCH_TEST_SHIM_O): tests/dispatch_test_shim.c src/core/bootstrap.h src/cor
 	@mkdir -p $(BINDIR)
 	$(CC) $(CFLAGS) $(INC) -c -o $@ tests/dispatch_test_shim.c
 
-test_dispatch: tests/test_dispatch.c $(DISPATCH_O) $(DISPATCH_TEST_SHIM_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(CJSON_O)
+test_dispatch: tests/test_dispatch.c $(DISPATCH_O) $(DISPATCH_TEST_SHIM_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(CJSON_O)
 	@mkdir -p $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_dispatch.c $(DISPATCH_O) $(DISPATCH_TEST_SHIM_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(CJSON_O) $(LDLIBS) -pthread
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_dispatch.c $(DISPATCH_O) $(DISPATCH_TEST_SHIM_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(CJSON_O) $(LDLIBS) -pthread
 	$(DSYM_SCRIPT)
 
 test_channel: tests/test_channel.c $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O)

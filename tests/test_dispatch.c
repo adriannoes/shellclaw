@@ -21,9 +21,9 @@ static char g_last_response[4096];
 static int g_send_calls;
 
 static int mock_send(const char *session_id, const char *text,
-		     const char *attachments_json, size_t attachments_count)
+		     const channel_attachment_t *attachments, size_t attachments_count)
 {
-	(void)attachments_json;
+	(void)attachments;
 	(void)attachments_count;
 	g_send_calls++;
 	if (session_id)
@@ -126,10 +126,9 @@ static int test_reset_command_clears_session(void)
 	ASSERT(g_send_calls == 1);
 	ASSERT(strcmp(g_last_response, "Session cleared.") == 0);
 
-	char *history = NULL;
-	ASSERT(session_load("sess-reset", &history) == 0);
-	ASSERT(history == NULL);
-	free(history);
+	char loaded[1024];
+	ASSERT(session_load("sess-reset", loaded, sizeof(loaded)) == -1);
+	ASSERT(loaded[0] == '\0');
 	memory_cleanup();
 	config_free(cfg);
 	remove(db_path);
