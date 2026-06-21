@@ -419,6 +419,17 @@ test_agent: tests/test_agent.c $(AGENT_O) $(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_agent.c $(AGENT_O) $(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(CJSON_O) $(LDLIBS) -pthread
 	$(DSYM_SCRIPT)
 
+DISPATCH_TEST_SHIM_O := $(BINDIR)/dispatch_test_shim.o
+
+$(DISPATCH_TEST_SHIM_O): tests/dispatch_test_shim.c src/core/bootstrap.h src/core/config.h src/providers/provider.h src/tools/tool.h
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(INC) -c -o $@ tests/dispatch_test_shim.c
+
+test_dispatch: tests/test_dispatch.c $(DISPATCH_O) $(DISPATCH_TEST_SHIM_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_dispatch.c $(DISPATCH_O) $(DISPATCH_TEST_SHIM_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(PROVIDER_COMMON_O) $(CONFIG_O) $(TOML_O) $(MEMORY_O) $(SKILL_O) $(SQLITE3_O) $(CJSON_O) $(LDLIBS) -pthread
+	$(DSYM_SCRIPT)
+
 test_channel: tests/test_channel.c $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O)
 	@mkdir -p $(BINDIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_channel.c $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(LDLIBS)
@@ -588,7 +599,7 @@ static:
 		--suppress=constParameterCallback \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_daemon_smoke test_update_script test_install_script test_web_dashboard
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_dispatch test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_daemon_smoke test_update_script test_install_script test_web_dashboard
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -599,6 +610,7 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_router
 	$(BINDIR)/test_heartbeat
 	$(BINDIR)/test_agent
+	$(BINDIR)/test_dispatch
 	$(BINDIR)/test_channel
 	$(BINDIR)/test_cli
 	$(BINDIR)/test_shell
