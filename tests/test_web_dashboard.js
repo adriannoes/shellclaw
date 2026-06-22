@@ -34,10 +34,28 @@ assert(coerceBool(0) === false, 'zero');
 assert(coerceBool('1') === true, 'string one');
 
 assert(dash.providerSemanticClass('primary', true) === 'dash-green', 'primary green');
+assert(dash.providerSemanticClass('fallback', true) === 'dash-yellow', 'fallback yellow');
+assert(dash.providerSemanticClass('standby', true) === 'dash-yellow', 'standby yellow');
 assert(dash.discordSemanticClass('disconnected') === 'dash-red', 'discord red');
+assert(dash.discordSemanticClass('connecting') === 'dash-yellow', 'discord connecting');
 
 const html = dash.dashboardMarkup({ status: 'ok' }, { providers: [] }, {});
 assert(html.indexOf('Dashboard') !== -1, 'dashboardMarkup');
+
+const failoverHtml = dash.dashboardMarkup(
+  { status: 'ok' },
+  {
+    active_provider: 'stub',
+    last_error: 'stub-b unavailable',
+    providers: [
+      { name: 'stub-b', role: 'unavailable', reachable: false },
+      { name: 'stub', role: 'fallback', reachable: true },
+    ],
+  },
+  {},
+);
+assert(failoverHtml.indexOf('dash-banner-err') !== -1, 'last_error banner');
+assert(failoverHtml.indexOf('stub *') !== -1, 'active provider mark');
 
 const slice = pickStatusSlice({ type: 'provider_status', active_provider: 'stub', providers: [] });
 assert(slice && slice.type === undefined && slice.active_provider === 'stub', 'pickStatusSlice');
