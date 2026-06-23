@@ -120,6 +120,30 @@ static int test_fallback_chain_stub_init_smoke(void)
 	return 0;
 }
 
+static cJSON *find_provider_by_name(cJSON *arr, const char *name)
+{
+	int i;
+	for (i = 0; i < cJSON_GetArraySize(arr); i++) {
+		cJSON *item = cJSON_GetArrayItem(arr, i);
+		cJSON *nm = cJSON_GetObjectItem(item, "name");
+		if (nm && cJSON_IsString(nm) && strcmp(nm->valuestring, name) == 0)
+			return item;
+	}
+	return NULL;
+}
+
+static const char *provider_role(cJSON *pobj)
+{
+	cJSON *r = cJSON_GetObjectItem(pobj, "role");
+	return (r && cJSON_IsString(r)) ? r->valuestring : "";
+}
+
+static int provider_reachable(cJSON *pobj)
+{
+	cJSON *r = cJSON_GetObjectItem(pobj, "reachable");
+	return r && cJSON_IsTrue(r);
+}
+
 static int test_api_status_json_after_stub_init(void)
 {
 	char path[128];
@@ -147,6 +171,111 @@ static int test_api_status_json_after_stub_init(void)
 	cJSON_Delete(root);
 	free(json);
 	p->cleanup();
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_api_status_json_after_failover(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *router;
+	provider_message_t msg;
+	provider_response_t resp;
+	char *json;
+	cJSON *root;
+	cJSON *arr;
+	cJSON *stub_b;
+	cJSON *stub;
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"stub-b\", \"stub\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	router = provider_router_get(cfg);
+	ASSERT(router != NULL);
+	ASSERT(router->init(cfg) == 0);
+	provider_stub_b_set_chat_should_fail(1);
+	memset(&msg, 0, sizeof(msg));
+	msg.role = "user";
+	msg.content = "hi";
+	memset(&resp, 0, sizeof(resp));
+	ASSERT(router->chat(&msg, 1, NULL, 0, &resp) == 0);
+	provider_response_clear(&resp);
+	json = provider_router_api_status_json();
+	ASSERT(json != NULL);
+	root = cJSON_Parse(json);
+	ASSERT(root != NULL);
+	arr = cJSON_GetObjectItem(root, "providers");
+	ASSERT(arr != NULL && cJSON_IsArray(arr));
+	ASSERT(cJSON_GetArraySize(arr) == 2);
+	stub_b = find_provider_by_name(arr, "stub-b");
+	stub = find_provider_by_name(arr, "stub");
+	ASSERT(stub_b != NULL);
+	ASSERT(stub != NULL);
+	ASSERT(strcmp(provider_role(stub_b), "unavailable") == 0);
+	ASSERT(provider_reachable(stub_b) == 0);
+	ASSERT(strcmp(provider_role(stub), "fallback") == 0);
+	ASSERT(provider_reachable(stub) == 1);
+	cJSON_Delete(root);
+	free(json);
+	provider_stub_b_set_chat_should_fail(0);
+	router->cleanup();
+	config_free(cfg);
+	remove(path);
+	return 0;
+}
+
+static int test_api_status_json_after_recovery(void)
+{
+	char path[128];
+	config_t *cfg = NULL;
+	char errbuf[256];
+	const provider_t *router;
+	provider_message_t msg;
+	provider_response_t resp;
+	char *json;
+	cJSON *root;
+	cJSON *arr;
+	cJSON *stub_b;
+	cJSON *stub;
+	time_t t0 = 1000000;
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"stub-b\", \"stub\"") == 0);
+	ASSERT(config_load(path, &cfg, errbuf, sizeof(errbuf)) == 0);
+	router = provider_router_get(cfg);
+	ASSERT(router != NULL);
+	ASSERT(router->init(cfg) == 0);
+	provider_stub_b_set_chat_should_fail(1);
+	memset(&msg, 0, sizeof(msg));
+	msg.role = "user";
+	msg.content = "hi";
+	memset(&resp, 0, sizeof(resp));
+	ASSERT(router->chat(&msg, 1, NULL, 0, &resp) == 0);
+	provider_response_clear(&resp);
+	provider_stub_b_set_chat_should_fail(0);
+	provider_router_periodic_recovery_set_interval_seconds(30);
+	provider_router_periodic_recovery_reset_timer();
+	provider_router_periodic_recovery_tick(t0);
+	json = provider_router_api_status_json();
+	ASSERT(json != NULL);
+	root = cJSON_Parse(json);
+	ASSERT(root != NULL);
+	arr = cJSON_GetObjectItem(root, "providers");
+	ASSERT(arr != NULL && cJSON_IsArray(arr));
+	ASSERT(cJSON_GetArraySize(arr) == 2);
+	stub_b = find_provider_by_name(arr, "stub-b");
+	stub = find_provider_by_name(arr, "stub");
+	ASSERT(stub_b != NULL);
+	ASSERT(stub != NULL);
+	ASSERT(strcmp(provider_role(stub_b), "primary") == 0);
+	ASSERT(provider_reachable(stub_b) == 1);
+	ASSERT(strcmp(provider_role(stub), "standby") == 0);
+	ASSERT(provider_reachable(stub) == 1);
+	cJSON_Delete(root);
+	free(json);
+	provider_router_periodic_recovery_set_interval_seconds(0);
+	router->cleanup();
 	config_free(cfg);
 	remove(path);
 	return 0;
@@ -338,6 +467,8 @@ int main(void)
 	RUN(test_default_provider_key_still_reads_anthropic());
 	RUN(test_fallback_chain_stub_init_smoke());
 	RUN(test_api_status_json_after_stub_init());
+	RUN(test_api_status_json_after_failover());
+	RUN(test_api_status_json_after_recovery());
 	RUN(test_fallback_chain_stub_b_to_stub_chat());
 	RUN(test_error_401_terminal());
 	RUN(test_error_503_retries());
