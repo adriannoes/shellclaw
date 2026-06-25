@@ -10,6 +10,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* TODO-ref(phase5-slice05-H1): g_hw_cfg is a module-local setter global, one
+ * instance of the project-wide tool_X_set_config convention (shell, file,
+ * web_search, asap_invoke, context, hardware). The whole-convention refactor
+ * (pass const config_t *cfg / tool_context_t through tool_t.execute for ALL
+ * tools) is scheduled for v1.0.1; it exceeds the 10-file/300-line PR threshold
+ * and touches tool.h/agent.h vtables + ~30 test sites. See AGENTS.md "Known
+ * debt". */
 const config_t *g_hw_cfg;
 
 int hw_tools_enabled(void)

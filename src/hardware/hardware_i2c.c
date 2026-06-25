@@ -129,6 +129,8 @@ static int set_slave(int fd, uint8_t addr, char *errbuf, size_t errbufsz)
 }
 
 #if defined(__linux__)
+/* addr is already selected via I2C_SLAVE in set_slave() before this is called;
+ * probe_address just issues an I2C_SMBUS_QUICK write to the current slave. */
 static int probe_address(int fd, uint8_t addr)
 {
 	const hardware_i2c_syscalls_t *ops = active_syscalls();

@@ -11,6 +11,7 @@
 static char s_spawn_out_path[256];
 static int s_spawn_fail;
 static int s_spawn_called;
+static int s_spawn_bad_jpeg;
 
 static int argv_has_shell_metachar(const char *s)
 {
@@ -40,21 +41,11 @@ static int argv_all_safe(const char *const *argv)
 	return 1;
 }
 
-static int mock_spawn(char *const argv[], char *errbuf, size_t errbufsz)
+static void spawn_find_out_path(char *const argv[])
 {
-	const char *const *last;
 	int i;
-	(void)errbuf;
-	(void)errbufsz;
-	s_spawn_called = 1;
-	last = hardware_camera_last_argv_for_test();
-	ASSERT(last != NULL);
-	ASSERT(argv_all_safe(last));
-	if (s_spawn_fail) {
-		if (errbuf && errbufsz > 0)
-			snprintf(errbuf, errbufsz, "%s", HARDWARE_CAMERA_ERR_UNAVAILABLE);
-		return -1;
-	}
+
+	s_spawn_out_path[0] = '\0';
 	for (i = 0; argv[i] != NULL; i++) {
 		const char *loc = strstr(argv[i], "location=");
 		if (loc) {
@@ -73,21 +64,57 @@ static int mock_spawn(char *const argv[], char *errbuf, size_t errbufsz)
 			break;
 		}
 	}
-	if (s_spawn_out_path[0] != '\0') {
-		FILE *f = fopen(s_spawn_out_path, "wb");
-		ASSERT(f != NULL);
+}
+
+static int spawn_write_output(int valid_jpeg)
+{
+	FILE *f;
+
+	if (s_spawn_out_path[0] == '\0')
+		return 0;
+	f = fopen(s_spawn_out_path, "wb");
+	ASSERT(f != NULL);
+	if (valid_jpeg) {
 		ASSERT(fputc(0xff, f) != EOF);
 		ASSERT(fputc(0xd8, f) != EOF);
 		ASSERT(fputc(0xff, f) != EOF);
 		ASSERT(fputc(0xd9, f) != EOF);
-		fclose(f);
+	} else {
+		/* Wrong magic bytes so output_jpeg_valid rejects the capture. */
+		ASSERT(fputc(0xde, f) != EOF);
+		ASSERT(fputc(0xad, f) != EOF);
+		ASSERT(fputc(0xbe, f) != EOF);
+		ASSERT(fputc(0xef, f) != EOF);
 	}
+	fclose(f);
+	return 0;
+}
+
+static int mock_spawn(char *const argv[], char *errbuf, size_t errbufsz)
+{
+	const char *const *last;
+	(void)errbuf;
+	(void)errbufsz;
+	s_spawn_called = 1;
+	last = hardware_camera_last_argv_for_test();
+	ASSERT(last != NULL);
+	ASSERT(argv_all_safe(last));
+	spawn_find_out_path(argv);
+	if (s_spawn_fail) {
+		/* Simulate a tool that created the output file before exiting non-zero. */
+		RUN(spawn_write_output(1));
+		if (errbuf && errbufsz > 0)
+			snprintf(errbuf, errbufsz, "%s", HARDWARE_CAMERA_ERR_UNAVAILABLE);
+		return -1;
+	}
+	RUN(spawn_write_output(!s_spawn_bad_jpeg));
 	return 0;
 }
 
 static int setup_mock(void)
 {
 	s_spawn_fail = 0;
+	s_spawn_bad_jpeg = 0;
 	s_spawn_called = 0;
 	s_spawn_out_path[0] = '\0';
 	hardware_camera_set_spawn_for_test(mock_spawn);
@@ -343,6 +370,160 @@ static int test_rpi_csi_argv(void)
 	return 0;
 }
 
+static int argv_contains_after(const char *const *argv, const char *marker,
+			       const char *expected)
+{
+	int i;
+	int seen_marker = 0;
+
+	for (i = 0; argv[i] != NULL; i++) {
+		if (seen_marker && strcmp(argv[i], expected) == 0)
+			return 1;
+		if (strcmp(argv[i], marker) == 0)
+			seen_marker = 1;
+	}
+	return 0;
+}
+
+static int argv_has_prefix(const char *const *argv, const char *prefix)
+{
+	int i;
+
+	for (i = 0; argv[i] != NULL; i++) {
+		if (strncmp(argv[i], prefix, strlen(prefix)) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static int argv_contains(const char *const *argv, const char *token)
+{
+	int i;
+
+	for (i = 0; argv[i] != NULL; i++) {
+		if (strcmp(argv[i], token) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static int test_jetson_csi_quality_in_argv(void)
+{
+	char result[256];
+	char err[128];
+	const char *const *argv;
+	RUN(setup_mock());
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 80, 0,
+				       0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == 0);
+	argv = hardware_camera_last_argv_for_test();
+	ASSERT(argv != NULL);
+	ASSERT(argv_contains_after(argv, "nvjpegenc", "quality=80"));
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 100, 0,
+				       0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == 0);
+	argv = hardware_camera_last_argv_for_test();
+	ASSERT(argv != NULL);
+	ASSERT(argv_contains_after(argv, "nvjpegenc", "quality=100"));
+	teardown();
+	return 0;
+}
+
+static int test_rpi_csi_quality_in_argv(void)
+{
+	char result[256];
+	char err[128];
+	const char *const *argv;
+	RUN(setup_mock());
+	ASSERT(hardware_camera_capture(BOARD_RPI_ZERO2W, "csi", "640x480", 42, 0, 0,
+				       NULL, result, sizeof(result), err,
+				       sizeof(err)) == 0);
+	argv = hardware_camera_last_argv_for_test();
+	ASSERT(argv != NULL);
+	ASSERT(argv_contains(argv, "--quality"));
+	ASSERT(argv_contains_after(argv, "--quality", "42"));
+	teardown();
+	return 0;
+}
+
+static int test_usb_quality_not_in_argv(void)
+{
+	char result[256];
+	char err[128];
+	const char *const *argv;
+	RUN(setup_mock());
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "usb", "320x240", 55, 0,
+				       2, NULL, result, sizeof(result), err,
+				       sizeof(err)) == 0);
+	argv = hardware_camera_last_argv_for_test();
+	ASSERT(argv != NULL);
+	/* UVC MJPG quality is firmware-controlled; no quality flag may reach v4l2-ctl. */
+	ASSERT(argv_has_prefix(argv, "quality=") == 0);
+	ASSERT(argv_contains(argv, "--quality") == 0);
+	teardown();
+	return 0;
+}
+
+static int test_temp_jpeg_unlinked_on_spawn_failure(void)
+{
+	char result[256];
+	char err[128];
+	char leaked_path[256];
+	RUN(setup_mock());
+	s_spawn_fail = 1;
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 75, 0,
+				       0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == -1);
+	ASSERT(strstr(err, HARDWARE_CAMERA_ERR_UNAVAILABLE) != NULL);
+	ASSERT(s_spawn_out_path[0] != '\0');
+	snprintf(leaked_path, sizeof(leaked_path), "%s", s_spawn_out_path);
+	ASSERT(access(leaked_path, F_OK) != 0);
+	teardown();
+	return 0;
+}
+
+static int test_temp_jpeg_unlinked_on_invalid_jpeg(void)
+{
+	char result[256];
+	char err[128];
+	char leaked_path[256];
+	RUN(setup_mock());
+	s_spawn_bad_jpeg = 1;
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 75, 0,
+				       0, NULL, result, sizeof(result), err,
+				       sizeof(err)) == -1);
+	ASSERT(strstr(err, HARDWARE_CAMERA_ERR_UNAVAILABLE) != NULL);
+	ASSERT(s_spawn_out_path[0] != '\0');
+	snprintf(leaked_path, sizeof(leaked_path), "%s", s_spawn_out_path);
+	ASSERT(access(leaked_path, F_OK) != 0);
+	teardown();
+	return 0;
+}
+
+static int test_caller_supplied_output_not_unlinked_on_error(void)
+{
+	char result[256];
+	char err[128];
+	char caller_path[128];
+	FILE *f;
+	RUN(setup_mock());
+	ASSERT(test_runner_mkstemp_path("shellclaw_cam_caller", caller_path,
+					 sizeof(caller_path)) == 0);
+	f = fopen(caller_path, "wb");
+	ASSERT(f != NULL);
+	ASSERT(fputc('x', f) != EOF);
+	fclose(f);
+	s_spawn_fail = 1;
+	ASSERT(hardware_camera_capture(BOARD_JETSON_ORIN_NANO, "csi", "640x480", 75, 0,
+				       0, caller_path, result, sizeof(result), err,
+				       sizeof(err)) == -1);
+	/* Caller-owned path must survive the module's internal failure. */
+	ASSERT(access(caller_path, F_OK) == 0);
+	unlink(caller_path);
+	teardown();
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_capture_requires_init());
@@ -358,6 +539,12 @@ int main(void)
 	RUN(test_spawn_failure_unavailable());
 	RUN(test_usb_backend_argv());
 	RUN(test_rpi_csi_argv());
+	RUN(test_jetson_csi_quality_in_argv());
+	RUN(test_rpi_csi_quality_in_argv());
+	RUN(test_usb_quality_not_in_argv());
+	RUN(test_temp_jpeg_unlinked_on_spawn_failure());
+	RUN(test_temp_jpeg_unlinked_on_invalid_jpeg());
+	RUN(test_caller_supplied_output_not_unlinked_on_error());
 	printf("All hardware_camera tests passed.\n");
 	return 0;
 }

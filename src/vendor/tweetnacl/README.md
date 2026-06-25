@@ -43,3 +43,7 @@ and integrate freely.
 - **Build:** `make test_tweetnacl_smoke` compiles with `TWEETNACL_CFLAGS` (project `CFLAGS` plus
   `-Wno-error=sign-compare` and `-Wno-error=unterminated-string-initialization` so unmodified
   upstream stays warning-clean under `CI=true` / `-Werror`).
+- **UBSan left-shift-of-negative (`tweetnacl.c:281,685`):** the 20140427 pin uses signed shifts
+  that trip UBSan under `-fsanitize=undefined`. This is expected upstream behavior; `-fwrapv` is
+  included in `TWEETNACL_CFLAGS` (Makefile) to make signed overflow well-defined (wraparound),
+  which silences the warnings and matches the algorithm's intent.

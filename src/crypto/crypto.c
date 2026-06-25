@@ -145,6 +145,7 @@ int crypto_ed25519_verify(const uint8_t *public_key, size_t public_key_len,
 	unsigned long long smlen;
 	unsigned long long mlen;
 	int rc;
+	int content_match;
 	if (!public_key || public_key_len < crypto_sign_ed25519_PUBLICKEYBYTES ||
 	    (!message && message_len > 0U) || !signature ||
 	    signature_len < CRYPTO_ED25519_SIGNATURE_SIZE)
@@ -166,8 +167,13 @@ int crypto_ed25519_verify(const uint8_t *public_key, size_t public_key_len,
 	mlen = 0;
 	rc = crypto_sign_ed25519_open(opened, &mlen, sm, smlen, public_key);
 	free(sm);
-	if (rc != 0 || mlen != (unsigned long long)message_len ||
-	    memcmp(opened, message, message_len) != 0) {
+	/* memcmp with n==0 and a NULL pointer is UB per a strict reading of C;
+	 * skip it for empty messages (NULL,0 is a valid verify input per the
+	 * line-149 guard). */
+	content_match = 1;
+	if (message_len > 0U)
+		content_match = (memcmp(opened, message, message_len) == 0);
+	if (rc != 0 || mlen != (unsigned long long)message_len || !content_match) {
 		free(opened);
 		return 0;
 	}

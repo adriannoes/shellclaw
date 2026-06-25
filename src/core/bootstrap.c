@@ -14,6 +14,7 @@
 #include "gateway/auth.h"
 #include "gateway/http.h"
 #include "gateway/ws.h"
+#include "asap/manifest_keys.h"
 #endif
 #include <stdio.h>
 #include <stdlib.h>
@@ -261,6 +262,25 @@ int init_subsystems(config_t *cfg)
 		char *code = auth_get_or_create_pairing_code(g_auth_ctx);
 		if (code) {
 			free(code);
+		}
+		/* Create/load signing keys eagerly at gateway startup so the FIRST
+		 * unauthenticated /.well-known/asap/manifest.json request never
+		 * triggers keypair creation + disk fsync (DoS surface). The gateway
+		 * must not start if it cannot sign manifests. */
+		{
+			char keys_err[256] = {0};
+
+			if (manifest_keys_ensure_loaded(keys_err, sizeof(keys_err)) != 0) {
+				fprintf(stderr, "shellclaw: signing keys unavailable: %s\n",
+					keys_err[0] ? keys_err : "unknown error");
+				auth_cleanup(g_auth_ctx);
+				g_auth_ctx = NULL;
+				channels_cleanup();
+				providers_cleanup();
+				skills_cleanup();
+				memory_cleanup();
+				return -1;
+			}
 		}
 		if (http_start(cfg, g_auth_ctx, g_config_path) != 0) {
 			fprintf(stderr, "Error: gateway start failed\n");

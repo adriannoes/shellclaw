@@ -39,6 +39,8 @@ static int assert_manifest_shape(cJSON *parsed, const char *expect_id,
 	cJSON *state_persistence;
 	cJSON *streaming;
 	cJSON *mcp_tools;
+	cJSON *ttl_seconds;
+	cJSON *supported_versions;
 
 	id = cJSON_GetObjectItem(parsed, "id");
 	ASSERT(id != NULL && cJSON_IsString(id));
@@ -70,7 +72,7 @@ static int assert_manifest_shape(cJSON *parsed, const char *expect_id,
 	ASSERT(cJSON_GetArraySize(mcp_tools) == 0);
 	hardware = cJSON_GetObjectItem(capabilities, "hardware");
 	ASSERT(hardware != NULL && cJSON_IsObject(hardware));
-	ASSERT(strcmp(cJSON_GetObjectItem(hardware, "class")->valuestring, expect_hw_class) == 0);
+	ASSERT(strcmp(cJSON_GetObjectItem(hardware, "class_")->valuestring, expect_hw_class) == 0);
 	ASSERT(strcmp(cJSON_GetObjectItem(hardware, "model")->valuestring, expect_hw_model) == 0);
 	ASSERT(cJSON_GetObjectItem(hardware, "io") != NULL);
 	inference = cJSON_GetObjectItem(capabilities, "inference");
@@ -91,6 +93,14 @@ static int assert_manifest_shape(cJSON *parsed, const char *expect_id,
 	ASSERT(strstr(asap_ep->valuestring, "/asap") != NULL);
 	ASSERT(cJSON_GetObjectItem(endpoints, "health") == NULL);
 	ASSERT(cJSON_GetObjectItem(endpoints, "manifest") == NULL);
+	/* Upstream default-populated fields (SIG path A): ttl_seconds and
+	 * supported_versions must be present with the upstream defaults. */
+	ttl_seconds = cJSON_GetObjectItem(parsed, "ttl_seconds");
+	ASSERT(ttl_seconds != NULL && cJSON_IsNumber(ttl_seconds));
+	ASSERT(ttl_seconds->valuedouble == 300.0);
+	supported_versions = cJSON_GetObjectItem(parsed, "supported_versions");
+	ASSERT(supported_versions != NULL && cJSON_IsArray(supported_versions));
+	ASSERT(cJSON_GetArraySize(supported_versions) >= 1);
 	return 0;
 }
 

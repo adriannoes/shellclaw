@@ -27,12 +27,14 @@ int hardware_camera_is_available(void);
  * Capture a still frame to a JPEG file.
  *
  * Base64 encoding is deferred to Phase 5 slice 02; on success @p result_path receives
- * the output JPEG path (caller buffer or auto-generated temp file).
+ * the output JPEG path (caller buffer or auto-generated temp file). When @p output_path
+ * is NULL the module owns the temp file: it unlinks it on internal failure (spawn or
+ * JPEG-validation error) and leaves it in place on success for the caller to consume.
  *
  * @param board Active board id (from #board_detect).
  * @param camera_type Config value: "csi", "usb", or "auto".
  * @param resolution "WxH" (digits only).
- * @param quality JPEG quality 1–100 (reserved for slice 02; validated only).
+ * @param quality JPEG quality 1–100 (applied to nvjpegenc/libcamera; ignored on USB UVC MJPG).
  * @param sensor_id CSI sensor index (Jetson nvarguscamerasrc).
  * @param video_index USB /dev/videoN index.
  * @param output_path Optional output path; NULL selects a secure temp file.

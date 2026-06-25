@@ -37,6 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -53,21 +58,26 @@ jobs:
           ./scripts/dump_manifest.sh -o /tmp/manifest.json
           test -s /tmp/manifest.json
           python3 -c "import json; json.load(open('/tmp/manifest.json'))"
-          if command -v pip3 >/dev/null 2>&1; then
-            pip3 install --quiet 'asap>=0.1' 2>/dev/null || true
-          fi
-          if python3 -c "from asap.models.entities import Manifest" 2>/dev/null; then
-            python3 <<'PY'
+          pip3 install --quiet 'asap-protocol==2.5.0'
+          # Validate the inner manifest against the upstream Pydantic model and the
+          # full SignedManifest against the upstream signature verifier. Both must
+          # hard-fail (non-zero exit) on rejection -- the `|| echo`/`if ...; then`
+          # patterns previously masked validation failures and left the job green.
+          python3 <<'PY'
           import json
+          import sys
           from asap.models.entities import Manifest
+          from asap.crypto.signing import verify_manifest
+          from asap.crypto.models import SignedManifest
           with open("/tmp/manifest.json") as f:
               data = json.load(f)
           Manifest.model_validate(data["manifest"])
           print("inner manifest: Pydantic OK")
+          sm = SignedManifest.model_validate(data)
+          ok = verify_manifest(sm)
+          print("upstream verify_manifest:", ok)
+          sys.exit(0 if ok else 1)
           PY
-          else
-            echo "asap package not installed; skipped Pydantic validation"
-          fi
 
   publish-manifest:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -80,6 +90,11 @@ jobs:
       SHELLCLAW_ASAP_PUBLIC_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
 
       - name: Install dependencies
         run: |
@@ -102,21 +117,24 @@ jobs:
       - name: Validate manifest JSON (optional)
         run: |
           python3 -c "import json; json.load(open('docs/manifest.json'))"
-          if command -v pip3 >/dev/null 2>&1; then
-            pip3 install --quiet 'asap>=0.1' 2>/dev/null || true
-          fi
-          if python3 -c "from asap.models.entities import Manifest" 2>/dev/null; then
-            python3 <<'PY'
+          pip3 install --quiet 'asap-protocol==2.5.0'
+          # Validate the inner manifest + upstream signature; hard-fail on rejection
+          # (the prior `|| echo` / `if ...; then` patterns masked failures).
+          python3 <<'PY'
           import json
+          import sys
           from asap.models.entities import Manifest
+          from asap.crypto.signing import verify_manifest
+          from asap.crypto.models import SignedManifest
           with open("docs/manifest.json") as f:
               data = json.load(f)
           Manifest.model_validate(data["manifest"])
           print("inner manifest: Pydantic OK")
+          sm = SignedManifest.model_validate(data)
+          ok = verify_manifest(sm)
+          print("upstream verify_manifest:", ok)
+          sys.exit(0 if ok else 1)
           PY
-          else
-            echo "asap package not installed; skipped Pydantic validation"
-          fi
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

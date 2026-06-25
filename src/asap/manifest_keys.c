@@ -2,12 +2,16 @@
  * @file manifest_keys.c
  * @brief Ed25519 key load, persist, and rotation for ASAP signed manifests.
  */
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L
 
 #include "asap/manifest_keys.h"
 #include "core/config.h"
 #include "crypto/crypto.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -21,6 +25,8 @@
 #define MANIFEST_PRIV_FILENAME "ed25519.priv"
 #define MANIFEST_PUB_FILENAME "ed25519.pub"
 #define MANIFEST_KEY_FILE_MODE 0600
+/* Number of most-recent .bak.<ts> backups kept per key after rotation. */
+#define MANIFEST_KEY_BACKUPS_KEEP 5
 
 static uint8_t g_manifest_pubkey[CRYPTO_ED25519_PUBLIC_KEY_SIZE];
 static uint8_t g_manifest_privkey[CRYPTO_ED25519_PRIVATE_KEY_SIZE];
@@ -110,7 +116,10 @@ static int manifest_priv_permissions_ok(const char *priv_path)
 {
 	struct stat st;
 
-	if (stat(priv_path, &st) != 0)
+	/* lstat, not stat: a symlink is S_ISLNK (not S_ISREG) here, so a symlinked
+	 * priv key whose target may be permissive is rejected by the S_ISREG check
+	 * on the link itself rather than following it to the target. */
+	if (lstat(priv_path, &st) != 0)
 		return -1;
 	if (!S_ISREG(st.st_mode))
 		return -1;
@@ -196,13 +205,17 @@ static int manifest_read_key_file(const char *path, uint8_t *buf, size_t len)
 	size_t off = 0;
 	struct stat st;
 
-	if (stat(path, &st) != 0 || !S_ISREG(st.st_mode))
-		return -1;
-	if ((size_t)st.st_size != len)
-		return -1;
-	fd = open(path, O_RDONLY);
+	/* O_NOFOLLOW rejects symlinks at open time (fails with ELOOP), and fstat on
+	 * the fd closes the stat(path)->open(path) TOCTOU: the regular-file and size
+	 * checks now apply to the exact inode we read. */
+	fd = open(path, O_RDONLY | O_NOFOLLOW);
 	if (fd < 0)
 		return -1;
+	if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+	    (size_t)st.st_size != len) {
+		close(fd);
+		return -1;
+	}
 	while (off < len) {
 		ssize_t n = read(fd, buf + off, len - off);
 		if (n <= 0) {
@@ -251,11 +264,123 @@ static int manifest_keys_create_and_persist(const char *priv_path, const char *p
 	return 0;
 }
 
+struct manifest_bak_entry {
+	char path[576];
+	long long ts;
+};
+
+/* Parse the ".bak.<digits>" suffix of a backup filename into its timestamp.
+ * @prefix is the base key filename (e.g. "ed25519.priv"); a matching name is
+ * "<prefix>.bak.<digits>". Non-numeric suffixes (or no suffix) return -1 so
+ * callers skip them rather than crash. */
+static int manifest_keys_parse_bak_ts(const char *name, const char *prefix,
+	char *out_path, size_t out_sz, long long *ts_out)
+{
+	size_t plen;
+	const char *suffix;
+	long long ts;
+	char *end;
+
+	plen = strlen(prefix);
+	if (strncmp(name, prefix, plen) != 0)
+		return -1;
+	suffix = name + plen;
+	if (strncmp(suffix, ".bak.", 5) != 0 || suffix[5] == '\0')
+		return -1;
+	errno = 0;
+	ts = strtoll(suffix + 5, &end, 10);
+	if (errno != 0 || *end != '\0' || end == suffix + 5)
+		return -1;
+	if (snprintf(out_path, out_sz, "%s", name) >= (int)out_sz)
+		return -1;
+	*ts_out = ts;
+	return 0;
+}
+
+/* Collect .bak.* entries for one key prefix (priv or pub), sorted by timestamp
+ * descending so the newest stay first. Returns the count found (<= cap). */
+static int manifest_keys_collect_baks(const char *keys_dir, const char *prefix,
+	struct manifest_bak_entry *out, int cap)
+{
+	DIR *d;
+	struct dirent *ent;
+	int count;
+
+	count = 0;
+	d = opendir(keys_dir);
+	if (!d)
+		return 0;
+	while ((ent = readdir(d)) != NULL && count < cap) {
+		struct manifest_bak_entry e;
+		long long ts;
+		int i;
+
+		if (manifest_keys_parse_bak_ts(ent->d_name, prefix, e.path,
+			    sizeof(e.path), &ts) != 0)
+			continue;
+		e.ts = ts;
+		/* insertion sort descending: keep newest first. */
+		for (i = count; i > 0 && out[i - 1].ts < e.ts; i--)
+			out[i] = out[i - 1];
+		out[i] = e;
+		count++;
+	}
+	closedir(d);
+	return count;
+}
+
+/* Unlink .bak.* entries for one prefix beyond the N most-recent (already sorted
+ * descending by manifest_keys_collect_baks). */
+static void manifest_keys_prune_prefix(const char *keys_dir,
+	const struct manifest_bak_entry *entries, int count)
+{
+	int i;
+	char full[576];
+
+	for (i = MANIFEST_KEY_BACKUPS_KEEP; i < count; i++) {
+		if (snprintf(full, sizeof(full), "%s/%s", keys_dir,
+			    entries[i].path) >= (int)sizeof(full))
+			continue;
+		(void)unlink(full);
+	}
+}
+
+/* Keep only the N most-recent .bak.<ts> backups per key, oldest first pruned.
+ * Called on the rotation success path so .bak.* growth is bounded on edge HW. */
+static void manifest_keys_prune_backups(const char *keys_dir)
+{
+	struct manifest_bak_entry priv_baks[64];
+	struct manifest_bak_entry pub_baks[64];
+	int priv_n;
+	int pub_n;
+
+	priv_n = manifest_keys_collect_baks(keys_dir, MANIFEST_PRIV_FILENAME,
+		priv_baks, (int)(sizeof(priv_baks) / sizeof(priv_baks[0])));
+	manifest_keys_prune_prefix(keys_dir, priv_baks, priv_n);
+	pub_n = manifest_keys_collect_baks(keys_dir, MANIFEST_PUB_FILENAME,
+		pub_baks, (int)(sizeof(pub_baks) / sizeof(pub_baks[0])));
+	manifest_keys_prune_prefix(keys_dir, pub_baks, pub_n);
+}
+
 static void manifest_keys_set_error(char *err, size_t err_len, const char *msg)
 {
 	if (!err || err_len == 0U)
 		return;
 	snprintf(err, err_len, "%s", msg);
+}
+
+/* Ed25519 secret key is seed(32)||pub(32); the embedded pub must match the
+ * standalone pub file, otherwise the on-disk keypair is inconsistent and must
+ * not be used to sign. */
+static int manifest_keys_pub_matches_priv(char *err, size_t err_len)
+{
+	if (memcmp(g_manifest_pubkey, g_manifest_privkey + CRYPTO_ED25519_PUBLIC_KEY_SIZE,
+		    CRYPTO_ED25519_PUBLIC_KEY_SIZE) != 0) {
+		manifest_keys_set_error(err, err_len,
+			"ed25519.pub does not match ed25519.priv");
+		return -1;
+	}
+	return 0;
 }
 
 static int manifest_keys_load_from_disk(const char *priv_path, const char *pub_path,
@@ -276,6 +401,8 @@ static int manifest_keys_load_from_disk(const char *priv_path, const char *pub_p
 		manifest_keys_set_error(err, err_len, "failed to read ed25519.pub");
 		return -1;
 	}
+	if (manifest_keys_pub_matches_priv(err, err_len) != 0)
+		return -1;
 	return 0;
 }
 
@@ -326,10 +453,29 @@ int manifest_keys_load(char *err, size_t err_len)
 	return 0;
 }
 
+/* Derive the keys directory (everything up to the last '/') of a key path.
+ * Mirrors manifest_keys_ensure_dir's strrchr logic; -1 if no usable parent. */
+static int manifest_keys_dir_of(const char *key_path, char *out, size_t out_sz)
+{
+	const char *slash;
+	size_t len;
+
+	slash = strrchr(key_path, '/');
+	if (!slash || slash == key_path)
+		return -1;
+	len = (size_t)(slash - key_path);
+	if (len >= out_sz)
+		return -1;
+	memcpy(out, key_path, len);
+	out[len] = '\0';
+	return 0;
+}
+
 int manifest_keys_rotate(char *err, size_t err_len)
 {
 	char priv_path[512];
 	char pub_path[512];
+	char keys_dir[512];
 	uint8_t old_priv[CRYPTO_ED25519_PRIVATE_KEY_SIZE];
 	uint8_t old_pub[CRYPTO_ED25519_PUBLIC_KEY_SIZE];
 	int had_old_keys;
@@ -395,15 +541,25 @@ int manifest_keys_rotate(char *err, size_t err_len)
 			CRYPTO_ED25519_PUBLIC_KEY_SIZE) != 0) {
 		manifest_keys_set_error(err, err_len, "failed to write ed25519.pub");
 		if (had_old_keys) {
+			/* Restore old_priv to disk (the new pub write failed atomically via
+			 * rename, so the live pub is still old_pub) and reset in-memory
+			 * state to the OLD keys so memory matches the on-disk pair instead
+			 * of holding the rolled keys that never landed on disk. */
 			if (manifest_write_key_file_atomic(priv_path, old_priv,
 					sizeof(old_priv)) != 0)
 				manifest_keys_set_error(err, err_len,
 					"failed to restore ed25519.priv after pub write error");
+			memcpy(g_manifest_pubkey, old_pub, sizeof(g_manifest_pubkey));
+			memcpy(g_manifest_privkey, old_priv, sizeof(g_manifest_privkey));
+			g_manifest_keys_loaded = 1;
 		} else {
 			unlink(priv_path);
+			manifest_keys_clear_loaded();
 		}
 		return -1;
 	}
 	g_manifest_keys_loaded = 1;
+	if (had_old_keys && manifest_keys_dir_of(priv_path, keys_dir, sizeof(keys_dir)) == 0)
+		manifest_keys_prune_backups(keys_dir);
 	return 0;
 }

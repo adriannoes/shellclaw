@@ -216,7 +216,7 @@ static int make_temp_output(char *path, size_t pathsz)
 	unlink(tmpl);
 	if (strlen(tmpl) + 5 >= pathsz)
 		return -1;
-	/* Auto-generated paths are returned to the caller; caller must unlink when done. */
+	/* Auto path returned to the caller on success; module unlinks it on internal error. */
 	snprintf(path, pathsz, "%s.jpg", tmpl);
 	return 0;
 }
@@ -240,8 +240,9 @@ static int output_jpeg_valid(const char *path)
 }
 
 static int build_jetson_csi_argv(char **argv, char *arg0, char *arg1, char *arg2,
-				 size_t arg_bufsz, unsigned int width, unsigned int height,
-				 int sensor_id, const char *out_path)
+				 char *arg_q, size_t arg_bufsz, unsigned int width,
+				 unsigned int height, int sensor_id, int quality,
+				 const char *out_path)
 {
 	int n;
 	n = snprintf(arg0, arg_bufsz, "sensor-id=%d", sensor_id);
@@ -255,6 +256,10 @@ static int build_jetson_csi_argv(char **argv, char *arg0, char *arg1, char *arg2
 	n = snprintf(arg2, arg_bufsz, "location=%s", out_path);
 	if (n < 0 || (size_t)n >= arg_bufsz)
 		return -1;
+	/* nvjpegenc exposes a 0-100 quality property; emit it as its own argv token. */
+	n = snprintf(arg_q, arg_bufsz, "quality=%d", quality);
+	if (n < 0 || (size_t)n >= arg_bufsz)
+		return -1;
 	argv[0] = "gst-launch-1.0";
 	argv[1] = "-e";
 	argv[2] = "nvarguscamerasrc";
@@ -264,18 +269,22 @@ static int build_jetson_csi_argv(char **argv, char *arg0, char *arg1, char *arg2
 	argv[6] = arg1;
 	argv[7] = "!";
 	argv[8] = "nvjpegenc";
-	argv[9] = "!";
-	argv[10] = "filesink";
-	argv[11] = arg2;
-	argv[12] = NULL;
+	argv[9] = arg_q;
+	argv[10] = "!";
+	argv[11] = "filesink";
+	argv[12] = arg2;
+	argv[13] = NULL;
 	return 0;
 }
 
 static int build_usb_argv(char **argv, char *arg0, char *arg1, size_t arg_bufsz,
 			  unsigned int width, unsigned int height, int video_index,
-			  const char *out_path)
+			  int quality, const char *out_path)
 {
 	int n;
+	/* UVC MJPG quality is set by camera firmware; v4l2-ctl has no quality flag, so
+	 * quality is accepted for builder-signature uniformity but intentionally ignored. */
+	(void)quality;
 	n = snprintf(arg0, arg_bufsz, "/dev/video%d", video_index);
 	if (n < 0 || (size_t)n >= arg_bufsz)
 		return -1;
@@ -297,10 +306,12 @@ static int build_usb_argv(char **argv, char *arg0, char *arg1, size_t arg_bufsz,
 }
 
 static int build_rpi_csi_argv(char **argv, char *wbuf, size_t wbufsz, char *hbuf, size_t hbufsz,
-			      unsigned int width, unsigned int height, const char *out_path)
+			      char *qbuf, size_t qbufsz, unsigned int width, unsigned int height,
+			      int quality, const char *out_path)
 {
 	snprintf(wbuf, wbufsz, "%u", width);
 	snprintf(hbuf, hbufsz, "%u", height);
+	snprintf(qbuf, qbufsz, "%d", quality);
 	argv[0] = "libcamera-still";
 	argv[1] = "--output";
 	argv[2] = (char *)out_path;
@@ -308,10 +319,12 @@ static int build_rpi_csi_argv(char **argv, char *wbuf, size_t wbufsz, char *hbuf
 	argv[4] = wbuf;
 	argv[5] = "--height";
 	argv[6] = hbuf;
-	argv[7] = "--nopreview";
-	argv[8] = "--timeout";
-	argv[9] = "1000";
-	argv[10] = NULL;
+	argv[7] = "--quality";
+	argv[8] = qbuf;
+	argv[9] = "--nopreview";
+	argv[10] = "--timeout";
+	argv[11] = "1000";
+	argv[12] = NULL;
 	return 0;
 }
 
@@ -388,7 +401,8 @@ static int validate_capture_inputs(board_id_t board, const char *camera_type,
 }
 
 static int prepare_capture_output_path(const char *output_path, char *out_path,
-				       size_t out_pathsz, char *errbuf, size_t errbufsz)
+				       size_t out_pathsz, int *auto_output, char *errbuf,
+				       size_t errbufsz)
 {
 	if (output_path && output_path[0] != '\0') {
 		if (!path_chars_safe(output_path)) {
@@ -396,49 +410,61 @@ static int prepare_capture_output_path(const char *output_path, char *out_path,
 			return -1;
 		}
 		snprintf(out_path, out_pathsz, "%s", output_path);
+		*auto_output = 0;
 		return 0;
 	}
 	if (make_temp_output(out_path, out_pathsz) != 0) {
 		set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
 		return -1;
 	}
+	/* Module owns auto-generated temp files and must unlink them on internal error. */
+	*auto_output = 1;
 	return 0;
 }
 
 static int build_argv_and_run(camera_cli_kind_t kind, unsigned int width,
 			      unsigned int height, int sensor_id, int video_index,
-			      const char *out_path, char *result_path, size_t result_pathsz,
-			      char *errbuf, size_t errbufsz)
+			      int quality, int auto_output, const char *out_path,
+			      char *result_path, size_t result_pathsz, char *errbuf,
+			      size_t errbufsz)
 {
 	char *argv[HARDWARE_CAMERA_ARGV_MAX];
 	char arg0[ARG_BUF_SZ];
 	char arg1[CAPS_BUF_SZ];
 	char arg2[ARG_BUF_SZ];
+	char arg_q[ARG_BUF_SZ];
 	char rpi_wbuf[16];
 	char rpi_hbuf[16];
+	char rpi_qbuf[16];
 
 	memset(argv, 0, sizeof(argv));
 	if (kind == CAMERA_CLI_JETSON_CSI) {
-		if (build_jetson_csi_argv(argv, arg0, arg1, arg2, ARG_BUF_SZ, width, height,
-					  sensor_id, out_path) != 0) {
+		if (build_jetson_csi_argv(argv, arg0, arg1, arg2, arg_q, ARG_BUF_SZ, width,
+					  height, sensor_id, quality, out_path) != 0) {
 			set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
 			return -1;
 		}
 	} else if (kind == CAMERA_CLI_USB_UVC) {
 		if (build_usb_argv(argv, arg0, arg1, ARG_BUF_SZ, width, height, video_index,
-				   out_path) != 0) {
+				   quality, out_path) != 0) {
 			set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
 			return -1;
 		}
 	} else if (build_rpi_csi_argv(argv, rpi_wbuf, sizeof(rpi_wbuf), rpi_hbuf,
-				       sizeof(rpi_hbuf), width, height, out_path) != 0) {
+				       sizeof(rpi_hbuf), rpi_qbuf, sizeof(rpi_qbuf), width,
+				       height, quality, out_path) != 0) {
 		set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
 		return -1;
 	}
-	if (run_cli(argv, errbuf, errbufsz) != 0)
+	if (run_cli(argv, errbuf, errbufsz) != 0) {
+		if (auto_output)
+			unlink(out_path);
 		return -1;
+	}
 	if (!output_jpeg_valid(out_path)) {
 		set_err(errbuf, errbufsz, HARDWARE_CAMERA_ERR_UNAVAILABLE);
+		if (auto_output)
+			unlink(out_path);
 		return -1;
 	}
 	snprintf(result_path, result_pathsz, "%s", out_path);
@@ -454,14 +480,16 @@ int hardware_camera_capture(board_id_t board, const char *camera_type,
 	unsigned int width = 0;
 	unsigned int height = 0;
 	camera_cli_kind_t kind = CAMERA_CLI_NONE;
+	int auto_output = 0;
 
 	if (validate_capture_inputs(board, camera_type, resolution, quality, sensor_id,
 				    video_index, result_path, result_pathsz, &width, &height,
 				    &kind, errbuf, errbufsz) != 0)
 		return -1;
-	if (prepare_capture_output_path(output_path, out_path, sizeof(out_path), errbuf,
-					errbufsz) != 0)
+	if (prepare_capture_output_path(output_path, out_path, sizeof(out_path),
+					&auto_output, errbuf, errbufsz) != 0)
 		return -1;
-	return build_argv_and_run(kind, width, height, sensor_id, video_index, out_path,
-				  result_path, result_pathsz, errbuf, errbufsz);
+	return build_argv_and_run(kind, width, height, sensor_id, video_index, quality,
+				  auto_output, out_path, result_path, result_pathsz, errbuf,
+				  errbufsz);
 }

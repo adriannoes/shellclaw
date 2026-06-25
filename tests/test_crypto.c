@@ -152,6 +152,28 @@ static int test_ed25519_empty_message_sign(void)
 	return 0;
 }
 
+/* Exercises the zero-length + NULL pointer verify path (the M0 memcmp guard):
+ * sign an empty message and verify with (NULL, 0). Deterministic seed keeps
+ * the assertion reproducible and avoids /dev/urandom dependencies. */
+static int test_ed25519_verify_empty_message_null_pointer(void)
+{
+	static const uint8_t seed[32] = {
+		0x9aU, 0x12U, 0x7cU, 0xe4U, 0x55U, 0xabU, 0x01U, 0xf3U,
+		0x6dU, 0x8eU, 0xc2U, 0x37U, 0xb0U, 0x41U, 0x9dU, 0xa6U,
+		0xeeU, 0x30U, 0x5bU, 0x14U, 0x21U, 0x77U, 0xf9U, 0x88U,
+		0x04U, 0x6aU, 0x3bU, 0xd1U, 0xc0U, 0x52U, 0x2eU, 0x7fU
+	};
+	uint8_t pk[CRYPTO_ED25519_PUBLIC_KEY_SIZE];
+	uint8_t sk[CRYPTO_ED25519_PRIVATE_KEY_SIZE];
+	uint8_t sig[CRYPTO_ED25519_SIGNATURE_SIZE];
+	crypto_test_set_randombytes_seed(seed);
+	ASSERT(crypto_ed25519_keypair(pk, sk) == 0);
+	ASSERT(crypto_ed25519_sign(sk, sizeof(sk), NULL, 0U, sig, sizeof(sig)) == 0);
+	ASSERT(crypto_ed25519_verify(pk, sizeof(pk), NULL, 0U, sig, sizeof(sig)) == 1);
+	crypto_test_clear_randombytes_seed();
+	return 0;
+}
+
 static int test_base64_roundtrip_and_rejects(void)
 {
 	const uint8_t raw[] = { 0x00U, 0xffU, 0x10U, 0x20U };
@@ -215,6 +237,7 @@ int main(void)
 	RUN(test_ed25519_rfc8032_vector2());
 	RUN(test_ed25519_keypair_fails_without_rng());
 	RUN(test_ed25519_empty_message_sign());
+	RUN(test_ed25519_verify_empty_message_null_pointer());
 	RUN(test_base64_roundtrip_and_rejects());
 	RUN(test_ed25519_sign_null_args());
 	RUN(test_ed25519_verify_null_args());
