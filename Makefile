@@ -51,7 +51,13 @@ VENDOR_CFLAGS := $(filter-out -Werror,$(CFLAGS))
 # -Wunterminated-string-initialization exists on newer Clang/GCC only (not Ubuntu CI GCC 13).
 TWEETNACL_WNO_UNTERM := $(shell $(CC) -Wno-error=unterminated-string-initialization -E -x c -o /dev/null /dev/null 2>&1 \
 	| grep -qE 'unrecognized|unknown option|no option' || echo -Wno-error=unterminated-string-initialization)
-TWEETNACL_CFLAGS := $(CFLAGS) -Wno-error=sign-compare $(TWEETNACL_WNO_UNTERM)
+TWEETNACL_CFLAGS := $(CFLAGS) -Wno-error=sign-compare $(TWEETNACL_WNO_UNTERM) -fwrapv
+# cJSON (vendored): cJSON_CreateNumber casts the double to int unconditionally, which is UB for
+# NaN/Inf (NaN fails both saturation comparisons and falls into the plain (int)cast). ShellClaw's
+# JCS layer rejects NaN/Inf afterward (jcs_canonicalize returns -1), but the cJSON cast already
+# tripped UBSan. -fno-sanitize=float-cast-overflow is a no-op without -fsanitize and only disables
+# that one check for this vendored file; ShellClaw src/ keeps full UBSan coverage under test-sanitize.
+CJSON_CFLAGS := $(VENDOR_CFLAGS) -fno-sanitize=float-cast-overflow
 
 # Core
 CONFIG_O  := src/core/config.o
@@ -231,7 +237,7 @@ $(STUB_O): src/providers/stub.c src/providers/provider.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/providers/stub.c
 
 $(CJSON_O): vendor/cJSON/cJSON.c vendor/cJSON/cJSON.h
-	$(CC) $(VENDOR_CFLAGS) $(INC) -c -o $@ vendor/cJSON/cJSON.c
+	$(CC) $(CJSON_CFLAGS) $(INC) -c -o $@ vendor/cJSON/cJSON.c
 
 $(TWEETNACL_O): src/vendor/tweetnacl/tweetnacl.c src/vendor/tweetnacl/tweetnacl.h
 	$(CC) $(TWEETNACL_CFLAGS) $(INC) -c -o $@ src/vendor/tweetnacl/tweetnacl.c
@@ -783,12 +789,20 @@ test_web_dashboard:
 	else echo "test_web_dashboard: skipped (node not installed)"; fi
 
 # Mirrors .github/workflows/ci.yml AddressSanitizer job (CI=true GATEWAY=1).
-SANITIZE_CFLAGS := -std=c11 -Wall -Wextra -Werror -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer
+# -fno-sanitize-recover=all + halt_on_error make any UBSan/ASan finding a hard
+# failure (the sanitizer runtime aborts on the first error instead of printing
+# a warning and continuing with exit 0). Vendored TweetNaCl UB is suppressed at
+# compile time via -fwrapv in TWEETNACL_CFLAGS so the gate only fires on real UB
+# in ShellClaw source.
+SANITIZE_CFLAGS := -std=c11 -Wall -Wextra -Werror -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
 SANITIZE_LDFLAGS := -fsanitize=address,undefined
 
 test-sanitize:
 	$(MAKE) clean
-	CI=true GATEWAY=1 CFLAGS="$(SANITIZE_CFLAGS)" LDFLAGS="$(SANITIZE_LDFLAGS)" $(MAKE) test
+	CI=true GATEWAY=1 CFLAGS="$(SANITIZE_CFLAGS)" LDFLAGS="$(SANITIZE_LDFLAGS)" \
+		UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1 \
+		ASAN_OPTIONS=halt_on_error=1:abort_on_error=1 \
+		$(MAKE) test
 
 bench:
 	@chmod +x scripts/bench.sh
