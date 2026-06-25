@@ -305,6 +305,46 @@ static int test_api_config_401(void)
 	return 0;
 }
 
+static int test_api_config_401_invalid_bearer(void)
+{
+	long code;
+	char *body = NULL;
+	int r = http_get_auth(gw_url("/api/config"), "not-a-real-token", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
+static int test_api_config_401_malformed_auth(void)
+{
+	long code;
+	char *body = NULL;
+	CURL *curl = curl_easy_init();
+
+	if (!curl)
+		return 1;
+	struct curl_slist *headers = NULL;
+	headers = curl_slist_append(headers, "Authorization: not-bearer-format");
+	curl_easy_setopt(curl, CURLOPT_URL, gw_url("/api/config"));
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+	if (curl_easy_perform(curl) != CURLE_OK) {
+		curl_slist_free_all(headers);
+		curl_easy_cleanup(curl);
+		free(body);
+		return 1;
+	}
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	ASSERT(code == 401);
+	free(body);
+	return 0;
+}
+
 static int test_asap_invalid_body(void)
 {
 	long code;
@@ -671,6 +711,8 @@ int main(int argc, char **argv)
 		failed++;
 	}
 	if (test_api_config_401() != 0) { fprintf(stderr, "test_api_config_401 failed\n"); failed++; }
+	if (test_api_config_401_invalid_bearer() != 0) { fprintf(stderr, "test_api_config_401_invalid_bearer failed\n"); failed++; }
+	if (test_api_config_401_malformed_auth() != 0) { fprintf(stderr, "test_api_config_401_malformed_auth failed\n"); failed++; }
 	if (test_api_status_401() != 0) { fprintf(stderr, "test_api_status_401 failed\n"); failed++; }
 	if (test_api_context_snapshot_401() != 0) { fprintf(stderr, "test_api_context_snapshot_401 failed\n"); failed++; }
 	if (test_manifest() != 0) { fprintf(stderr, "test_manifest failed\n"); failed++; }
