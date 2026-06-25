@@ -41,6 +41,11 @@ tests/        one test binary per module (Makefile targets)
 - Tests must run headless with no manual setup or secrets.
 - Bug fix: write a failing regression test first, then fix.
 
+## Known debt
+
+- **`tool_X_set_config` setter-global convention (v1.0.1):** the tools (shell, file, web_search, asap_invoke, context, hardware) each expose a module-local mutable config pointer set via a `tool_X_set_config(const config_t *)` setter (e.g. `g_hw_cfg` in `src/tools/hardware_tools_helpers.c`). This avoids passing `const config_t *cfg` through `tool_t.execute` / `agent_tool_t.execute` (an ABI change touching `tool.h`/`agent.h` vtables, 13 tool callbacks, ~30 test sites, >10 files). The whole-convention refactor (pass `const config_t *cfg` or a `tool_context_t` through `execute` for all tools) is scheduled for v1.0.1. Recorded in Phase 5 slice 05 (H1 path B).
+- **`src/core/config.c` 1000-line waiver (v1.0.1):** `config.c` is 1261 lines (a single-struct TOML parser where every `parse_*` writes the same `config_t`). The 1000-line rule is a presumptive (rebuttable) blocker. A clean hardware-only extract (~167 lines: `parse_hardware`, `free_hardware_io`, `config_hardware_*` accessors) leaves the file at ~1094 — still over 1k. The proper fix is a two-section extract (`config_hardware.c` + `config_asap.c`, ~331 lines → ~930), scheduled for v1.0.1. The `asap_skill_descriptions` table is ASAP-section code, NOT hardware, and must not move with a hardware extraction. Waived for v1.0.0 per Phase 5 slice 05 (B1).
+
 ## Branches
 
 - `main` — stable release line.
