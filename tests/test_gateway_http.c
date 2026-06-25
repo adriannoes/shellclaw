@@ -703,6 +703,57 @@ static int test_api_cron_create_delete(const char *token)
 	return 0;
 }
 
+static int test_api_cron_toggle_post(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_post_auth(gw_url("/api/cron"), token,
+		"{\"schedule\":\"interval:3600\",\"message\":\"toggle test\",\"channel\":\"cli\",\"recipient\":\"default\"}",
+		&code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200 || code == 201);
+	ASSERT(body != NULL);
+	cJSON *root = cJSON_Parse(body);
+	ASSERT(root != NULL);
+	cJSON *id_obj = cJSON_GetObjectItem(root, "id");
+	ASSERT(id_obj != NULL && cJSON_IsString(id_obj));
+	char id[128];
+	snprintf(id, sizeof(id), "%s", id_obj->valuestring);
+	cJSON_Delete(root);
+	free(body);
+	body = NULL;
+
+	/* Regression gate: before the routes.c length-guard fix, POST /api/cron/<id>/toggle
+	 * fell through to the DELETE-only branch and returned 405. After the fix it must
+	 * return 200. */
+	char toggle_url[512];
+	snprintf(toggle_url, sizeof(toggle_url), "%s/api/cron/%s/toggle", g_base_url, id);
+	r = http_post_auth(toggle_url, token, "", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"ok\"") != NULL);
+	free(body);
+	body = NULL;
+
+	/* Trailing garbage must NOT be treated as a toggle (exact-match guard). */
+	char junk_url[512];
+	snprintf(junk_url, sizeof(junk_url), "%s/api/cron/%s/toggle/extra", g_base_url, id);
+	r = http_post_auth(junk_url, token, "", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 405);
+	free(body);
+	body = NULL;
+
+	char del_url[512];
+	snprintf(del_url, sizeof(del_url), "%s/api/cron/%s", g_base_url, id);
+	r = http_delete_auth(del_url, token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	free(body);
+	return 0;
+}
+
 static int test_api_sessions(const char *token)
 {
 	long code;
@@ -1004,6 +1055,7 @@ int main(int argc, char **argv)
 		if (test_api_memory(token) != 0) { fprintf(stderr, "test_api_memory failed\n"); failed++; }
 		if (test_api_cron_list(token) != 0) { fprintf(stderr, "test_api_cron_list failed\n"); failed++; }
 		if (test_api_cron_create_delete(token) != 0) { fprintf(stderr, "test_api_cron_create_delete failed\n"); failed++; }
+		if (test_api_cron_toggle_post(token) != 0) { fprintf(stderr, "test_api_cron_toggle_post failed\n"); failed++; }
 		if (test_api_sessions(token) != 0) { fprintf(stderr, "test_api_sessions failed\n"); failed++; }
 		if (test_api_asap_log(token) != 0) { fprintf(stderr, "test_api_asap_log failed\n"); failed++; }
 		if (test_api_hardware_board_get(token) != 0) {

@@ -621,6 +621,12 @@ static void handle_well_known(http_server_ctx_t *ctx, const char *uri, int uri_l
 		char keys_err[256] = {0};
 		char *json;
 
+		/* Keys are created at gateway bootstrap (init_subsystems), not here;
+		 * this is a defensive re-check (idempotent + cheap when already
+		 * loaded), kept so a gateway that skipped bootstrap keygen still
+		 * fails closed rather than serving an unsigned manifest. The creation
+		 * was moved off this unauthenticated path to prevent an attacker from
+		 * forcing keypair creation + disk fsync by hitting a public route. */
 		if (manifest_keys_ensure_loaded(keys_err, sizeof(keys_err)) != 0) {
 			if (keys_err[0] != '\0')
 				fprintf(stderr, "manifest keys: %s\n", keys_err);
@@ -810,7 +816,11 @@ int dispatch_route(http_server_ctx_t *ctx, struct lws *wsi, int method,
 			return 0;
 		}
 		size_t suffix = strlen("/api/cron/") + strlen(id);
-		int is_toggle = (uri_len >= (int)(suffix + 8) &&
+		/* Exact length: /toggle is 7 chars. The prior >= suffix+8 guard made
+		 * POST /toggle (uri_len == suffix+7) fall through to the DELETE branch
+		 * and always return 405, so the toggle endpoint was completely broken.
+		 * Exact match also rejects trailing garbage like /<id>/toggle/extra. */
+		int is_toggle = (uri_len == (int)(suffix + 7) &&
 		                 strncmp(uri + suffix, "/toggle", 7) == 0);
 		if (is_toggle) {
 			if (method == HTTP_POST) handle_cron_toggle(id, buf, size, status);
