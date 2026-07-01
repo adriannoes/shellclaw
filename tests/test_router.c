@@ -220,6 +220,45 @@ static int test_fallback_chain_stub_b_to_stub_chat(void)
 	return 0;
 }
 
+static int test_provider_router_set_live_config_uses_new_fallback_chain(void)
+{
+	char path[128];
+	config_t *cfg1 = NULL;
+	config_t *cfg2 = NULL;
+	char errbuf[256];
+	const provider_t *router;
+	provider_message_t msg;
+	provider_response_t resp;
+
+	ASSERT(test_runner_mkstemp_path("shellclaw_test_router", path, sizeof(path)) == 0);
+	ASSERT(write_stub_chain_config(path, "\"stub\"") == 0);
+	ASSERT(config_load(path, &cfg1, errbuf, sizeof(errbuf)) == 0);
+	router = provider_router_get(cfg1);
+	ASSERT(router != NULL);
+	ASSERT(router->init(cfg1) == 0);
+
+	ASSERT(write_stub_chain_config(path, "\"stub-b\", \"stub\"") == 0);
+	ASSERT(config_load(path, &cfg2, errbuf, sizeof(errbuf)) == 0);
+	provider_router_set_live_config(cfg2);
+	provider_router_set_live_config(NULL);
+
+	provider_stub_b_set_chat_should_fail(1);
+	memset(&msg, 0, sizeof(msg));
+	msg.role = "user";
+	msg.content = "after reload";
+	memset(&resp, 0, sizeof(resp));
+	ASSERT(router->chat(&msg, 1, NULL, 0, &resp) == 0);
+	ASSERT(resp.content != NULL);
+	provider_response_clear(&resp);
+	provider_stub_b_set_chat_should_fail(0);
+
+	router->cleanup();
+	config_free(cfg1);
+	config_free(cfg2);
+	remove(path);
+	return 0;
+}
+
 static int test_error_401_terminal(void)
 {
 	ASSERT(provider_error_allows_fallback_retry("OpenAI API HTTP 401") == 0);
@@ -496,6 +535,7 @@ int main(void)
 	RUN(test_api_status_json_after_stub_init());
 	RUN(test_fallback_chain_terminal_401_stops_chain());
 	RUN(test_fallback_chain_stub_b_to_stub_chat());
+	RUN(test_provider_router_set_live_config_uses_new_fallback_chain());
 	RUN(test_fallback_chain_skips_unknown_provider());
 	RUN(test_fallback_chain_all_unknown_init_fails());
 	RUN(test_api_status_json_after_fallback());
