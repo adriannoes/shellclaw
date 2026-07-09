@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/auth.h"
+#include "cJSON.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,62 @@
 
 #define ASSERT(c) do { if (!(c)) { fprintf(stderr, "FAIL: %s:%d %s\n", __FILE__, __LINE__, #c); return 1; } } while (0)
 #define RUN(t) do { int r = (t); if (r) return r; } while (0)
+
+/* Matches TOKEN_LEN / auth_pair cap in src/gateway/auth.c. */
+#define TEST_TOKEN_HEX_LEN 32
+#define TEST_AUTH_TOKEN_CAP 16
+
+static void format_dummy_token(char *out, size_t out_size, int index)
+{
+	/* Deterministic 32-char hex so eviction of index 0 is observable. */
+	snprintf(out, out_size, "%032d", index);
+}
+
+static int write_token_array(const char *path, int count)
+{
+	FILE *f;
+	int i;
+	char token[TEST_TOKEN_HEX_LEN + 1];
+
+	f = fopen(path, "w");
+	if (!f)
+		return -1;
+	fputc('[', f);
+	for (i = 0; i < count; i++) {
+		format_dummy_token(token, sizeof(token), i);
+		if (i > 0)
+			fputc(',', f);
+		fprintf(f, "\"%s\"", token);
+	}
+	fputc(']', f);
+	fclose(f);
+	return 0;
+}
+
+static int read_token_array_size(const char *path)
+{
+	FILE *f;
+	char buf[8192];
+	size_t n;
+	cJSON *root;
+	int size;
+
+	f = fopen(path, "r");
+	if (!f)
+		return -1;
+	n = fread(buf, 1, sizeof(buf) - 1, f);
+	fclose(f);
+	buf[n] = '\0';
+	root = cJSON_Parse(buf);
+	if (!root || !cJSON_IsArray(root)) {
+		if (root)
+			cJSON_Delete(root);
+		return -1;
+	}
+	size = cJSON_GetArraySize(root);
+	cJSON_Delete(root);
+	return size;
+}
 
 static int test_auth_init_cleanup(void)
 {
@@ -226,6 +283,102 @@ static int test_pair_lockout_null_ip(void)
 	return 0;
 }
 
+static int test_auth_pair_rejects_malformed_code(void)
+{
+	const char *path = "/tmp/shellclaw_test_tokens_malformed.json";
+	auth_ctx_t *ctx;
+	char *code;
+	char token[64];
+
+	unlink(path);
+	ctx = auth_init(path);
+	ASSERT(ctx != NULL);
+	code = auth_get_or_create_pairing_code(ctx);
+	ASSERT(code != NULL);
+
+	memset(token, 0, sizeof(token));
+	ASSERT(auth_pair(ctx, "12345", token, sizeof(token)) != 0);
+	ASSERT(auth_pair(ctx, "1234567", token, sizeof(token)) != 0);
+	ASSERT(auth_pair(ctx, "12a456", token, sizeof(token)) != 0);
+	ASSERT(auth_pair(ctx, "", token, sizeof(token)) != 0);
+	ASSERT(token[0] == '\0');
+
+	/* Valid pending code still pairs after malformed rejects. */
+	ASSERT(auth_pair(ctx, code, token, sizeof(token)) == 0);
+	ASSERT(strlen(token) == TEST_TOKEN_HEX_LEN);
+	ASSERT(auth_validate_token(ctx, token) == 1);
+
+	free(code);
+	auth_cleanup(ctx);
+	unlink(path);
+	return 0;
+}
+
+static int test_auth_pair_evicts_oldest_at_cap(void)
+{
+	const char *path = "/tmp/shellclaw_test_tokens_cap.json";
+	auth_ctx_t *ctx;
+	char *code;
+	char token[64];
+	char oldest[TEST_TOKEN_HEX_LEN + 1];
+	char newest_seed[TEST_TOKEN_HEX_LEN + 1];
+
+	unlink(path);
+	ctx = auth_init(path);
+	ASSERT(ctx != NULL);
+	code = auth_get_or_create_pairing_code(ctx);
+	ASSERT(code != NULL);
+
+	/*
+	 * Pairing requires a pending code from an empty/missing file, then we
+	 * seed 16 tokens on disk before auth_pair appends (multi-device cap).
+	 */
+	ASSERT(write_token_array(path, TEST_AUTH_TOKEN_CAP) == 0);
+	format_dummy_token(oldest, sizeof(oldest), 0);
+	format_dummy_token(newest_seed, sizeof(newest_seed), TEST_AUTH_TOKEN_CAP - 1);
+	ASSERT(auth_validate_token(ctx, oldest) == 1);
+	ASSERT(auth_validate_token(ctx, newest_seed) == 1);
+
+	memset(token, 0, sizeof(token));
+	ASSERT(auth_pair(ctx, code, token, sizeof(token)) == 0);
+	ASSERT(strlen(token) == TEST_TOKEN_HEX_LEN);
+	ASSERT(auth_validate_token(ctx, token) == 1);
+	ASSERT(read_token_array_size(path) == TEST_AUTH_TOKEN_CAP);
+	ASSERT(auth_validate_token(ctx, oldest) == 0);
+	ASSERT(auth_validate_token(ctx, newest_seed) == 1);
+
+	free(code);
+	auth_cleanup(ctx);
+	unlink(path);
+	return 0;
+}
+
+static int test_auth_validate_token_rejects_length_mismatch(void)
+{
+	const char *path = "/tmp/shellclaw_test_tokens_len.json";
+	auth_ctx_t *ctx;
+	char *code;
+	char token[64];
+	char longer[80];
+
+	unlink(path);
+	ctx = auth_init(path);
+	ASSERT(ctx != NULL);
+	code = auth_get_or_create_pairing_code(ctx);
+	ASSERT(code != NULL);
+	memset(token, 0, sizeof(token));
+	ASSERT(auth_pair(ctx, code, token, sizeof(token)) == 0);
+	ASSERT(auth_validate_token(ctx, token) == 1);
+
+	snprintf(longer, sizeof(longer), "%sx", token);
+	ASSERT(auth_validate_token(ctx, longer) == 0);
+
+	free(code);
+	auth_cleanup(ctx);
+	unlink(path);
+	return 0;
+}
+
 int main(void)
 {
 	int failed = 0;
@@ -242,6 +395,9 @@ int main(void)
 	if (test_pair_lockout_clear_on_success() != 0) { fprintf(stderr, "test_pair_lockout_clear_on_success failed\n"); failed++; }
 	if (test_pair_lockout_independent_ips() != 0) { fprintf(stderr, "test_pair_lockout_independent_ips failed\n"); failed++; }
 	if (test_pair_lockout_null_ip() != 0) { fprintf(stderr, "test_pair_lockout_null_ip failed\n"); failed++; }
+	if (test_auth_pair_rejects_malformed_code() != 0) { fprintf(stderr, "test_auth_pair_rejects_malformed_code failed\n"); failed++; }
+	if (test_auth_pair_evicts_oldest_at_cap() != 0) { fprintf(stderr, "test_auth_pair_evicts_oldest_at_cap failed\n"); failed++; }
+	if (test_auth_validate_token_rejects_length_mismatch() != 0) { fprintf(stderr, "test_auth_validate_token_rejects_length_mismatch failed\n"); failed++; }
 	if (failed == 0)
 		printf("test_auth: all tests passed\n");
 	return failed;
