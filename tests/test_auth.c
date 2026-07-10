@@ -379,6 +379,60 @@ static int test_auth_validate_token_rejects_length_mismatch(void)
 	return 0;
 }
 
+/** Must match LOCKOUT_TABLE_SIZE in src/gateway/auth.c */
+#define TEST_LOCKOUT_TABLE_SIZE 32
+
+static void lockout_fill_ip(auth_ctx_t *ctx, const char *ip, time_t now)
+{
+	int i;
+	for (i = 0; i < PAIR_LOCKOUT_MAX_FAILS; i++)
+		auth_pair_record_failure(ctx, ip, now);
+}
+
+/**
+ * When the lockout table is full, lockout_find_or_create reuses slot 0.
+ * That drops the first IP's lockout state so a 33rd attacker can proceed
+ * while later slots keep their lockouts.
+ */
+static int test_pair_lockout_table_full_evicts_slot_zero(void)
+{
+	time_t now = 6000;
+	auth_ctx_t *ctx = auth_init("/tmp/shellclaw_test_tokens_lockout6.json");
+	char ip0[32];
+	char ip1[32];
+	char ip_last[32];
+	char ip_overflow[32];
+	int i;
+
+	ASSERT(ctx != NULL);
+	for (i = 0; i < TEST_LOCKOUT_TABLE_SIZE; i++) {
+		char ip[32];
+		snprintf(ip, sizeof(ip), "10.66.%d.%d", i / 256, i % 256);
+		lockout_fill_ip(ctx, ip, now);
+	}
+
+	snprintf(ip0, sizeof(ip0), "10.66.0.0");
+	snprintf(ip1, sizeof(ip1), "10.66.0.1");
+	snprintf(ip_last, sizeof(ip_last), "10.66.0.%d", TEST_LOCKOUT_TABLE_SIZE - 1);
+	snprintf(ip_overflow, sizeof(ip_overflow), "10.66.1.0");
+
+	ASSERT(auth_pair_check_lockout(ctx, ip0, now) == 1);
+	ASSERT(auth_pair_check_lockout(ctx, ip1, now) == 1);
+	ASSERT(auth_pair_check_lockout(ctx, ip_last, now) == 1);
+
+	lockout_fill_ip(ctx, ip_overflow, now);
+
+	/* Slot 1+ must keep lockouts; only slot 0 was reused for the 33rd IP. */
+	ASSERT(auth_pair_check_lockout(ctx, ip1, now) == 1);
+	ASSERT(auth_pair_check_lockout(ctx, ip_last, now) == 1);
+	ASSERT(auth_pair_check_lockout(ctx, ip_overflow, now) == 1);
+	/* Evicted IP loses prior lockout (check recreates a fresh slot-0 entry). */
+	ASSERT(auth_pair_check_lockout(ctx, ip0, now) == 0);
+
+	auth_cleanup(ctx);
+	return 0;
+}
+
 int main(void)
 {
 	int failed = 0;
@@ -398,6 +452,7 @@ int main(void)
 	if (test_auth_pair_rejects_malformed_code() != 0) { fprintf(stderr, "test_auth_pair_rejects_malformed_code failed\n"); failed++; }
 	if (test_auth_pair_evicts_oldest_at_cap() != 0) { fprintf(stderr, "test_auth_pair_evicts_oldest_at_cap failed\n"); failed++; }
 	if (test_auth_validate_token_rejects_length_mismatch() != 0) { fprintf(stderr, "test_auth_validate_token_rejects_length_mismatch failed\n"); failed++; }
+	if (test_pair_lockout_table_full_evicts_slot_zero() != 0) { fprintf(stderr, "test_pair_lockout_table_full_evicts_slot_zero failed\n"); failed++; }
 	if (failed == 0)
 		printf("test_auth: all tests passed\n");
 	return failed;
