@@ -81,6 +81,68 @@ static int test_auth_pair_invalid_code(void)
 	return 0;
 }
 
+/* Successful pair clears pending_pairing_code so the same code cannot be replayed. */
+static int test_auth_pair_code_is_single_use(void)
+{
+	const char *path = "/tmp/shellclaw_test_tokens_single_use.json";
+	auth_ctx_t *ctx;
+	char *code;
+	char token1[64];
+	char token2[64];
+
+	unlink(path);
+	ctx = auth_init(path);
+	ASSERT(ctx != NULL);
+	code = auth_get_or_create_pairing_code(ctx);
+	ASSERT(code != NULL);
+
+	memset(token1, 0, sizeof(token1));
+	ASSERT(auth_pair(ctx, code, token1, sizeof(token1)) == 0);
+	ASSERT(token1[0] != '\0');
+	ASSERT(auth_validate_token(ctx, token1) == 1);
+
+	memset(token2, 0, sizeof(token2));
+	ASSERT(auth_pair(ctx, code, token2, sizeof(token2)) != 0);
+	ASSERT(token2[0] == '\0');
+	ASSERT(auth_validate_token(ctx, token1) == 1);
+
+	free(code);
+	auth_cleanup(ctx);
+	unlink(path);
+	return 0;
+}
+
+/* Non-array / corrupt tokens file must never authenticate a bearer. */
+static int test_auth_validate_token_rejects_non_array_json(void)
+{
+	const char *path = "/tmp/shellclaw_test_tokens_non_array.json";
+	FILE *f;
+	auth_ctx_t *ctx;
+
+	unlink(path);
+	f = fopen(path, "w");
+	ASSERT(f != NULL);
+	fputs("{\"token\":\"deadbeef\"}", f);
+	fclose(f);
+
+	ctx = auth_init(path);
+	ASSERT(ctx != NULL);
+	ASSERT(auth_validate_token(ctx, "deadbeef") == 0);
+	ASSERT(auth_validate_token(ctx, "any-bearer") == 0);
+	auth_cleanup(ctx);
+
+	f = fopen(path, "w");
+	ASSERT(f != NULL);
+	fputs("not-json", f);
+	fclose(f);
+	ctx = auth_init(path);
+	ASSERT(ctx != NULL);
+	ASSERT(auth_validate_token(ctx, "deadbeef") == 0);
+	auth_cleanup(ctx);
+	unlink(path);
+	return 0;
+}
+
 static int test_auth_validate_token(void)
 {
 	unlink("/tmp/shellclaw_test_tokens_validate.json");
@@ -214,6 +276,8 @@ int main(void)
 	if (test_auth_get_pairing_code_when_empty() != 0) { fprintf(stderr, "test_auth_get_pairing_code_when_empty failed\n"); failed++; }
 	if (test_auth_pair_valid_code() != 0) { fprintf(stderr, "test_auth_pair_valid_code failed\n"); failed++; }
 	if (test_auth_pair_invalid_code() != 0) { fprintf(stderr, "test_auth_pair_invalid_code failed\n"); failed++; }
+	if (test_auth_pair_code_is_single_use() != 0) { fprintf(stderr, "test_auth_pair_code_is_single_use failed\n"); failed++; }
+	if (test_auth_validate_token_rejects_non_array_json() != 0) { fprintf(stderr, "test_auth_validate_token_rejects_non_array_json failed\n"); failed++; }
 	if (test_auth_validate_token() != 0) { fprintf(stderr, "test_auth_validate_token failed\n"); failed++; }
 	if (test_auth_multi_token() != 0) { fprintf(stderr, "test_auth_multi_token failed\n"); failed++; }
 	if (test_pair_lockout_triggers_after_max_fails() != 0) { fprintf(stderr, "test_pair_lockout_triggers_after_max_fails failed\n"); failed++; }
