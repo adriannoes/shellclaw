@@ -71,6 +71,38 @@ static int test_partial_window_not_reset(void)
 	return 0;
 }
 
+/* Must match RATE_LIMIT_TABLE_SIZE in src/gateway/rate_limit.c. */
+#define TEST_RATE_LIMIT_TABLE_SIZE 64
+
+/**
+ * When the fixed table is full, find_or_create evicts the hash-index slot so
+ * a new attacker IP is still tracked (and can be limited). Without this path,
+ * a 65th IP would either fail open or leave rate limiting stuck.
+ */
+static int test_table_full_still_tracks_overflow_ip(void)
+{
+	int i;
+	int j;
+	time_t now = 7000;
+	char ip[32];
+	const char *overflow = "10.99.1.1";
+
+	rate_limit_reset();
+	for (i = 0; i < TEST_RATE_LIMIT_TABLE_SIZE; i++) {
+		snprintf(ip, sizeof(ip), "10.70.%d.%d", i / 256, i % 256);
+		for (j = 0; j < ASAP_RATE_LIMIT_RPM; j++)
+			ASSERT(rate_limit_asap(ip, now) == 0);
+		ASSERT(rate_limit_asap(ip, now) == 1);
+	}
+
+	/* 65th distinct IP must be admitted on a fresh post-eviction counter. */
+	ASSERT(rate_limit_asap(overflow, now) == 0);
+	for (j = 1; j < ASAP_RATE_LIMIT_RPM; j++)
+		ASSERT(rate_limit_asap(overflow, now) == 0);
+	ASSERT(rate_limit_asap(overflow, now) == 1);
+	return 0;
+}
+
 int main(void)
 {
 	int r = 0;
@@ -79,6 +111,7 @@ int main(void)
 	r |= test_different_ips_independent();
 	r |= test_null_ip_uses_unknown();
 	r |= test_partial_window_not_reset();
+	r |= test_table_full_still_tracks_overflow_ip();
 	if (r == 0) printf("test_rate_limit: all tests passed\n");
 	return r;
 }
