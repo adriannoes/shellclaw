@@ -49,6 +49,7 @@ DAEMON_O  := src/core/daemon.o
 RELOAD_O  := src/core/reload.o
 BOOTSTRAP_O := src/core/bootstrap.o
 DISPATCH_O := src/core/dispatch.o
+BOOTSTRAP_DISPATCH_STUB_O := tests/stubs/bootstrap_dispatch_stub.o
 # Vendor
 TOML_O   := vendor/tomlc99/toml.o
 SQLITE3_O := vendor/sqlite3/sqlite3.o
@@ -161,6 +162,9 @@ $(BOOTSTRAP_O): src/core/bootstrap.c src/core/bootstrap.h src/core/config.h src/
 
 $(DISPATCH_O): src/core/dispatch.c src/core/dispatch.h src/core/agent.h src/core/bootstrap.h src/core/memory.h src/channels/channel.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/core/dispatch.c
+
+$(BOOTSTRAP_DISPATCH_STUB_O): tests/stubs/bootstrap_dispatch_stub.c src/core/bootstrap.h src/core/config.h src/providers/provider.h src/tools/tool.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ tests/stubs/bootstrap_dispatch_stub.c
 
 $(TOML_O): vendor/tomlc99/toml.c vendor/tomlc99/toml.h
 	$(CC) $(VENDOR_CFLAGS) $(INC) -c -o $@ $<
@@ -558,6 +562,11 @@ test_reload: tests/test_reload.c $(RELOAD_TEST_O) $(CONFIG_O) $(TOML_O)
 	$(CC) $(CFLAGS) -ffunction-sections $(LDFLAGS) -Wl,--gc-sections $(INC) -o $(BINDIR)/$@ tests/test_reload.c $(RELOAD_TEST_O) $(CONFIG_O) $(TOML_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
+test_dispatch: tests/test_dispatch.c $(DISPATCH_O) $(BOOTSTRAP_DISPATCH_STUB_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(PROVIDER_COMMON_O) $(MEMORY_O) $(SQLITE3_O) $(SKILL_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_dispatch.c $(DISPATCH_O) $(BOOTSTRAP_DISPATCH_STUB_O) $(AGENT_O) $(ROUTER_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(PROVIDER_COMMON_O) $(MEMORY_O) $(SQLITE3_O) $(SKILL_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS) -pthread
+	$(DSYM_SCRIPT)
+
 test_daemon_smoke: shellclaw
 	@chmod +x tests/test_daemon_smoke.sh scripts/install.sh scripts/update.sh
 	SHELLCLAW_TEST_BIN="$(BINDIR)/shellclaw" ./tests/test_daemon_smoke.sh
@@ -588,7 +597,7 @@ static:
 		--suppress=constParameterCallback \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_daemon_smoke test_update_script test_install_script test_web_dashboard
+test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_dispatch test_daemon_smoke test_update_script test_install_script test_web_dashboard
 	$(BINDIR)/test_config
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
@@ -617,6 +626,7 @@ test: test_config test_memory test_skill test_provider test_anthropic test_opena
 	$(BINDIR)/test_allowlist
 	$(BINDIR)/test_rate_limit
 	$(BINDIR)/test_reload
+	$(BINDIR)/test_dispatch
 	$(MAKE) test_install_script
 	$(MAKE) test_web_dashboard
 	$(MAKE) test_auth && $(BINDIR)/test_auth
@@ -628,7 +638,7 @@ COVERAGE_DIR := build/coverage
 COVERAGE_MIN := 80
 
 coverage: clean
-	$(MAKE) BUILD=coverage GATEWAY=0 test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_auth
+	$(MAKE) BUILD=coverage GATEWAY=0 test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_dispatch test_auth
 	@if [ "$(GATEWAY)" = "1" ]; then $(MAKE) BUILD=coverage GATEWAY=1 shellclaw test_gateway_http test_static; fi
 	@chmod +x scripts/coverage.sh
 	@BINDIR=$(BINDIR) COVERAGE_DIR=$(COVERAGE_DIR) COVERAGE_MIN=$(COVERAGE_MIN) GATEWAY=$(GATEWAY) ./scripts/coverage.sh
@@ -642,5 +652,5 @@ clean: clean-root-dsym
 	rm -f $(OBJS) $(PROVIDER_COMMON_O) $(STUB_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O) $(ROUTER_O) $(CJSON_O) $(ANTHROPIC_TEST_O) $(OPENAI_TEST_O) $(LOCAL_TEST_O) $(CONTEXT_TEST_OBJS) $(HEARTBEAT_TEST_O) $(CHANNEL_TG_TEST_O) $(CHANNEL_COMMON_O) $(CHANNEL_STUB_O) $(CHANNEL_CLI_O) $(CHANNEL_TG_O) $(CHANNEL_DISCORD_O) $(DISCORD_HELPERS_O) $(CHANNEL_HEARTBEAT_O) $(CHANNEL_WEBCHAT_O) $(AUTH_O) $(STATIC_O) $(HTTP_O) $(HTTP_LWS_O) $(ROUTES_O) $(WS_O) $(MANIFEST_O) $(ENVELOPE_O) $(ULID_O) $(CLIENT_O) $(ASAP_REGISTRY_O) $(SERVER_O) $(ASAP_LOG_O) $(RATE_LIMIT_O) $(SHELL_O) $(WEBSEARCH_O) $(FILE_O) $(REGISTRY_O) $(CONTEXT_O) $(CONTEXT_CACHE_O) $(CONTEXT_HTTP_O) $(CONTEXT_GEO_O) $(CRYPTO_O) $(HARDWARE_STUB_O) $(CRON_O) $(ASAP_INVOKE_O) $(SANDBOX_O) $(ALLOWLIST_O)
 	rm -f src/gateway/ui_assets.h
 	find . -name '*.gcno' -o -name '*.gcda' -o -name '*.gcov' | xargs rm -f 2>/dev/null || true
-	rm -f $(WS_TEST_O) $(BINDIR)/asap_registry_test.o $(BINDIR)/asap_invoke_test.o $(CONTEXT_TEST_OBJS) $(HEARTBEAT_TEST_O) $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_local_provider $(BINDIR)/test_router $(BINDIR)/test_heartbeat $(BINDIR)/test_crypto $(BINDIR)/test_hardware_stub $(BINDIR)/test_ws $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_discord_helpers $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_context $(BINDIR)/test_manifest $(BINDIR)/test_asap_envelope $(BINDIR)/test_asap_ulid $(BINDIR)/test_asap_client $(BINDIR)/test_asap_registry $(BINDIR)/test_asap_server $(BINDIR)/test_asap_invoke $(BINDIR)/test_asap_log $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static $(BINDIR)/test_sandbox $(BINDIR)/test_allowlist $(BINDIR)/test_rate_limit
+	rm -f $(WS_TEST_O) $(BINDIR)/asap_registry_test.o $(BINDIR)/asap_invoke_test.o $(CONTEXT_TEST_OBJS) $(HEARTBEAT_TEST_O) $(BINDIR)/shellclaw $(BINDIR)/test_config $(BINDIR)/test_memory $(BINDIR)/test_skill $(BINDIR)/test_provider $(BINDIR)/test_anthropic $(BINDIR)/test_openai $(BINDIR)/test_local_provider $(BINDIR)/test_router $(BINDIR)/test_heartbeat $(BINDIR)/test_crypto $(BINDIR)/test_hardware_stub $(BINDIR)/test_ws $(BINDIR)/test_agent $(BINDIR)/test_channel $(BINDIR)/test_cli $(BINDIR)/test_shell $(BINDIR)/test_file $(BINDIR)/test_telegram $(BINDIR)/test_discord_helpers $(BINDIR)/test_web_search $(BINDIR)/test_cron $(BINDIR)/test_context $(BINDIR)/test_manifest $(BINDIR)/test_asap_envelope $(BINDIR)/test_asap_ulid $(BINDIR)/test_asap_client $(BINDIR)/test_asap_registry $(BINDIR)/test_asap_server $(BINDIR)/test_asap_invoke $(BINDIR)/test_asap_log $(BINDIR)/test_auth $(BINDIR)/test_gateway_http $(BINDIR)/test_static $(BINDIR)/test_sandbox $(BINDIR)/test_allowlist $(BINDIR)/test_rate_limit $(BINDIR)/test_dispatch $(BOOTSTRAP_DISPATCH_STUB_O)
 	rm -rf $(BINDIR)/*.dSYM $(DSYMDIR)
