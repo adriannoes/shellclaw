@@ -5,7 +5,7 @@
 **Create draft PR:**
 
 ```bash
-gh pr create --repo adriannoes/shellclaw \
+gh pr create --repo asap-protocol/shellclaw \
   --base main \
   --head development \
   --title "release: v1.0.0 edge Jetson foundation" \

@@ -9,12 +9,12 @@
 
 ```bash
 # Jetson tracking issue
-gh issue create --repo adriannoes/shellclaw \
+gh issue create --repo asap-protocol/shellclaw \
   --title "v1.0.0 Jetson sign-off" \
   --body-file docs/issueops/v1.0.0-jetson-signoff-issue.md
 
 # Release PR (draft)
-gh pr create --repo adriannoes/shellclaw --base main --head development \
+gh pr create --repo asap-protocol/shellclaw --base main --head development \
   --title "release: v1.0.0 edge Jetson foundation" \
   --body-file docs/issueops/pr-development-to-main-v1.0.0.md --draft
 ```

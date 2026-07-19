@@ -147,14 +147,14 @@ git push origin v1.0.0
 2. **Verify Pages manifest:**
 
 ```bash
-curl -fsS https://adriannoes.github.io/shellclaw/manifest.json -o /tmp/pages-manifest.json
+curl -fsS https://asap-protocol.github.io/shellclaw/manifest.json -o /tmp/pages-manifest.json
 python3 -m asap.crypto.verify_manifest /tmp/pages-manifest.json
 ```
 
 3. **ASAP marketplace IssueOps** (only after C3 step 2 passes):
    - Prefill: [`docs/issueops/register-agent-prefill.md`](issueops/register-agent-prefill.md)
    - Or: `./scripts/open_marketplace_registration.sh`
-   - Direct: https://github.com/adriannoes/asap-protocol/issues/new?template=register_agent.yml
+   - Direct: https://github.com/asap-protocol/asap-protocol/issues/new?template=register_agent.yml
    - Record issue URL in [`MARKETPLACE_STATUS.md`](MARKETPLACE_STATUS.md)
 4. **Marketplace verify** — [`docs/issueops/VERIFY_MARKETPLACE.md`](issueops/VERIFY_MARKETPLACE.md); set `MARKETPLACE_STATUS.md` to **listed** when Browse UI passes.
 

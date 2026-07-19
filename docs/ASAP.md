@@ -1,6 +1,6 @@
 # ShellClaw and ASAP Protocol
 
-ShellClaw participates in the [ASAP Protocol](https://github.com/adriannoes/asap-protocol) ecosystem with an Ed25519-signed manifest (v2.4 schema), structured `capabilities.hardware` and `capabilities.inference` fields, and a static public manifest URL for marketplace discovery.
+ShellClaw participates in the [ASAP Protocol](https://github.com/asap-protocol/asap-protocol) ecosystem with an Ed25519-signed manifest (v2.4 schema), structured `capabilities.hardware` and `capabilities.inference` fields, and a static public manifest URL for marketplace discovery.
 
 **Production:** Set `[asap] public_base_url` in `~/.shellclaw/config.toml` to your real HTTPS origin before registry submission. The default `https://shellclaw.example.com` in `config.example.toml` is for local development only; `endpoints.asap` in the signed manifest is built from `public_base_url`.
 
@@ -36,7 +36,7 @@ v1.0 uses a **static** manifest on **GitHub Pages** — not a live tunnel to you
 
 | URL | Role |
 |-----|------|
-| `https://adriannoes.github.io/shellclaw/manifest.json` | **Canonical** signed manifest after `v*` tag (marketplace Manifest URL) |
+| `https://asap-protocol.github.io/shellclaw/manifest.json` | **Canonical** signed manifest after `v*` tag (marketplace Manifest URL) |
 | `https://shellclaw.example.com/asap` | Placeholder `endpoints.asap` in manifest (no live ASAP HTTP in v1.0) |
 | `http://127.0.0.1:18789/.well-known/asap/manifest.json` | Dev gateway (dump script / local testing) |
 
@@ -64,13 +64,13 @@ Rotate: `./build/shellclaw --rotate-keys` (backs up prior keys with timestamp su
 After GitHub Pages deploy:
 
 ```bash
-curl -fsS https://adriannoes.github.io/shellclaw/manifest.json | python -m asap.crypto.verify_manifest
+curl -fsS https://asap-protocol.github.io/shellclaw/manifest.json | python -m asap.crypto.verify_manifest
 ```
 
 Or with a saved file:
 
 ```bash
-curl -fsS https://adriannoes.github.io/shellclaw/manifest.json -o /tmp/manifest.json
+curl -fsS https://asap-protocol.github.io/shellclaw/manifest.json -o /tmp/manifest.json
 python3 -m asap.crypto.verify_manifest /tmp/manifest.json
 ```
 
@@ -99,19 +99,19 @@ ShellClaw v1.0 is listed in the public ASAP registry via the upstream **Register
 
 After a release tag (`v*`), GitHub Pages publishes the live `SignedManifest` captured at build time:
 
-**https://adriannoes.github.io/shellclaw/manifest.json**
+**https://asap-protocol.github.io/shellclaw/manifest.json**
 
 Verify before submitting IssueOps:
 
 ```bash
-curl -fsS https://adriannoes.github.io/shellclaw/manifest.json | python -m asap.crypto.verify_manifest
+curl -fsS https://asap-protocol.github.io/shellclaw/manifest.json | python -m asap.crypto.verify_manifest
 ```
 
 ### IssueOps link
 
 Open a new registration issue (do not use the auto-registration API for v1.0 — it runs compliance against a reachable live endpoint):
 
-**https://github.com/adriannoes/asap-protocol/issues/new?template=register_agent.yml**
+**https://github.com/asap-protocol/asap-protocol/issues/new?template=register_agent.yml**
 
 ### What to type into IssueOps
 
@@ -121,14 +121,14 @@ Use the table below. These are the **only** fields you enter manually. Do **not*
 |----------------|--------------------------|
 | **Name** | `ShellClaw` |
 | **Description** | `The first C-native edge-AI-capable ASAP agent. Runs Phi-3-mini locally on NVIDIA Jetson Orin Nano Super via CUDA, exposes GPIO and I2C primitives on the 40-pin header as LLM-callable tools, and participates in the ASAP ecosystem with Ed25519-signed manifests.` |
-| **Manifest URL** | `https://adriannoes.github.io/shellclaw/manifest.json` |
+| **Manifest URL** | `https://asap-protocol.github.io/shellclaw/manifest.json` |
 | **HTTP endpoint** | `https://shellclaw.example.com/asap` (placeholder — no live ASAP endpoint in v1.0; static manifest only per Q-URL) |
 | **Skills** (CSV) | `assistant,edge_briefing,server_admin,gpio_control` |
 | **Category** | `Infrastructure` |
 | **Built with** | `Other` |
 | **Tags** (CSV) | `cuda,edge-ai,hardware,jetson,local-inference` |
 
-**Repository** and **documentation** URLs are typically inferred from the manifest or repo metadata; confirm they match `https://github.com/adriannoes/shellclaw` and `https://github.com/adriannoes/shellclaw#readme` on the merged entry.
+**Repository** and **documentation** URLs are typically inferred from the manifest or repo metadata; confirm they match `https://github.com/asap-protocol/shellclaw` and `https://github.com/asap-protocol/shellclaw#readme` on the merged entry.
 
 #### Do not submit manually
 
@@ -161,7 +161,7 @@ v1.0 uses a **static** manifest URL only (no tunnel / live ASAP HTTP in producti
 After IssueOps merges, `registry.json` should match the post-bot shape in:
 
 - **In-repo copy:** [`docs/fixtures/shellclaw-v1.0-registry-entry.json`](fixtures/shellclaw-v1.0-registry-entry.json)
-- **Upstream fixture:** [adriannoes/asap-protocol `tests/fixtures/registry/shellclaw-v1.0-entry.json`](https://github.com/adriannoes/asap-protocol/blob/main/tests/fixtures/registry/shellclaw-v1.0-entry.json)
+- **Upstream fixture:** [asap-protocol/asap-protocol `tests/fixtures/registry/shellclaw-v1.0-entry.json`](https://github.com/asap-protocol/asap-protocol/blob/main/tests/fixtures/registry/shellclaw-v1.0-entry.json)
 
 Diff your live listing against that file to confirm `hardware_class`, `inference_modes`, and `hardware_io` were derived correctly.
 
@@ -184,7 +184,7 @@ In-repo artifacts reduce submission friction; **live marketplace listing** remai
 Complete **after** Wave 5 signing is live on GitHub Pages (task 6.1) and **before** the `v1.0.0` tag if possible. Check off in `MARKETPLACE_STATUS.md` when done.
 
 - [ ] `curl` manifest URL; `verify_manifest` succeeds
-- [ ] Open [Register Agent](https://github.com/adriannoes/asap-protocol/issues/new?template=register_agent.yml) and fill fields from the table above (or prefill doc)
+- [ ] Open [Register Agent](https://github.com/asap-protocol/asap-protocol/issues/new?template=register_agent.yml) and fill fields from the table above (or prefill doc)
 - [ ] Skills CSV is exactly four v1.0 skills (no sensor/camera/monitor skills)
 - [ ] Tags CSV does **not** include `self-signed`
 - [ ] Did **not** manually add `hardware_class`, `inference_modes`, or `hardware_io` in the issue body

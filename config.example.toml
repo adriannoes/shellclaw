@@ -73,7 +73,7 @@ agent_name = "ShellClaw"
 description = "C-native edge-AI ASAP agent on NVIDIA Jetson Orin Nano Super (CUDA, GPIO, I2C)."
 # Production: set to your HTTPS origin before marketplace registration (example.com is dev-only).
 public_base_url = "https://shellclaw.example.com"
-registry_url = "https://raw.githubusercontent.com/adriannoes/asap-protocol/main/registry.json"
+registry_url = "https://raw.githubusercontent.com/asap-protocol/asap-protocol/main/registry.json"
 
 [asap.skill_descriptions]
 # assistant = "Override text for manifest capabilities.skills[].description"

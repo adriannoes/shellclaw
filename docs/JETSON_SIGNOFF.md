@@ -135,7 +135,7 @@ python3 -m asap.crypto.verify_manifest /tmp/manifest.json
 After **`v1.0.0` tag** (Phase C — not before):
 
 ```bash
-curl -fsS https://adriannoes.github.io/shellclaw/manifest.json | python3 -m asap.crypto.verify_manifest
+curl -fsS https://asap-protocol.github.io/shellclaw/manifest.json | python3 -m asap.crypto.verify_manifest
 ```
 
 - [ ] Signed manifest verifies locally before tag

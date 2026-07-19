@@ -87,9 +87,9 @@ All notable changes to ShellClaw are documented here. Format follows [Keep a Cha
 - CLI and Telegram channels; Anthropic and OpenAI providers.
 - Shell, file, and web search tools; skill loading from markdown.
 
-[Unreleased]: https://github.com/adriannoes/shellclaw/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/adriannoes/shellclaw/compare/v0.4.0...v1.0.0
-[0.4.0]: https://github.com/adriannoes/shellclaw/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/adriannoes/shellclaw/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/adriannoes/shellclaw/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/adriannoes/shellclaw/releases/tag/v0.1.0
+[Unreleased]: https://github.com/asap-protocol/shellclaw/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/asap-protocol/shellclaw/compare/v0.4.0...v1.0.0
+[0.4.0]: https://github.com/asap-protocol/shellclaw/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/asap-protocol/shellclaw/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/asap-protocol/shellclaw/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/asap-protocol/shellclaw/releases/tag/v0.1.0

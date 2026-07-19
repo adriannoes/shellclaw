@@ -3,11 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ISSUEOPS_URL="https://github.com/adriannoes/asap-protocol/issues/new?template=register_agent.yml"
+ISSUEOPS_URL="https://github.com/asap-protocol/asap-protocol/issues/new?template=register_agent.yml"
 PREFILL="${ROOT}/docs/issueops/register-agent-prefill.md"
 VERIFY="${ROOT}/docs/issueops/VERIFY_MARKETPLACE.md"
 STATUS="${ROOT}/docs/MARKETPLACE_STATUS.md"
-MANIFEST_URL="https://adriannoes.github.io/shellclaw/manifest.json"
+MANIFEST_URL="https://asap-protocol.github.io/shellclaw/manifest.json"
 
 echo "ASAP marketplace registration (ShellClaw v1.0)"
 echo ""

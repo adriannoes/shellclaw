@@ -4,7 +4,7 @@ Short operator runbook after IssueOps registration for ShellClaw v1.0. Prefill a
 
 ## Prerequisites
 
-- [ ] GitHub Pages manifest URL returns 200: `https://adriannoes.github.io/shellclaw/manifest.json`
+- [ ] GitHub Pages manifest URL returns 200: `https://asap-protocol.github.io/shellclaw/manifest.json`
 - [ ] `python3 -m asap.crypto.verify_manifest` succeeds on that URL (pre-submit gate)
 - [ ] Register Agent issue filed and bot merge completed (issue URL recorded in `MARKETPLACE_STATUS.md`)
 
@@ -23,7 +23,7 @@ Short operator runbook after IssueOps registration for ShellClaw v1.0. Prefill a
 
 ## Quick diff (optional)
 
-If you have a checkout of `adriannoes/asap-protocol` with the fixture:
+If you have a checkout of `asap-protocol/asap-protocol` with the fixture:
 
 ```bash
 # Compare key derived fields (adjust path to your clone)

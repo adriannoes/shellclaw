@@ -14,7 +14,7 @@ Distilled product architecture for ShellClaw v1.0 — one `aarch64` C binary tha
 | Language | C99/C11 | Single tree, no runtime interpreter |
 | Hardware | GPIO + I2C + camera abstraction | GPIO + I2C live in v1.0; sensor decoders + camera image return in v1.2 |
 
-**Dual persona, one binary** ([DR-015](https://github.com/adriannoes/shellclaw/blob/main/.cursor/strategy/decision-records/decisions.md)): the agent reads `/proc/device-tree/compatible` at startup (`src/hardware/board_detect.c`) and selects Jetson vs RPi backends. Override with `SHELLCLAW_BOARD=jetson|rpi|stub` for tests.
+**Dual persona, one binary** ([DR-015](https://github.com/asap-protocol/shellclaw/blob/main/.cursor/strategy/decision-records/decisions.md)): the agent reads `/proc/device-tree/compatible` at startup (`src/hardware/board_detect.c`) and selects Jetson vs RPi backends. Override with `SHELLCLAW_BOARD=jetson|rpi|stub` for tests.
 
 ---
 

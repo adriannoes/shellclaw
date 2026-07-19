@@ -4,7 +4,7 @@ Operator copy-paste kit for [task 6.3](../../.cursor/dev-planning/tasks/phase5/0
 
 ## Direct link
 
-**https://github.com/adriannoes/asap-protocol/issues/new?template=register_agent.yml**
+**https://github.com/asap-protocol/asap-protocol/issues/new?template=register_agent.yml**
 
 ## Copy-paste block (form fields)
 
@@ -15,7 +15,7 @@ Name: ShellClaw
 
 Description: The first C-native edge-AI-capable ASAP agent. Runs Phi-3-mini locally on NVIDIA Jetson Orin Nano Super via CUDA, exposes GPIO and I2C primitives on the 40-pin header as LLM-callable tools, and participates in the ASAP ecosystem with Ed25519-signed manifests.
 
-Manifest URL: https://adriannoes.github.io/shellclaw/manifest.json
+Manifest URL: https://asap-protocol.github.io/shellclaw/manifest.json
 
 HTTP endpoint: https://shellclaw.example.com/asap
 
@@ -28,7 +28,7 @@ Built with: Other
 Tags (CSV): cuda,edge-ai,hardware,jetson,local-inference
 ```
 
-After the bot merges, confirm **repository** and **documentation** URLs match `https://github.com/adriannoes/shellclaw` and `https://github.com/adriannoes/shellclaw#readme` on the listing (usually inferred from manifest/repo metadata).
+After the bot merges, confirm **repository** and **documentation** URLs match `https://github.com/asap-protocol/shellclaw` and `https://github.com/asap-protocol/shellclaw#readme` on the listing (usually inferred from manifest/repo metadata).
 
 ## Pre-submission gates
 
@@ -37,7 +37,7 @@ Complete **before** opening the issue (ideally after GitHub Pages publish from a
 1. **Manifest URL live**
 
    ```bash
-   curl -fsS https://adriannoes.github.io/shellclaw/manifest.json -o /tmp/shellclaw-manifest.json
+   curl -fsS https://asap-protocol.github.io/shellclaw/manifest.json -o /tmp/shellclaw-manifest.json
    ```
 
    Expect HTTP 200 and valid JSON (`SignedManifest` wrapper).
@@ -45,7 +45,7 @@ Complete **before** opening the issue (ideally after GitHub Pages publish from a
 2. **Cryptographic verify** (requires `pip install asap-protocol` or equivalent env with `asap`):
 
    ```bash
-   curl -fsS https://adriannoes.github.io/shellclaw/manifest.json | python3 -m asap.crypto.verify_manifest
+   curl -fsS https://asap-protocol.github.io/shellclaw/manifest.json | python3 -m asap.crypto.verify_manifest
    ```
 
    Expect exit code 0 (no error output).
@@ -83,4 +83,4 @@ Prints the IssueOps URL and path to this prefill doc.
 
 ## Submission method
 
-Registration is a **human** step via the GitHub issue template above. Do not use `POST /registry/agents` auto-registration for v1.0 (compliance harness expects a reachable live endpoint). Automated `gh issue create` against `adriannoes/asap-protocol` is optional and not required for slice completion — use the web form with the prefill block.
+Registration is a **human** step via the GitHub issue template above. Do not use `POST /registry/agents` auto-registration for v1.0 (compliance harness expects a reachable live endpoint). Automated `gh issue create` against `asap-protocol/asap-protocol` is optional and not required for slice completion — use the web form with the prefill block.

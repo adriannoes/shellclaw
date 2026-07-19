@@ -6,7 +6,7 @@
   'use strict';
 
   const TOKEN_KEY = 'shellclaw_token';
-  const ROADMAP_URL = 'https://github.com/adriannoes/shellclaw/blob/main/README.md#shellclaw';
+  const ROADMAP_URL = 'https://github.com/asap-protocol/shellclaw/blob/main/README.md#shellclaw';
   const JETSON_BOARD_ID = 'jetson_orin_nano';
   const POLL_MS = 15000;
 
