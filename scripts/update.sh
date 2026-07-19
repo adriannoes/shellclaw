@@ -15,7 +15,7 @@ SERVICE_UNIT="${SHELLCLAW_SERVICE_UNIT:-shellclaw.service}"
 
 INSTALL_BIN="${SHELLCLAW_INSTALL_BIN:-"${HOME%/}/.local/bin/shellclaw"}"
 
-GITHUB_REPO="${SHELLCLAW_GITHUB_REPO:-adrianno/shellclaw}"
+GITHUB_REPO="${SHELLCLAW_GITHUB_REPO:-asap-protocol/shellclaw}"
 
 GITHUB_ASSET_NAME="${SHELLCLAW_RELEASE_ASSET_NAME:-}"
 
