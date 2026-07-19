@@ -1,0 +1,3 @@
+# Default owner — required for "Require review from Code Owners".
+# @adriannoes is also listed in branch-protection bypass allowances.
+* @adriannoes

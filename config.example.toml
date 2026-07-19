@@ -69,7 +69,7 @@ hot_reload = true
 enabled = false
 agent_urn = "urn:asap:agent:shellclaw-home-01"
 agent_name = "ShellClaw Home Agent"
-registry_url = "https://raw.githubusercontent.com/adriannoes/asap-protocol/main/registry.json"
+registry_url = "https://raw.githubusercontent.com/asap-protocol/asap-protocol/main/registry.json"
 
 [hardware]
 gpio_enabled = false

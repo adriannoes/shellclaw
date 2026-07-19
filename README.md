@@ -2,7 +2,7 @@
 
 **The first physical AI agent in a global agent ecosystem — and the only one that scales from a $15 Raspberry Pi to a $249 NVIDIA Jetson with the same C-native binary.**
 
-A lightweight AI assistant written in C that runs on **NVIDIA Jetson Orin Nano Super** (8 GB, 67 TOPS, CUDA-accelerated local LLM) for the edge-AI maker / researcher persona, and on **Raspberry Pi Zero 2 W** (~$15, smallest viable Linux SBC) for the hobbyist persona — from a single `aarch64` binary with runtime board detection. It communicates with other agents through the [agentic marketplace](https://asap-protocol.com/browse), using [ASAP Protocol](https://github.com/adriannoes/asap-protocol).
+A lightweight AI assistant written in C that runs on **NVIDIA Jetson Orin Nano Super** (8 GB, 67 TOPS, CUDA-accelerated local LLM) for the edge-AI maker / researcher persona, and on **Raspberry Pi Zero 2 W** (~$15, smallest viable Linux SBC) for the hobbyist persona — from a single `aarch64` binary with runtime board detection. It communicates with other agents through the [agentic marketplace](https://asap-protocol.com/browse), using [ASAP Protocol](https://github.com/asap-protocol/asap-protocol).
 
 **Two personas, one binary** (see [DR-015](.cursor/strategy/decision-records/decisions.md), [DR-016](.cursor/strategy/decision-records/decisions.md)):
 
