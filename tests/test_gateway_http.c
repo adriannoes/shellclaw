@@ -331,6 +331,33 @@ static int test_asap_missing_fields(void)
 	return 0;
 }
 
+static int test_asap_task_request(void)
+{
+	long code;
+	char *body = NULL;
+	static const char *req =
+		"{\"jsonrpc\":\"2.0\",\"method\":\"asap.send\","
+		"\"params\":{"
+		"\"id\":\"01HZABC123\","
+		"\"asap_version\":\"2.1\","
+		"\"sender\":\"urn:asap:agent:a\","
+		"\"recipient\":\"urn:asap:agent:b\","
+		"\"payload_type\":\"task.request\","
+		"\"payload\":{\"input\":\"hello\"},"
+		"\"correlation_id\":\"c1\","
+		"\"trace_id\":\"t1\","
+		"\"timestamp\":\"2026-01-01T00:00:00Z\""
+		"},\"id\":42}";
+	int r = http_post(gw_url("/asap"), req, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "task.response") != NULL);
+	ASSERT(strstr(body, "server missing cfg or provider") == NULL);
+	free(body);
+	return 0;
+}
+
 static int test_manifest(void)
 {
 	long code;
@@ -677,6 +704,7 @@ int main(int argc, char **argv)
 	if (test_health_wellknown() != 0) { fprintf(stderr, "test_health_wellknown failed\n"); failed++; }
 	if (test_asap_invalid_body() != 0) { fprintf(stderr, "test_asap_invalid_body failed\n"); failed++; }
 	if (test_asap_missing_fields() != 0) { fprintf(stderr, "test_asap_missing_fields failed\n"); failed++; }
+	if (test_asap_task_request() != 0) { fprintf(stderr, "test_asap_task_request failed\n"); failed++; }
 	if (test_api_asap_log_401() != 0) { fprintf(stderr, "test_api_asap_log_401 failed\n"); failed++; }
 	if (token[0]) {
 		if (test_api_config_get(token) != 0) { fprintf(stderr, "test_api_config_get failed\n"); failed++; }
