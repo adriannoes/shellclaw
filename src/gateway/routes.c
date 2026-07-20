@@ -12,6 +12,8 @@
 #include "asap/envelope.h"
 #include "asap/server.h"
 #include "asap/log.h"
+#include "core/agent.h"
+#include "core/bootstrap.h"
 #include "core/config.h"
 #include "core/memory.h"
 #include "core/skill.h"
@@ -576,6 +578,7 @@ static void handle_asap(http_server_ctx_t *ctx, const char *client_ip,
 	char *resp_json;
 	char *snippet;
 	int rc;
+	(void)ctx;
 	(void)body_len;
 	/* TODO (Task 6.0): tighten rate limit with X-Forwarded-For proxy awareness. */
 	if (rate_limit_asap(client_ip, time(NULL))) {
@@ -595,8 +598,26 @@ static void handle_asap(http_server_ctx_t *ctx, const char *client_ip,
 	snippet = in.payload ? cJSON_PrintUnformatted(in.payload) : NULL;
 	asap_log_append_in(in.payload_type, in.id, snippet);
 	free(snippet);
-	memset(&asap_ctx, 0, sizeof asap_ctx);
-	asap_ctx.cfg = ctx ? ctx->cfg : NULL;
+	{
+		size_t tool_count = bootstrap_tool_count();
+		agent_tool_t flat_tools[8];
+		size_t i;
+
+		for (i = 0; i < tool_count; i++) {
+			const tool_t *t = bootstrap_tool_at(i);
+			if (!t)
+				break;
+			flat_tools[i].name = t->name;
+			flat_tools[i].description = t->description;
+			flat_tools[i].parameters_json = t->parameters_json;
+			flat_tools[i].execute = t->execute;
+		}
+		memset(&asap_ctx, 0, sizeof asap_ctx);
+		asap_ctx.cfg = bootstrap_get_cfg();
+		asap_ctx.provider = bootstrap_get_provider();
+		asap_ctx.tools = flat_tools;
+		asap_ctx.tool_count = tool_count;
+	}
 	err_msg[0] = '\0';
 	asap_envelope_init(&out);
 	rc = asap_server_handle(&in, &out, &asap_ctx, err_msg, sizeof err_msg);
