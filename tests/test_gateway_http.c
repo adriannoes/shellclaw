@@ -206,6 +206,35 @@ static int http_delete_auth(const char *url, const char *bearer, long *code_out,
 	return (res == CURLE_OK) ? 0 : -1;
 }
 
+static int http_put_auth(const char *url, const char *bearer, const char *body,
+			 long *code_out, char **body_out)
+{
+	CURL *curl = curl_easy_init();
+	if (!curl) return -1;
+	*body_out = NULL;
+	struct curl_slist *headers = NULL;
+	char auth_hdr[256];
+	const char *payload = body ? body : "";
+	snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", bearer);
+	headers = curl_slist_append(headers, auth_hdr);
+	headers = curl_slist_append(headers, "Content-Type: text/plain");
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(payload));
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+	CURLcode res = curl_easy_perform(curl);
+	long code = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	if (code_out) *code_out = code;
+	return (res == CURLE_OK) ? 0 : -1;
+}
+
 static int read_pairing_code_from_file(const char *home, char *out, size_t out_sz)
 {
 	char path[160];
@@ -457,6 +486,71 @@ static int test_api_config_get(const char *token)
 	return 0;
 }
 
+static int test_api_config_put_rejects_invalid_toml(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_put_auth(gw_url("/api/config"), token, "not = [ valid toml", &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 400);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "error") != NULL);
+	free(body);
+	body = NULL;
+	/* Invalid PUT must not wipe the live config file used by GET. */
+	r = http_get_auth(gw_url("/api/config"), token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"model\"") != NULL);
+	free(body);
+	return 0;
+}
+
+static int test_api_config_put_accepts_valid_toml(const char *token)
+{
+	long code;
+	char *body = NULL;
+	char toml[512];
+	int r;
+	snprintf(toml, sizeof(toml),
+		 "[agent]\nmodel = \"coverage-put-model\"\n"
+		 "[providers]\nfallback_chain = [ \"stub\" ]\n"
+		 "[gateway]\nenabled = true\nhost = \"127.0.0.1\"\nport = 1\n"
+		 "[memory]\ndb_path = \"%s/.shellclaw/memory.db\"\n"
+		 "[skills]\ndir = \"%s/.shellclaw/skills\"\n",
+		 g_test_home, g_test_home);
+	r = http_put_auth(gw_url("/api/config"), token, toml, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"ok\":true") != NULL || strstr(body, "\"ok\": true") != NULL);
+	free(body);
+	return 0;
+}
+
+static int test_api_config_put_rejects_oversized_body(const char *token)
+{
+	long code;
+	char *body = NULL;
+	char *huge = NULL;
+	size_t n = 70000;
+	int r;
+	huge = malloc(n + 1);
+	ASSERT(huge != NULL);
+	memset(huge, 'a', n);
+	huge[n] = '\0';
+	r = http_put_auth(gw_url("/api/config"), token, huge, &code, &body);
+	free(huge);
+	ASSERT(r == 0);
+	/* Transport rejects Content-Length > BODY_BUF_SIZE before routes run. */
+	ASSERT(code == 413);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "large") != NULL || strstr(body, "error") != NULL);
+	free(body);
+	return 0;
+}
+
 static int test_api_skills_list(const char *token)
 {
 	long code;
@@ -680,6 +774,18 @@ int main(int argc, char **argv)
 	if (test_api_asap_log_401() != 0) { fprintf(stderr, "test_api_asap_log_401 failed\n"); failed++; }
 	if (token[0]) {
 		if (test_api_config_get(token) != 0) { fprintf(stderr, "test_api_config_get failed\n"); failed++; }
+		if (test_api_config_put_rejects_invalid_toml(token) != 0) {
+			fprintf(stderr, "test_api_config_put_rejects_invalid_toml failed\n");
+			failed++;
+		}
+		if (test_api_config_put_rejects_oversized_body(token) != 0) {
+			fprintf(stderr, "test_api_config_put_rejects_oversized_body failed\n");
+			failed++;
+		}
+		if (test_api_config_put_accepts_valid_toml(token) != 0) {
+			fprintf(stderr, "test_api_config_put_accepts_valid_toml failed\n");
+			failed++;
+		}
 		if (test_api_status_get(token) != 0) { fprintf(stderr, "test_api_status_get failed\n"); failed++; }
 		if (test_api_context_snapshot_get(token) != 0) { fprintf(stderr, "test_api_context_snapshot_get failed\n"); failed++; }
 		if (test_api_skills_list(token) != 0) { fprintf(stderr, "test_api_skills_list failed\n"); failed++; }
