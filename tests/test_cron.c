@@ -5,6 +5,7 @@
 
 #include "tools/cron.h"
 #include "core/memory.h"
+#include "channels/channel.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,6 +140,55 @@ static int test_one_shot_detection(void)
 	return 0;
 }
 
+static int test_cron_ack_delivery_deferred(void)
+{
+	const char *path = "/tmp/shellclaw_test_cron_ack.db";
+	remove(path);
+	ASSERT(memory_init(path) == 0);
+	long long now = (long long)time(NULL);
+	long long due_at = now - 10;
+	ASSERT(cron_job_create("oneshot_ack", "at:9999999999", "Fire me", "cli", "default", due_at, 1) == 0);
+	cron_job_row_t row;
+	ASSERT(cron_job_get_next_due(now, &row) == 1);
+	ASSERT(strcmp(row.id, "oneshot_ack") == 0);
+	ASSERT(cron_job_get_by_id("oneshot_ack", &row) == 1);
+	ASSERT(cron_ack_delivery("oneshot_ack") == 0);
+	ASSERT(cron_job_get_by_id("oneshot_ack", &row) == 0);
+	ASSERT(cron_job_create("interval_ack", "interval:3600", "Repeat", "cli", "default", due_at, 1) == 0);
+	ASSERT(cron_job_get_next_due(now, &row) == 1);
+	long long before_ack = row.next_run;
+	ASSERT(cron_ack_delivery("interval_ack") == 0);
+	ASSERT(cron_job_get_by_id("interval_ack", &row) == 1);
+	ASSERT(row.next_run > before_ack);
+	memory_cleanup();
+	remove(path);
+	return 0;
+}
+
+static int test_cron_poll_keeps_job_until_ack(void)
+{
+	const channel_t *cron_ch = channel_cron_get();
+	ASSERT(cron_ch != NULL);
+	const char *path = "/tmp/shellclaw_test_cron_poll.db";
+	remove(path);
+	ASSERT(memory_init(path) == 0);
+	long long now = (long long)time(NULL);
+	ASSERT(cron_job_create("poll_keep", "at:9999999999", "Due now", "cli", "default", now - 1, 1) == 0);
+	channel_incoming_msg_t msg;
+	memset(&msg, 0, sizeof(msg));
+	ASSERT(cron_ch->poll(&msg, 0) == 1);
+	ASSERT(msg.user_id != NULL);
+	ASSERT(strcmp(msg.user_id, "poll_keep") == 0);
+	cron_job_row_t row;
+	ASSERT(cron_job_get_by_id("poll_keep", &row) == 1);
+	channel_incoming_msg_clear(&msg);
+	ASSERT(cron_ack_delivery("poll_keep") == 0);
+	ASSERT(cron_job_get_by_id("poll_keep", &row) == 0);
+	memory_cleanup();
+	remove(path);
+	return 0;
+}
+
 int main(void)
 {
 	RUN(test_interval_next_run());
@@ -149,6 +199,8 @@ int main(void)
 	RUN(test_cron_job_crud_and_due());
 	RUN(test_cron_tool_execute());
 	RUN(test_one_shot_detection());
+	RUN(test_cron_ack_delivery_deferred());
+	RUN(test_cron_poll_keeps_job_until_ack());
 	printf("test_cron: all tests passed\n");
 	return 0;
 }
