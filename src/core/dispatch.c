@@ -8,6 +8,7 @@
 #include "core/agent.h"
 #include "core/bootstrap.h"
 #include "core/memory.h"
+#include "tools/cron.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -43,5 +44,8 @@ int handle_message(const channel_t *ch, const channel_incoming_msg_t *msg)
 	                    resp_buf, sizeof(resp_buf));
 	if (err != 0 && resp_buf[0] == '\0')
 		snprintf(resp_buf, sizeof(resp_buf), "Error: agent failed (code %d)", err);
-	return ch->send(msg->session_id, resp_buf, NULL, 0);
+	int send_err = ch->send(msg->session_id, resp_buf, NULL, 0);
+	if (send_err == 0 && err == 0 && ch->name && strcmp(ch->name, "cron") == 0 && msg->user_id)
+		cron_ack_delivery(msg->user_id);
+	return send_err;
 }

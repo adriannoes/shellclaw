@@ -42,6 +42,15 @@ const channel_t *channel_cron_get(void);
 const tool_t *tool_cron_get(void);
 
 /**
+ * Commit cron delivery after the agent successfully handles a fired job.
+ * One-shot jobs are deleted; recurring jobs advance next_run.
+ *
+ * @param job_id Job id from cron poll user_id field.
+ * @return 0 on success, non-zero on error.
+ */
+int cron_ack_delivery(const char *job_id);
+
+/**
  * Create a cron job (shared by tool and HTTP handler).
  * If id_out[0] == '\0', a random ID is generated.
  *

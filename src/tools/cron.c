@@ -171,6 +171,13 @@ static int cron_init(const config_t *cfg)
 	return 0;
 }
 
+static char *cron_strdup_checked(const char *src)
+{
+	if (!src) return NULL;
+	char *copy = strdup(src);
+	return copy;
+}
+
 static int cron_poll(channel_incoming_msg_t *out, int timeout_ms)
 {
 	if (!out) return -1;
@@ -179,25 +186,36 @@ static int cron_poll(channel_incoming_msg_t *out, int timeout_ms)
 	cron_job_row_t row;
 	memset(&row, 0, sizeof(row));
 	if (cron_job_get_next_due(now, &row) != 1) return 0;
-	int is_one_shot = cron_is_one_shot(row.schedule);
-	if (is_one_shot) {
-		cron_job_delete(row.id);
-	} else {
-		long long next = 0;
-		if (cron_parse_next_run(row.schedule, now, &next) == 0)
-			cron_job_update_next_run(row.id, next);
-	}
 	memset(out, 0, sizeof(*out));
 	char session_id[256];
 	snprintf(session_id, sizeof(session_id), "%s:%s",
 		row.channel[0] ? row.channel : "cli",
 		row.recipient[0] ? row.recipient : "default");
-	out->session_id = strdup(session_id);
-	out->user_id = strdup(row.id);
-	out->text = strdup(row.message);
+	out->session_id = cron_strdup_checked(session_id);
+	out->user_id = cron_strdup_checked(row.id);
+	out->text = cron_strdup_checked(row.message);
 	out->attachments = NULL;
 	out->attachments_count = 0;
+	if (!out->session_id || !out->user_id || !out->text) {
+		channel_incoming_msg_clear(out);
+		return -1;
+	}
 	return 1;
+}
+
+int cron_ack_delivery(const char *job_id)
+{
+	if (!job_id || !job_id[0]) return -1;
+	cron_job_row_t row;
+	memset(&row, 0, sizeof(row));
+	if (cron_job_get_by_id(job_id, &row) != 1) return -1;
+	if (cron_is_one_shot(row.schedule))
+		return cron_job_delete(row.id);
+	long long now = (long long)time(NULL);
+	long long next = 0;
+	if (cron_parse_next_run(row.schedule, now, &next) != 0)
+		return -1;
+	return cron_job_update_next_run(row.id, next);
 }
 
 static int cron_send(const char *recipient, const char *text,

@@ -413,6 +413,29 @@ int cron_job_list(cron_job_row_t *out, int max_count)
 	return count;
 }
 
+int cron_job_get_by_id(const char *id, cron_job_row_t *out)
+{
+	if (!g_db || !id || !out) return -1;
+	const char *sql = "SELECT id, schedule, message, channel, recipient, next_run, enabled FROM cron_jobs "
+		"WHERE id = ?1 LIMIT 1";
+	sqlite3_stmt *stmt = NULL;
+	if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+	sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT);
+	int ret = 0;
+	if (sqlite3_step(stmt) == SQLITE_ROW) {
+		copy_str_bounded(out->id, sizeof(out->id), (const char *)sqlite3_column_text(stmt, 0));
+		copy_str_bounded(out->schedule, sizeof(out->schedule), (const char *)sqlite3_column_text(stmt, 1));
+		copy_str_bounded(out->message, sizeof(out->message), (const char *)sqlite3_column_text(stmt, 2));
+		copy_str_bounded(out->channel, sizeof(out->channel), (const char *)sqlite3_column_text(stmt, 3));
+		copy_str_bounded(out->recipient, sizeof(out->recipient), (const char *)sqlite3_column_text(stmt, 4));
+		out->next_run = sqlite3_column_int64(stmt, 5);
+		out->enabled = sqlite3_column_int(stmt, 6);
+		ret = 1;
+	}
+	sqlite3_finalize(stmt);
+	return ret;
+}
+
 int cron_job_get_next_due(long long now, cron_job_row_t *out)
 {
 	if (!g_db || !out) return -1;
