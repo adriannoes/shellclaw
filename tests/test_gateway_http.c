@@ -206,6 +206,32 @@ static int http_delete_auth(const char *url, const char *bearer, long *code_out,
 	return (res == CURLE_OK) ? 0 : -1;
 }
 
+static int http_put_auth(const char *url, const char *bearer, const char *json, long *code_out, char **body_out)
+{
+	CURL *curl = curl_easy_init();
+	if (!curl) return -1;
+	*body_out = NULL;
+	struct curl_slist *headers = NULL;
+	char auth_hdr[256];
+	snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", bearer);
+	headers = curl_slist_append(headers, auth_hdr);
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, body_out);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+	CURLcode res = curl_easy_perform(curl);
+	long code = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	if (code_out) *code_out = code;
+	return (res == CURLE_OK) ? 0 : -1;
+}
+
 static int read_pairing_code_from_file(const char *home, char *out, size_t out_sz)
 {
 	char path[160];
@@ -457,6 +483,30 @@ static int test_api_config_get(const char *token)
 	return 0;
 }
 
+static int test_api_config_put_json(const char *token)
+{
+	long code;
+	char *body = NULL;
+	int r = http_put_auth(gw_url("/api/config"), token,
+	                      "{\"model\":\"patched-model\",\"max_tokens\":2048,\"temperature\":0.5,"
+	                      "\"gateway_host\":\"127.0.0.1\",\"gateway_port\":18789}",
+	                      &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"ok\":true") != NULL);
+	free(body);
+	body = NULL;
+	r = http_get_auth(gw_url("/api/config"), token, &code, &body);
+	ASSERT(r == 0);
+	ASSERT(code == 200);
+	ASSERT(body != NULL);
+	ASSERT(strstr(body, "\"patched-model\"") != NULL);
+	ASSERT(strstr(body, "\"max_tokens\":2048") != NULL);
+	free(body);
+	return 0;
+}
+
 static int test_api_skills_list(const char *token)
 {
 	long code;
@@ -680,6 +730,7 @@ int main(int argc, char **argv)
 	if (test_api_asap_log_401() != 0) { fprintf(stderr, "test_api_asap_log_401 failed\n"); failed++; }
 	if (token[0]) {
 		if (test_api_config_get(token) != 0) { fprintf(stderr, "test_api_config_get failed\n"); failed++; }
+		if (test_api_config_put_json(token) != 0) { fprintf(stderr, "test_api_config_put_json failed\n"); failed++; }
 		if (test_api_status_get(token) != 0) { fprintf(stderr, "test_api_status_get failed\n"); failed++; }
 		if (test_api_context_snapshot_get(token) != 0) { fprintf(stderr, "test_api_context_snapshot_get failed\n"); failed++; }
 		if (test_api_skills_list(token) != 0) { fprintf(stderr, "test_api_skills_list failed\n"); failed++; }

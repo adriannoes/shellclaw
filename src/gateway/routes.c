@@ -12,8 +12,11 @@
 #include "asap/envelope.h"
 #include "asap/server.h"
 #include "asap/log.h"
+#include "core/bootstrap.h"
 #include "core/config.h"
+#include "core/config_patch.h"
 #include "core/memory.h"
+#include "core/reload.h"
 #include "core/skill.h"
 #include "providers/provider.h"
 #include "tools/context.h"
@@ -196,9 +199,28 @@ static void handle_config_get(const config_t *cfg, char *buf, size_t size, int *
 	}
 }
 
+static int body_is_json(const char *body, size_t body_len)
+{
+	size_t i;
+
+	for (i = 0; i < body_len; i++) {
+		unsigned char c = (unsigned char)body[i];
+		if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
+			continue;
+		return c == '{';
+	}
+	return 0;
+}
+
 static void handle_config_put(http_server_ctx_t *ctx, const char *body, size_t body_len,
                               char *buf, size_t size, int *status)
 {
+	char *patched_body = NULL;
+	size_t patched_len = 0;
+	char errbuf[256] = {0};
+	const char *write_body = body;
+	size_t write_len = body_len;
+
 	if (!ctx->config_path || !body || body_len == 0) {
 		json_error(buf, size, status, 400, "Bad request");
 		return;
@@ -207,29 +229,51 @@ static void handle_config_put(http_server_ctx_t *ctx, const char *body, size_t b
 		json_error(buf, size, status, 400, "Config too large");
 		return;
 	}
+	if (body_is_json(body, body_len)) {
+		char json_nul[CONFIG_BODY_MAX + 1];
+		if (body_len >= sizeof(json_nul)) {
+			json_error(buf, size, status, 400, "Config too large");
+			return;
+		}
+		memcpy(json_nul, body, body_len);
+		json_nul[body_len] = '\0';
+		if (config_patch_dashboard_json(ctx->config_path, json_nul, &patched_body, &patched_len,
+		                                errbuf, sizeof(errbuf)) != 0) {
+			json_error(buf, size, status, 400, errbuf[0] ? errbuf : "Invalid config patch");
+			return;
+		}
+		write_body = patched_body;
+		write_len = patched_len;
+	}
 	size_t path_len = strlen(ctx->config_path);
 	char *tmp_path = malloc(path_len + 8);
-	if (!tmp_path) { json_error(buf, size, status, 500, "Out of memory"); return; }
+	if (!tmp_path) {
+		free(patched_body);
+		json_error(buf, size, status, 500, "Out of memory");
+		return;
+	}
 	snprintf(tmp_path, path_len + 8, "%s.tmp", ctx->config_path);
 	FILE *f = fopen(tmp_path, "w");
 	if (!f) {
 		free(tmp_path);
+		free(patched_body);
 		json_error(buf, size, status, 500, "Failed to write config");
 		return;
 	}
-	size_t written = fwrite(body, 1, body_len, f);
+	size_t written = fwrite(write_body, 1, write_len, f);
 	fclose(f);
-	if (written != body_len) {
+	if (written != write_len) {
 		unlink(tmp_path);
 		free(tmp_path);
+		free(patched_body);
 		json_error(buf, size, status, 500, "Failed to write config");
 		return;
 	}
 	config_t *cfg = NULL;
-	char errbuf[256] = {0};
 	if (config_load(tmp_path, &cfg, errbuf, sizeof(errbuf)) != 0) {
 		unlink(tmp_path);
 		free(tmp_path);
+		free(patched_body);
 		json_error(buf, size, status, 400, errbuf[0] ? errbuf : "Invalid TOML");
 		return;
 	}
@@ -237,10 +281,17 @@ static void handle_config_put(http_server_ctx_t *ctx, const char *body, size_t b
 	if (rename(tmp_path, ctx->config_path) != 0) {
 		unlink(tmp_path);
 		free(tmp_path);
+		free(patched_body);
 		json_error(buf, size, status, 500, "Failed to save config");
 		return;
 	}
 	free(tmp_path);
+	free(patched_body);
+	{
+		config_t *live_cfg = bootstrap_get_cfg();
+		if (live_cfg)
+			try_config_reload(&live_cfg);
+	}
 	*status = 200;
 	json_response(buf, size, status, "{\"ok\":true}");
 }

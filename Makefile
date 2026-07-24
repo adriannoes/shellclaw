@@ -47,6 +47,7 @@ SKILL_O   := src/core/skill.o
 AGENT_O   := src/core/agent.o
 DAEMON_O  := src/core/daemon.o
 RELOAD_O  := src/core/reload.o
+CONFIG_PATCH_O := src/core/config_patch.o
 BOOTSTRAP_O := src/core/bootstrap.o
 DISPATCH_O := src/core/dispatch.o
 # Vendor
@@ -116,7 +117,7 @@ CONTEXT_GEO_TEST_O := $(BINDIR)/context_geo_test.o
 CONTEXT_CACHE_TEST_O := $(BINDIR)/context_cache_test.o
 HEARTBEAT_TEST_O := $(BINDIR)/heartbeat_test.o
 CONTEXT_TEST_OBJS := $(CONTEXT_TEST_O) $(CONTEXT_HTTP_TEST_O) $(CONTEXT_GEO_TEST_O) $(CONTEXT_CACHE_TEST_O)
-CORE_OBJS := $(CONFIG_O) $(MAIN_O) $(MEMORY_O) $(SKILL_O) $(AGENT_O) $(DAEMON_O) $(RELOAD_O) $(BOOTSTRAP_O) $(DISPATCH_O)
+CORE_OBJS := $(CONFIG_O) $(MAIN_O) $(MEMORY_O) $(SKILL_O) $(AGENT_O) $(DAEMON_O) $(RELOAD_O) $(CONFIG_PATCH_O) $(BOOTSTRAP_O) $(DISPATCH_O)
 VENDOR_OBJS := $(TOML_O) $(SQLITE3_O) $(CJSON_O)
 OBJS := $(CORE_OBJS) $(VENDOR_OBJS)
 PROVIDER_OBJS := $(PROVIDER_COMMON_O) $(STUB_O) $(ROUTER_O) $(ANTHROPIC_O) $(OPENAI_COMPAT_O) $(OPENAI_O) $(LOCAL_O)
@@ -155,6 +156,9 @@ $(DAEMON_O): src/core/daemon.c src/core/daemon.h src/core/config.h
 
 $(RELOAD_O): src/core/reload.c src/core/reload.h src/core/bootstrap.h src/core/config.h src/channels/channel.h src/channels/heartbeat.h src/providers/provider.h src/tools/tool.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/core/reload.c
+
+$(CONFIG_PATCH_O): src/core/config_patch.c src/core/config_patch.h src/core/config.h vendor/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INC) -c -o $@ src/core/config_patch.c
 
 $(BOOTSTRAP_O): src/core/bootstrap.c src/core/bootstrap.h src/core/config.h src/core/memory.h src/core/skill.h src/channels/channel.h src/channels/heartbeat.h src/providers/provider.h src/tools/tool.h src/tools/cron.h
 	$(CC) $(CFLAGS) $(INC) -c -o $@ src/core/bootstrap.c
@@ -290,7 +294,7 @@ $(HTTP_O): src/gateway/http.c src/gateway/http.h src/gateway/http_lws.h src/gate
 $(HTTP_LWS_O): src/gateway/http_lws.c src/gateway/http_lws.h src/gateway/routes.h src/gateway/auth.h src/gateway/static.h src/gateway/ws.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -pthread -c -o $@ src/gateway/http_lws.c
 
-$(ROUTES_O): src/gateway/routes.c src/gateway/routes.h src/gateway/http_lws.h src/gateway/auth.h src/gateway/rate_limit.h src/tools/context.h src/asap/manifest.h src/asap/envelope.h src/asap/server.h src/asap/log.h src/core/config.h src/core/memory.h src/core/skill.h src/providers/provider.h src/channels/channel.h src/tools/cron.h
+$(ROUTES_O): src/gateway/routes.c src/gateway/routes.h src/gateway/http_lws.h src/gateway/auth.h src/gateway/rate_limit.h src/tools/context.h src/asap/manifest.h src/asap/envelope.h src/asap/server.h src/asap/log.h src/core/config.h src/core/config_patch.h src/core/bootstrap.h src/core/reload.h src/core/memory.h src/core/skill.h src/providers/provider.h src/channels/channel.h src/tools/cron.h
 	$(CC) $(CFLAGS) $(INC) $(GATEWAY_CFLAGS) -pthread -c -o $@ src/gateway/routes.c
 
 $(WS_O): src/gateway/ws.c src/gateway/ws.h
@@ -362,6 +366,11 @@ $(ASAP_INVOKE_TEST_O): src/tools/asap_invoke.c src/tools/asap_invoke.h src/tools
 test_config: tests/test_config.c $(CONFIG_O) $(TOML_O)
 	@mkdir -p $(BINDIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_config.c $(CONFIG_O) $(TOML_O) $(LDLIBS)
+	$(DSYM_SCRIPT)
+
+test_config_patch: tests/test_config_patch.c $(CONFIG_PATCH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(INC) -o $(BINDIR)/$@ tests/test_config_patch.c $(CONFIG_PATCH_O) $(CONFIG_O) $(TOML_O) $(CJSON_O) $(LDLIBS)
 	$(DSYM_SCRIPT)
 
 test_memory: tests/test_memory.c $(MEMORY_O) $(SQLITE3_O)
@@ -588,8 +597,9 @@ static:
 		--suppress=constParameterCallback \
 		-q src/
 
-test: test_config test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_daemon_smoke test_update_script test_install_script test_web_dashboard
+test: test_config test_config_patch test_memory test_skill test_provider test_anthropic test_openai test_local_provider test_router test_heartbeat test_agent test_channel test_cli test_shell test_file test_telegram test_discord_helpers test_web_search test_cron test_context test_crypto test_hardware_stub test_ws test_manifest $(ASAP_UNIT_TESTS) test_sandbox test_allowlist test_rate_limit test_reload test_daemon_smoke test_update_script test_install_script test_web_dashboard
 	$(BINDIR)/test_config
+	$(BINDIR)/test_config_patch
 	$(BINDIR)/test_memory
 	$(BINDIR)/test_skill
 	$(BINDIR)/test_provider
