@@ -333,11 +333,38 @@ typedef struct agent_run_ctx {
 	char *tool_result_bufs;
 	provider_message_t *messages;
 	size_t total_msgs;
+	size_t base_msg_count;
 	int history_count;
 	int max_iter;
 	int max_ctx;
 	int ret;
 } agent_run_ctx_t;
+
+/** True when message content lives in static agent_run buffers (not heap-owned). */
+static int agent_content_is_static(const agent_run_ctx_t *ctx, const char *content)
+{
+	if (!content) return 1;
+	if (content == ctx->system_buf) return 1;
+	if (content == ctx->user_message) return 1;
+	if (ctx->history_content && content >= ctx->history_content &&
+	    content < ctx->history_content + HISTORY_CONTENT_MAX)
+		return 1;
+	return 0;
+}
+
+/** Free heap-owned ReAct message slots (assistant text, tool results, tool_calls). */
+static void agent_free_heap_messages(agent_run_ctx_t *ctx, size_t from_idx)
+{
+	size_t i;
+	if (!ctx->messages) return;
+	for (i = from_idx; i < ctx->total_msgs; i++) {
+		if (!agent_content_is_static(ctx, ctx->messages[i].content))
+			free((void *)ctx->messages[i].content);
+		free_tool_calls_copy(ctx->messages[i].tool_calls, ctx->messages[i].tool_calls_count);
+		ctx->messages[i].tool_calls = NULL;
+		ctx->messages[i].tool_calls_count = 0;
+	}
+}
 
 static void agent_oom_msg(agent_run_ctx_t *ctx)
 {
@@ -438,32 +465,21 @@ static int agent_react_loop(agent_run_ctx_t *ctx)
 {
 	int iteration = 0;
 	provider_response_t response = {0};
-	char *prev_assistant = NULL;
-	provider_tool_call_t *prev_calls = NULL;
-	size_t prev_n = 0;
+	ctx->base_msg_count = ctx->total_msgs;
 	for (;;) {
 		int err = ctx->provider->chat(ctx->messages, ctx->total_msgs, ctx->tool_defs, ctx->tool_count,
 		                              &response);
 		if (err != 0) {
 			copy_response_to_buf(response.content, ctx->response_buf, ctx->response_size);
 			provider_response_clear(&response);
-			free(prev_assistant);
-			free_tool_calls_copy(prev_calls, prev_n);
 			return -1;
 		}
 		if (response.tool_calls_count == 0 || iteration >= ctx->max_iter) {
 			copy_response_to_buf(response.content, ctx->response_buf, ctx->response_size);
 			provider_response_clear(&response);
 			agent_persist_session(ctx, ctx->response_buf);
-			free(prev_assistant);
-			free_tool_calls_copy(prev_calls, prev_n);
 			return 0;
 		}
-		free(prev_assistant);
-		free_tool_calls_copy(prev_calls, prev_n);
-		prev_assistant = NULL;
-		prev_calls = NULL;
-		prev_n = 0;
 		{
 			size_t nc = response.tool_calls_count;
 			char *assistant_content;
@@ -513,18 +529,25 @@ static int agent_react_loop(agent_run_ctx_t *ctx)
 			new_messages[ctx->total_msgs].tool_calls = our_calls;
 			new_messages[ctx->total_msgs].tool_calls_count = nc;
 			for (size_t k = 0; k < nc; k++) {
+				char *one_buf = ctx->tool_result_bufs + k * TOOL_RESULT_SIZE;
+				char *tool_content = strdup(one_buf);
+				if (!tool_content) {
+					for (size_t j = 0; j < k; j++)
+						free((void *)new_messages[ctx->total_msgs + 1 + j].content);
+					free(new_messages);
+					free_tool_calls_copy(our_calls, nc);
+					free(assistant_content);
+					agent_oom_msg(ctx);
+					return -1;
+				}
 				new_messages[ctx->total_msgs + 1 + k].role = "user";
-				new_messages[ctx->total_msgs + 1 + k].content =
-				    ctx->tool_result_bufs + k * TOOL_RESULT_SIZE;
+				new_messages[ctx->total_msgs + 1 + k].content = tool_content;
 				new_messages[ctx->total_msgs + 1 + k].tool_use_id = our_calls[k].id;
 			}
 			free(ctx->messages);
 			ctx->messages = new_messages;
 			ctx->total_msgs = new_count;
 			iteration++;
-			prev_assistant = assistant_content;
-			prev_calls = our_calls;
-			prev_n = nc;
 		}
 	}
 }
@@ -540,6 +563,8 @@ static void agent_run_cleanup(agent_run_ctx_t *ctx)
 	free(ctx->history_msgs);
 	free(ctx->history_roles_buf);
 	free(ctx->tool_result_bufs);
+	if (ctx->messages && ctx->base_msg_count < ctx->total_msgs)
+		agent_free_heap_messages(ctx, ctx->base_msg_count);
 	free(ctx->messages);
 }
 
