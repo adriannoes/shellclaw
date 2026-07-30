@@ -618,7 +618,12 @@ static void handle_asap(http_server_ctx_t *ctx, const char *client_ip,
 	*status = 200;
 	{
 		size_t rlen = strlen(resp_json);
-		if (rlen >= size) rlen = size - 1;
+		if (rlen >= size) {
+			free(resp_json);
+			jsonrpc_error(buf, size, status, 500, -32603,
+				      "ASAP response exceeds gateway buffer");
+			return;
+		}
 		memcpy(buf, resp_json, rlen);
 		buf[rlen] = '\0';
 	}
