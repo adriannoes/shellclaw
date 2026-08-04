@@ -24,8 +24,27 @@
 			return _r;                                                             \
 	} while (0)
 
-/** Must match MSG_MAX in src/gateway/ws.c */
-#define WS_MSG_MAX 8192
+/** Must match WS_TEXT_MAX in src/gateway/ws.h */
+
+static int test_send_to_accepts_dispatch_sized_payload(void)
+{
+	char *payload;
+	char buf[WS_TEXT_MAX];
+	size_t len_out;
+	ws_cleanup();
+	ASSERT(ws_register_conn(3, (ws_conn_t)(intptr_t)3) == 0);
+	payload = malloc(10000);
+	ASSERT(payload != NULL);
+	memset(payload, 'c', 9999);
+	payload[9999] = '\0';
+	ASSERT(ws_send_to("webchat:3", payload) == 0);
+	ASSERT(ws_dequeue_outgoing(3, buf, sizeof(buf), &len_out) == 1);
+	ASSERT(len_out == 9999);
+	ASSERT(memcmp(buf, payload, 9999) == 0);
+	free(payload);
+	ws_cleanup();
+	return 0;
+}
 
 static int test_register_conn_full_table(void)
 {
@@ -46,10 +65,10 @@ static int test_push_incoming_msg_max(void)
 	int got;
 	ws_cleanup();
 	ASSERT(ws_register_conn(1, (ws_conn_t)(intptr_t)1) == 0);
-	big = malloc((size_t)WS_MSG_MAX + 2);
+	big = malloc((size_t)WS_TEXT_MAX + 2);
 	ASSERT(big != NULL);
-	memset(big, 'a', (size_t)WS_MSG_MAX + 1);
-	big[WS_MSG_MAX + 1] = '\0';
+	memset(big, 'a', (size_t)WS_TEXT_MAX + 1);
+	big[WS_TEXT_MAX + 1] = '\0';
 	ws_push_incoming(1, big);
 	got = ws_pop_incoming(session, sizeof(session), text, sizeof(text), 50);
 	ASSERT(got == 0);
@@ -67,10 +86,10 @@ static int test_send_to_rejects_oversized(void)
 	char *big;
 	ws_cleanup();
 	ASSERT(ws_register_conn(2, (ws_conn_t)(intptr_t)2) == 0);
-	big = malloc((size_t)WS_MSG_MAX + 2);
+	big = malloc((size_t)WS_TEXT_MAX + 2);
 	ASSERT(big != NULL);
-	memset(big, 'b', (size_t)WS_MSG_MAX + 1);
-	big[WS_MSG_MAX + 1] = '\0';
+	memset(big, 'b', (size_t)WS_TEXT_MAX + 1);
+	big[WS_TEXT_MAX + 1] = '\0';
 	ASSERT(ws_send_to("webchat:2", big) != 0);
 	ASSERT(ws_send_to("webchat:2", "hi") == 0);
 	free(big);
@@ -83,6 +102,7 @@ int main(void)
 	RUN(test_register_conn_full_table());
 	RUN(test_push_incoming_msg_max());
 	RUN(test_send_to_rejects_oversized());
+	RUN(test_send_to_accepts_dispatch_sized_payload());
 	printf("test_ws: all tests passed\n");
 	return 0;
 }
