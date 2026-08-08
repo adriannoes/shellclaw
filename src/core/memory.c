@@ -119,7 +119,8 @@ int memory_init(const char *path)
 	int recreated = 0;
 	if (sqlite3_open(path, &g_db) != SQLITE_OK) {
 		if (g_db) { sqlite3_close(g_db); g_db = NULL; }
-		remove(path);
+		/* Never delete an existing DB on open failure (permissions, transient I/O). */
+		if (file_existed) return -1;
 		if (sqlite3_open(path, &g_db) != SQLITE_OK) {
 			if (g_db) sqlite3_close(g_db);
 			g_db = NULL;
