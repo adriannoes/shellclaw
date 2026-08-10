@@ -720,9 +720,32 @@ static int test_trust_sender_rejects_blank_sender_when_list_nonempty(void)
 	return 0;
 }
 
+static int test_resolve_task_session_id(void)
+{
+	char buf[128];
+	const char *sid;
+
+	sid = asap_resolve_task_session_id("cli:override", "urn:alice", buf, sizeof buf);
+	ASSERT(sid != NULL && strcmp(sid, "cli:override") == 0);
+
+	sid = asap_resolve_task_session_id(NULL, "urn:alice", buf, sizeof buf);
+	ASSERT(sid == buf);
+	ASSERT(strcmp(sid, "asap:urn:alice") == 0);
+
+	sid = asap_resolve_task_session_id("", "urn:bob", buf, sizeof buf);
+	ASSERT(sid == buf);
+	ASSERT(strcmp(sid, "asap:urn:bob") == 0);
+
+	sid = asap_resolve_task_session_id(NULL, NULL, buf, sizeof buf);
+	ASSERT(sid != NULL && strcmp(sid, "asap:inbound") == 0);
+
+	return 0;
+}
+
 int main(void)
 {
 	int r = 0;
+	r |= test_resolve_task_session_id();
 	r |= test_task_request_hook();
 	r |= test_task_cancel_stub();
 	r |= test_state_query_hook();
