@@ -12,8 +12,9 @@
  *     when they escape the declared workspace root.
  *
  * Both checks are intentionally conservative and may produce false positives.
- * They are a best-effort defence-in-depth layer; real isolation is provided by
- * sandbox_exec() via kernel namespaces.
+ * They are a best-effort defence-in-depth layer. sandbox_exec() isolates
+ * mount/network/PID namespaces but does not chroot/pivot_root; workspace_only
+ * path scanning is therefore the primary host-filesystem gate for the shell tool.
  */
 #ifndef SHELLCLAW_ALLOWLIST_H
 #define SHELLCLAW_ALLOWLIST_H
