@@ -169,6 +169,32 @@ static int test_workspace_only_blocks_embedded_path_in_python(void)
 	return 0;
 }
 
+static int test_workspace_only_allows_relative_and_url_slashes(void)
+{
+	allowlist_config_t cfg;
+	char reason[256];
+	cfg.workspace_path = "/tmp";
+	cfg.workspace_only = 1;
+	reason[0] = '\0';
+	/* Slash inside a relative token or URL must not be treated as /foo. */
+	ASSERT(allowlist_check_shell_command("echo 3/4", &cfg, reason, sizeof(reason)) == 0);
+	ASSERT(allowlist_check_shell_command("ls src/foo", &cfg, reason, sizeof(reason)) == 0);
+	ASSERT(allowlist_check_shell_command(
+		"curl https://example.com/api", &cfg, reason, sizeof(reason)) == 0);
+	return 0;
+}
+
+static int test_workspace_only_blocks_file_url(void)
+{
+	allowlist_config_t cfg;
+	char reason[256];
+	cfg.workspace_path = "/tmp";
+	cfg.workspace_only = 1;
+	reason[0] = '\0';
+	ASSERT(allowlist_check_shell_command("cat file:///etc/passwd", &cfg, reason, sizeof(reason)) == 1);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Symlink escape test (5.4)                                            */
 /* ------------------------------------------------------------------ */
@@ -232,6 +258,8 @@ int main(void)
 	RUN(test_workspace_only_allows_inside_path());
 	RUN(test_workspace_only_blocks_quoted_path());
 	RUN(test_workspace_only_blocks_embedded_path_in_python());
+	RUN(test_workspace_only_allows_relative_and_url_slashes());
+	RUN(test_workspace_only_blocks_file_url());
 	RUN(test_symlink_escape());
 	printf("test_allowlist: all tests passed\n");
 	return 0;

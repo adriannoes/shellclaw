@@ -95,7 +95,7 @@ static char *strip_surrounding_quotes(char *tok)
 }
 
 /**
- * Return 1 if @p c is allowed inside an absolute/relative path fragment we extract
+ * Return 1 if @p c is allowed inside an absolute path fragment we extract
  * from command text (conservative; stops before shell metacharacters).
  */
 static int is_path_body_char(unsigned char c)
@@ -103,6 +103,54 @@ static int is_path_body_char(unsigned char c)
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
            (c >= '0' && c <= '9') || c == '/' || c == '.' || c == '_' ||
            c == '-' || c == '+' || c == '%' || c == '@';
+}
+
+/**
+ * Return 1 when @p p in @p text starts a filesystem absolute path (`/` or `~`),
+ * not a slash inside `src/foo`, `3/4`, or a URL scheme `://`.
+ */
+static int is_fs_absolute_path_start(const char *text, const char *p)
+{
+    unsigned char prev;
+    if (!text || !p || (*p != '/' && *p != '~'))
+        return 0;
+    if (p == text)
+        return 1;
+    prev = (unsigned char)p[-1];
+    /* URL scheme slashes in http:// and file:// — do not treat them as FS paths. */
+    if (*p == '/' && prev == ':')
+        return 0;
+    if (*p == '/' && p >= text + 2 && p[-1] == '/' && p[-2] == ':')
+        return 0;
+    /* Relative "src/foo" or "3/4": slash continues an existing token. */
+    if (is_path_body_char(prev) && prev != '/')
+        return 0;
+    return 1;
+}
+
+/**
+ * Copy a `~` fragment into @p dest, expanding `$HOME` the same way token checks do.
+ * @return 0 on success, -1 if the expanded path does not fit.
+ */
+static int expand_tilde_fragment(const char *fragment, char *dest, size_t dest_cap)
+{
+    const char *home;
+    int n;
+    if (!fragment || !dest || dest_cap == 0)
+        return -1;
+    if (fragment[0] != '~') {
+        if (strlen(fragment) >= dest_cap)
+            return -1;
+        memcpy(dest, fragment, strlen(fragment) + 1);
+        return 0;
+    }
+    home = getenv("HOME");
+    if (!home)
+        home = "";
+    n = snprintf(dest, dest_cap, "%s%s", home, fragment + 1);
+    if (n < 0 || (size_t)n >= dest_cap)
+        return -1;
+    return 0;
 }
 
 /**
@@ -118,25 +166,27 @@ static int block_if_embedded_paths_escape(const char *text, const char *workspac
     if (!text || !workspace_root) return 0;
     for (p = text; *p; p++) {
         char fragment[PATH_MAX];
+        char expanded[PATH_MAX];
         size_t n = 0;
         const char *start;
-        if (*p != '/' && *p != '~')
+        if (!is_fs_absolute_path_start(text, p))
             continue;
-        /* Skip // in URLs after a scheme (http://…) — still check the path after. */
         start = p;
+        fragment[n++] = *p++;
         while (*p && is_path_body_char((unsigned char)*p) && n + 1 < sizeof(fragment))
             fragment[n++] = *p++;
         fragment[n] = '\0';
-        /* Lone "/" or "~" is not a useful path probe; still check containment. */
-        if (n == 0)
-            continue;
-        if (!allowlist_path_is_under_workspace(fragment, workspace_root)) {
+        if (expand_tilde_fragment(fragment, expanded, sizeof(expanded)) != 0) {
             set_reason(reason_buf, reason_cap,
                        "command blocked: path escapes workspace: ", fragment);
-            fprintf(stderr, "allowlist: blocked path outside workspace: %s\n", fragment);
             return 1;
         }
-        /* p already advanced; loop will p++ so step back one. */
+        if (!allowlist_path_is_under_workspace(expanded, workspace_root)) {
+            set_reason(reason_buf, reason_cap,
+                       "command blocked: path escapes workspace: ", expanded);
+            fprintf(stderr, "allowlist: blocked path outside workspace: %s\n", expanded);
+            return 1;
+        }
         if (p > start)
             p--;
     }
