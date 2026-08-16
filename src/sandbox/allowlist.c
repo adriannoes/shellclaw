@@ -70,11 +70,77 @@ static void set_reason(char *buf, size_t cap, const char *prefix, const char *de
     buf[cap - 1] = '\0';
 }
 
-/** Return 1 if @p s begins with prefix after any leading whitespace. */
+/** Return 1 if @p s begins with a path-like character. */
 static int has_path_chars(const char *tok)
 {
     if (!tok) return 0;
     return tok[0] == '/' || tok[0] == '~' || tok[0] == '.';
+}
+
+/**
+ * Strip one layer of matching surrounding quotes from @p tok in place.
+ * Returns the (possibly advanced) start of the unquoted token.
+ */
+static char *strip_surrounding_quotes(char *tok)
+{
+    size_t n;
+    if (!tok || !tok[0]) return tok;
+    n = strlen(tok);
+    if (n >= 2 && ((tok[0] == '\'' && tok[n - 1] == '\'') ||
+                   (tok[0] == '"' && tok[n - 1] == '"'))) {
+        tok[n - 1] = '\0';
+        return tok + 1;
+    }
+    return tok;
+}
+
+/**
+ * Return 1 if @p c is allowed inside an absolute/relative path fragment we extract
+ * from command text (conservative; stops before shell metacharacters).
+ */
+static int is_path_body_char(unsigned char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '/' || c == '.' || c == '_' ||
+           c == '-' || c == '+' || c == '%' || c == '@';
+}
+
+/**
+ * Scan @p text for absolute (~ or /) path fragments and reject any that escape
+ * @p workspace_root. Catches quoted / embedded paths the whitespace tokenizer misses
+ * (e.g. python3 -c "open('/etc/passwd')").
+ * @return 1 if blocked, 0 if all fragments are under the workspace.
+ */
+static int block_if_embedded_paths_escape(const char *text, const char *workspace_root,
+                                          char *reason_buf, size_t reason_cap)
+{
+    const char *p;
+    if (!text || !workspace_root) return 0;
+    for (p = text; *p; p++) {
+        char fragment[PATH_MAX];
+        size_t n = 0;
+        const char *start;
+        if (*p != '/' && *p != '~')
+            continue;
+        /* Skip // in URLs after a scheme (http://…) — still check the path after. */
+        start = p;
+        while (*p && is_path_body_char((unsigned char)*p) && n + 1 < sizeof(fragment))
+            fragment[n++] = *p++;
+        fragment[n] = '\0';
+        /* Lone "/" or "~" is not a useful path probe; still check containment. */
+        if (n == 0)
+            continue;
+        if (!allowlist_path_is_under_workspace(fragment, workspace_root)) {
+            set_reason(reason_buf, reason_cap,
+                       "command blocked: path escapes workspace: ", fragment);
+            fprintf(stderr, "allowlist: blocked path outside workspace: %s\n", fragment);
+            return 1;
+        }
+        /* p already advanced; loop will p++ so step back one. */
+        if (p > start)
+            p--;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -161,11 +227,23 @@ int allowlist_check_shell_command(const char *cmd, const allowlist_config_t *cfg
         ws_resolved[n] = '\0';
     }
     workspace_root = ws_resolved;
-    /* Tokenize the command and check each path-like token. */
+    /*
+     * Scan the full command for embedded absolute paths first. Whitespace
+     * tokenization alone misses quoted paths (cat '/etc/passwd') and paths
+     * inside -c / eval strings. Sandbox namespaces do not chroot, so this
+     * scan is the primary workspace FS gate when workspace_only is set.
+     */
+    if (block_if_embedded_paths_escape(cmd, workspace_root, reason_buf, reason_cap))
+        return 1;
+    /* Tokenize the command and check each path-like token (incl. relative ./). */
     cmd_copy = strdup(cmd);
-    if (!cmd_copy) return 0; /* fail-open on OOM */
+    if (!cmd_copy) {
+        set_reason(reason_buf, reason_cap, "command blocked: out of memory", "");
+        return 1; /* fail-closed on OOM */
+    }
     tok = strtok_r(cmd_copy, " \t\n;|&><", &saveptr);
     while (tok) {
+        tok = strip_surrounding_quotes(tok);
         if (has_path_chars(tok)) {
             /* Expand a leading tilde naively */
             char expanded[PATH_MAX];

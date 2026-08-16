@@ -144,6 +144,31 @@ static int test_workspace_only_allows_inside_path(void)
 	return 0;
 }
 
+static int test_workspace_only_blocks_quoted_path(void)
+{
+	allowlist_config_t cfg;
+	char reason[256];
+	cfg.workspace_path = "/tmp";
+	cfg.workspace_only = 1;
+	reason[0] = '\0';
+	ASSERT(allowlist_check_shell_command("cat '/etc/passwd'", &cfg, reason, sizeof(reason)) == 1);
+	ASSERT(allowlist_check_shell_command("cat \"/etc/passwd\"", &cfg, reason, sizeof(reason)) == 1);
+	return 0;
+}
+
+static int test_workspace_only_blocks_embedded_path_in_python(void)
+{
+	allowlist_config_t cfg;
+	char reason[256];
+	cfg.workspace_path = "/tmp";
+	cfg.workspace_only = 1;
+	reason[0] = '\0';
+	ASSERT(allowlist_check_shell_command(
+		"python3 -c \"open('/etc/passwd').read()\"", &cfg, reason, sizeof(reason)) == 1);
+	ASSERT(strstr(reason, "passwd") != NULL || strstr(reason, "workspace") != NULL);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Symlink escape test (5.4)                                            */
 /* ------------------------------------------------------------------ */
@@ -205,6 +230,8 @@ int main(void)
 	RUN(test_path_prefix_no_slash());
 	RUN(test_workspace_only_blocks_outside_path());
 	RUN(test_workspace_only_allows_inside_path());
+	RUN(test_workspace_only_blocks_quoted_path());
+	RUN(test_workspace_only_blocks_embedded_path_in_python());
 	RUN(test_symlink_escape());
 	printf("test_allowlist: all tests passed\n");
 	return 0;
