@@ -166,6 +166,62 @@ static int ensure_tokens_dir(const char *path)
 	return 0;
 }
 
+static void discard_tokens_tmp(int fd, char *tmp_path)
+{
+	if (fd >= 0)
+		(void)close(fd);
+	if (tmp_path) {
+		unlink(tmp_path);
+		free(tmp_path);
+	}
+}
+
+/*
+ * Replace tokens via temp+rename so O_TRUNC cannot wipe auth_tokens.json
+ * before the new JSON is fully on disk (ENOSPC / crash / fdopen failure).
+ */
+static int write_tokens_atomic(const char *path, const char *json)
+{
+	size_t json_len;
+	size_t off;
+	char *tmp_path;
+	int fd;
+
+	if (!path || !json) return -1;
+	json_len = strlen(json);
+	tmp_path = malloc(strlen(path) + 8);
+	if (!tmp_path) return -1;
+	snprintf(tmp_path, strlen(path) + 8, "%s.tmp", path);
+	fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0) {
+		free(tmp_path);
+		return -1;
+	}
+	off = 0;
+	while (off < json_len) {
+		ssize_t n = write(fd, json + off, json_len - off);
+		if (n <= 0) {
+			discard_tokens_tmp(fd, tmp_path);
+			return -1;
+		}
+		off += (size_t)n;
+	}
+	if (fsync(fd) != 0) {
+		discard_tokens_tmp(fd, tmp_path);
+		return -1;
+	}
+	if (close(fd) != 0) {
+		discard_tokens_tmp(-1, tmp_path);
+		return -1;
+	}
+	if (rename(tmp_path, path) != 0) {
+		discard_tokens_tmp(-1, tmp_path);
+		return -1;
+	}
+	free(tmp_path);
+	return 0;
+}
+
 int auth_pair(auth_ctx_t *ctx, const char *code, char *token_out, size_t token_size)
 {
 	if (!ctx || !ctx->tokens_path || !code || !token_out || token_size == 0) return -1;
@@ -174,7 +230,7 @@ int auth_pair(auth_ctx_t *ctx, const char *code, char *token_out, size_t token_s
 	    !constant_time_cmp(code, ctx->pending_pairing_code, PAIRING_CODE_LEN))
 		return -1;
 	char new_token[TOKEN_LEN + 1];
-	generate_random_hex(new_token, TOKEN_LEN);
+	if (generate_random_hex(new_token, TOKEN_LEN) != 0) return -1;
 	/* Read existing tokens and append (multi-device support). */
 	cJSON *arr = NULL;
 	{
@@ -204,19 +260,10 @@ int auth_pair(auth_ctx_t *ctx, const char *code, char *token_out, size_t token_s
 		free(json);
 		return -1;
 	}
-	int fd = open(ctx->tokens_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-	if (fd < 0) {
+	if (write_tokens_atomic(ctx->tokens_path, json) != 0) {
 		free(json);
 		return -1;
 	}
-	FILE *out = fdopen(fd, "w");
-	if (!out) {
-		close(fd);
-		free(json);
-		return -1;
-	}
-	fprintf(out, "%s", json);
-	fclose(out);
 	free(json);
 	size_t copy_len = (size_t)TOKEN_LEN < token_size - 1 ? (size_t)TOKEN_LEN : token_size - 1;
 	memcpy(token_out, new_token, copy_len);
