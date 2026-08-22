@@ -5,9 +5,11 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/auth.h"
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #define ASSERT(c) do { if (!(c)) { fprintf(stderr, "FAIL: %s:%d %s\n", __FILE__, __LINE__, #c); return 1; } } while (0)
@@ -97,6 +99,65 @@ static int test_auth_validate_token(void)
 	free(code);
 	auth_cleanup(ctx);
 	unlink("/tmp/shellclaw_test_tokens_validate.json");
+	return 0;
+}
+
+static int test_auth_pair_write_failure_preserves_existing_tokens(void)
+{
+	char dir_template[] = "/tmp/shellclaw_auth_atomic_XXXXXX";
+	char path[512];
+	char tmp_path[512];
+	char token[64];
+	char *dir;
+	char *code;
+	auth_ctx_t *ctx;
+	FILE *tokens_file;
+	struct rlimit old_lim;
+	struct rlimit new_lim;
+	int pair_ret;
+	const char *existing = "existingtokenexistingtokenexist01";
+
+	dir = mkdtemp(dir_template);
+	ASSERT(dir != NULL);
+	snprintf(path, sizeof(path), "%s/auth_tokens.json", dir);
+	snprintf(tmp_path, sizeof(tmp_path), "%s/auth_tokens.json.tmp", dir);
+
+	ctx = auth_init(path);
+	ASSERT(ctx != NULL);
+	code = auth_get_or_create_pairing_code(ctx);
+	ASSERT(code != NULL);
+
+	/* Pairing code is in memory; tokens file already has a device (append window). */
+	tokens_file = fopen(path, "w");
+	ASSERT(tokens_file != NULL);
+	ASSERT(fprintf(tokens_file, "[\"%s\"]", existing) > 0);
+	ASSERT(fclose(tokens_file) == 0);
+	ASSERT(auth_validate_token(ctx, existing) == 1);
+
+	ASSERT(getrlimit(RLIMIT_FSIZE, &old_lim) == 0);
+	new_lim = old_lim;
+	new_lim.rlim_cur = 8;
+	(void)signal(SIGXFSZ, SIG_IGN);
+	ASSERT(setrlimit(RLIMIT_FSIZE, &new_lim) == 0);
+
+	memset(token, 0, sizeof(token));
+	pair_ret = auth_pair(ctx, code, token, sizeof(token));
+	ASSERT(setrlimit(RLIMIT_FSIZE, &old_lim) == 0);
+
+	ASSERT(pair_ret != 0);
+	ASSERT(token[0] == '\0');
+	ASSERT(auth_validate_token(ctx, existing) == 1);
+
+	memset(token, 0, sizeof(token));
+	ASSERT(auth_pair(ctx, code, token, sizeof(token)) == 0);
+	ASSERT(auth_validate_token(ctx, existing) == 1);
+	ASSERT(auth_validate_token(ctx, token) == 1);
+
+	free(code);
+	auth_cleanup(ctx);
+	unlink(path);
+	unlink(tmp_path);
+	ASSERT(rmdir(dir) == 0);
 	return 0;
 }
 
@@ -215,6 +276,10 @@ int main(void)
 	if (test_auth_pair_valid_code() != 0) { fprintf(stderr, "test_auth_pair_valid_code failed\n"); failed++; }
 	if (test_auth_pair_invalid_code() != 0) { fprintf(stderr, "test_auth_pair_invalid_code failed\n"); failed++; }
 	if (test_auth_validate_token() != 0) { fprintf(stderr, "test_auth_validate_token failed\n"); failed++; }
+	if (test_auth_pair_write_failure_preserves_existing_tokens() != 0) {
+		fprintf(stderr, "test_auth_pair_write_failure_preserves_existing_tokens failed\n");
+		failed++;
+	}
 	if (test_auth_multi_token() != 0) { fprintf(stderr, "test_auth_multi_token failed\n"); failed++; }
 	if (test_pair_lockout_triggers_after_max_fails() != 0) { fprintf(stderr, "test_pair_lockout_triggers_after_max_fails failed\n"); failed++; }
 	if (test_pair_lockout_expires() != 0) { fprintf(stderr, "test_pair_lockout_expires failed\n"); failed++; }
