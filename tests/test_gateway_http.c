@@ -562,6 +562,31 @@ static int test_api_asap_log_401(void)
 	return 0;
 }
 
+static int test_shutdown_does_not_crash(pid_t pid, const char *token)
+{
+	int i;
+	int status = 0;
+
+	if (token && token[0]) {
+		for (i = 0; i < 16; i++) {
+			long code = 0;
+			char *body = NULL;
+			(void)http_get_auth(gw_url("/api/status"), token, &code, &body);
+			free(body);
+		}
+	}
+	ASSERT(kill(pid, SIGTERM) == 0);
+	ASSERT(waitpid(pid, &status, 0) == pid);
+	if (WIFSIGNALED(status)) {
+		int sig = WTERMSIG(status);
+		if (sig == SIGSEGV || sig == SIGABRT || sig == SIGBUS || sig == SIGILL) {
+			fprintf(stderr, "FAIL: gateway crashed on shutdown with signal %d\n", sig);
+			return 1;
+		}
+	}
+	return 0;
+}
+
 static int test_api_asap_log(const char *token)
 {
 	long code;
@@ -690,8 +715,12 @@ int main(int argc, char **argv)
 		if (test_api_sessions(token) != 0) { fprintf(stderr, "test_api_sessions failed\n"); failed++; }
 		if (test_api_asap_log(token) != 0) { fprintf(stderr, "test_api_asap_log failed\n"); failed++; }
 	}
-	kill(pid, SIGTERM);
-	waitpid(pid, NULL, 0);
+	if (test_shutdown_does_not_crash(pid, token) != 0) {
+		fprintf(stderr, "test_shutdown_does_not_crash failed\n");
+		failed++;
+		kill(pid, SIGKILL);
+		waitpid(pid, NULL, 0);
+	}
 	unlink(config_path);
 	unlink(tokens_path);
 	unlink(pairing_file);
