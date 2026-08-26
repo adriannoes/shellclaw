@@ -2,9 +2,11 @@
  * @file sandbox.h
  * @brief Process sandbox API: isolated execution with namespaces, timeout, and cgroups v2.
  *
- * On Linux, sandbox_exec uses clone(2) with PID/mount/network namespace isolation,
- * optional cgroups v2 resource limits, and a hard timeout with SIGKILL.
- * On other platforms (macOS, BSDs) it falls back to a plain fork+exec and logs a warning.
+ * On Linux, sandbox_exec uses clone(2)/fork with PID/mount/network namespace
+ * isolation, Landlock filesystem restrictions to the configured workspace
+ * (when set), optional cgroups v2 resource limits, and a hard timeout with
+ * SIGKILL. On other platforms (macOS, BSDs) it falls back to a plain fork+exec
+ * and logs a warning.
  */
 #ifndef SHELLCLAW_SANDBOX_H
 #define SHELLCLAW_SANDBOX_H
@@ -42,8 +44,10 @@ typedef struct sandbox_config {
 /**
  * Execute @p cmd inside an isolated child process and capture output.
  *
- * On Linux, clones with CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET.
- * Applies cgroups v2 limits when available; degrades gracefully if not.
+ * On Linux, forks then unshare(CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET) and,
+ * when @p cfg->workspace_path is set, applies a Landlock ruleset that denies
+ * host filesystem reads/writes outside the workspace (blocking symlink and
+ * interpreter path escapes). Applies cgroups v2 limits when available.
  * Kills the child with SIGKILL if @p timeout_ms elapses before exit.
  *
  * On non-Linux platforms the function executes the command via fork()+exec()

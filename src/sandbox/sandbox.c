@@ -30,6 +30,8 @@
 #ifdef __linux__
 #include <sched.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <linux/landlock.h>
 #endif
 
 #define DEFAULT_TIMEOUT_MS     10000
@@ -138,6 +140,137 @@ static size_t drain_pipe(int fd, char *buf, size_t cap, int timeout_ms)
 /* Child setup before exec                                              */
 /* ------------------------------------------------------------------ */
 
+#ifdef __linux__
+
+/** ABI 1 filesystem rights. Extra bits (REFER/TRUNCATE) are OR'd when supported. */
+static __u64 landlock_abi1_fs_rights(void)
+{
+    return LANDLOCK_ACCESS_FS_EXECUTE |
+           LANDLOCK_ACCESS_FS_WRITE_FILE |
+           LANDLOCK_ACCESS_FS_READ_FILE |
+           LANDLOCK_ACCESS_FS_READ_DIR |
+           LANDLOCK_ACCESS_FS_REMOVE_DIR |
+           LANDLOCK_ACCESS_FS_REMOVE_FILE |
+           LANDLOCK_ACCESS_FS_MAKE_CHAR |
+           LANDLOCK_ACCESS_FS_MAKE_DIR |
+           LANDLOCK_ACCESS_FS_MAKE_REG |
+           LANDLOCK_ACCESS_FS_MAKE_SOCK |
+           LANDLOCK_ACCESS_FS_MAKE_FIFO |
+           LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+           LANDLOCK_ACCESS_FS_MAKE_SYM;
+}
+
+/**
+ * Probe Landlock ABI and mask handled FS rights the running kernel understands.
+ * Passing REFER (ABI 2) or TRUNCATE (ABI 3) on ABI 1 makes create_ruleset fail
+ * and would skip the whole policy (fail-open).
+ */
+static int landlock_handled_fs(__u64 *handled_out)
+{
+    int abi;
+    __u64 handled;
+    if (!handled_out) return -1;
+    abi = (int)syscall(__NR_landlock_create_ruleset, NULL, 0,
+                       LANDLOCK_CREATE_RULESET_VERSION);
+    if (abi < 1) return -1;
+    handled = landlock_abi1_fs_rights();
+#ifdef LANDLOCK_ACCESS_FS_REFER
+    if (abi >= 2)
+        handled |= LANDLOCK_ACCESS_FS_REFER;
+#endif
+#ifdef LANDLOCK_ACCESS_FS_TRUNCATE
+    if (abi >= 3)
+        handled |= LANDLOCK_ACCESS_FS_TRUNCATE;
+#endif
+    *handled_out = handled;
+    return 0;
+}
+
+/**
+ * Best-effort Landlock FS policy: full access under @p workspace, read/exec
+ * for common system paths needed by /bin/sh and interpreters. Without this,
+ * unshare(CLONE_NEWNS) alone still exposes the host filesystem (symlinks,
+ * python -c, etc. can read /etc). Degrades with a stderr warning if Landlock
+ * is unavailable.
+ */
+static void landlock_restrict_to_workspace(const char *workspace)
+{
+    __u64 handled;
+    __u64 workspace_access;
+    __u64 ro_exec;
+    /* System prefixes required to run /bin/sh and typical interpreters. */
+    static const char *const RO_PATHS[] = {
+        "/bin", "/usr", "/lib", "/lib64", "/lib32",
+        "/etc/ld.so.cache", "/etc/ld.so.conf", "/etc/ld.so.conf.d",
+        "/etc/ssl", "/etc/nsswitch.conf", "/etc/hosts", "/etc/resolv.conf",
+        "/dev/null", "/dev/zero", "/dev/urandom", "/dev/tty",
+        NULL
+    };
+    struct landlock_ruleset_attr attr;
+    int ruleset_fd;
+    int ws_fd;
+    size_t i;
+    if (!workspace || !workspace[0]) return;
+    if (landlock_handled_fs(&handled) != 0) {
+        fprintf(stderr,
+                "sandbox: Landlock unavailable; host filesystem still visible\n");
+        return;
+    }
+    workspace_access = (LANDLOCK_ACCESS_FS_EXECUTE |
+                        LANDLOCK_ACCESS_FS_WRITE_FILE |
+                        LANDLOCK_ACCESS_FS_READ_FILE |
+                        LANDLOCK_ACCESS_FS_READ_DIR |
+                        LANDLOCK_ACCESS_FS_REMOVE_DIR |
+                        LANDLOCK_ACCESS_FS_REMOVE_FILE |
+                        LANDLOCK_ACCESS_FS_MAKE_DIR |
+                        LANDLOCK_ACCESS_FS_MAKE_REG |
+                        LANDLOCK_ACCESS_FS_MAKE_SYM |
+                        LANDLOCK_ACCESS_FS_MAKE_FIFO) & handled;
+#ifdef LANDLOCK_ACCESS_FS_TRUNCATE
+    workspace_access |= (LANDLOCK_ACCESS_FS_TRUNCATE & handled);
+#endif
+    ro_exec = (LANDLOCK_ACCESS_FS_EXECUTE |
+               LANDLOCK_ACCESS_FS_READ_FILE |
+               LANDLOCK_ACCESS_FS_READ_DIR) & handled;
+    memset(&attr, 0, sizeof(attr));
+    attr.handled_access_fs = handled;
+    /* Pass only the ABI-1 field size so older kernels do not return E2BIG. */
+    ruleset_fd = (int)syscall(__NR_landlock_create_ruleset, &attr,
+                              sizeof(attr.handled_access_fs), 0);
+    if (ruleset_fd < 0) {
+        fprintf(stderr,
+                "sandbox: Landlock ruleset create failed (errno=%d); host filesystem still visible\n",
+                errno);
+        return;
+    }
+    ws_fd = open(workspace, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if (ws_fd >= 0) {
+        struct landlock_path_beneath_attr pb;
+        memset(&pb, 0, sizeof(pb));
+        pb.allowed_access = workspace_access;
+        pb.parent_fd = ws_fd;
+        (void)syscall(__NR_landlock_add_rule, ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
+                      &pb, 0);
+        close(ws_fd);
+    }
+    for (i = 0; RO_PATHS[i]; i++) {
+        int pfd = open(RO_PATHS[i], O_PATH | O_CLOEXEC);
+        struct landlock_path_beneath_attr pb;
+        if (pfd < 0) continue;
+        memset(&pb, 0, sizeof(pb));
+        pb.allowed_access = ro_exec;
+        pb.parent_fd = pfd;
+        (void)syscall(__NR_landlock_add_rule, ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
+                      &pb, 0);
+        close(pfd);
+    }
+    /* PR_SET_NO_NEW_PRIVS is required before restrict_self; already set by caller. */
+    (void)syscall(__NR_landlock_restrict_self, ruleset_fd, 0);
+    close(ruleset_fd);
+}
+
+#endif /* __linux__ */
+
 static void setup_child_process(int pipe_wr, const char *workspace)
 {
     close(STDIN_FILENO);
@@ -149,6 +282,9 @@ static void setup_child_process(int pipe_wr, const char *workspace)
     /* Namespace isolation: mount + network + PID (children of this process). */
     unshare(CLONE_NEWNS | CLONE_NEWNET | CLONE_NEWPID);
     prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+    /* Host FS remains visible after unshare(NEWNS) alone; Landlock enforces
+     * workspace containment (blocks symlink / interpreter path escapes). */
+    landlock_restrict_to_workspace(workspace);
 #endif
     if (workspace && workspace[0])
         if (chdir(workspace) != 0) _exit(124);
