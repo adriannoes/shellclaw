@@ -181,6 +181,36 @@ static int test_workspace_landlock_blocks_abs_etc(void)
 	rmdir(ws);
 	return 0;
 }
+
+static int test_workspace_landlock_allows_workspace_write(void)
+{
+	char workspace[] = "/tmp/sc_sb_wr_XXXXXX";
+	char out[4096];
+	char wrote[256];
+	char buf[64];
+	sandbox_config_t cfg;
+	char *ws;
+	FILE *f;
+	int rc;
+	ws = mkdtemp(workspace);
+	if (!ws) {
+		fprintf(stderr, "test_workspace_landlock_allows_workspace_write: mkdtemp failed, skipping\n");
+		return 0;
+	}
+	memset(&cfg, 0, sizeof cfg);
+	cfg.workspace_path = ws;
+	rc = sandbox_exec("echo landlock_ok > wrote.txt", out, sizeof(out), 5000, &cfg);
+	ASSERT(rc == 0);
+	snprintf(wrote, sizeof(wrote), "%s/wrote.txt", ws);
+	f = fopen(wrote, "r");
+	ASSERT(f != NULL);
+	ASSERT(fgets(buf, sizeof(buf), f) != NULL);
+	fclose(f);
+	ASSERT(strstr(buf, "landlock_ok") != NULL);
+	unlink(wrote);
+	rmdir(ws);
+	return 0;
+}
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -249,6 +279,7 @@ int main(void)
 	RUN(test_shadow_not_accessible());
 	RUN(test_workspace_landlock_blocks_symlink_escape());
 	RUN(test_workspace_landlock_blocks_abs_etc());
+	RUN(test_workspace_landlock_allows_workspace_write());
 #else
 	fprintf(stderr, "test_sandbox: Linux-only namespace tests skipped on this platform\n");
 #endif

@@ -142,46 +142,62 @@ static size_t drain_pipe(int fd, char *buf, size_t cap, int timeout_ms)
 
 #ifdef __linux__
 
+/** ABI 1 filesystem rights. Extra bits (REFER/TRUNCATE) are OR'd when supported. */
+static __u64 landlock_abi1_fs_rights(void)
+{
+    return LANDLOCK_ACCESS_FS_EXECUTE |
+           LANDLOCK_ACCESS_FS_WRITE_FILE |
+           LANDLOCK_ACCESS_FS_READ_FILE |
+           LANDLOCK_ACCESS_FS_READ_DIR |
+           LANDLOCK_ACCESS_FS_REMOVE_DIR |
+           LANDLOCK_ACCESS_FS_REMOVE_FILE |
+           LANDLOCK_ACCESS_FS_MAKE_CHAR |
+           LANDLOCK_ACCESS_FS_MAKE_DIR |
+           LANDLOCK_ACCESS_FS_MAKE_REG |
+           LANDLOCK_ACCESS_FS_MAKE_SOCK |
+           LANDLOCK_ACCESS_FS_MAKE_FIFO |
+           LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+           LANDLOCK_ACCESS_FS_MAKE_SYM;
+}
+
+/**
+ * Probe Landlock ABI and mask handled FS rights the running kernel understands.
+ * Passing REFER (ABI 2) or TRUNCATE (ABI 3) on ABI 1 makes create_ruleset fail
+ * and would skip the whole policy (fail-open).
+ */
+static int landlock_handled_fs(__u64 *handled_out)
+{
+    int abi;
+    __u64 handled;
+    if (!handled_out) return -1;
+    abi = (int)syscall(__NR_landlock_create_ruleset, NULL, 0,
+                       LANDLOCK_CREATE_RULESET_VERSION);
+    if (abi < 1) return -1;
+    handled = landlock_abi1_fs_rights();
+#ifdef LANDLOCK_ACCESS_FS_REFER
+    if (abi >= 2)
+        handled |= LANDLOCK_ACCESS_FS_REFER;
+#endif
+#ifdef LANDLOCK_ACCESS_FS_TRUNCATE
+    if (abi >= 3)
+        handled |= LANDLOCK_ACCESS_FS_TRUNCATE;
+#endif
+    *handled_out = handled;
+    return 0;
+}
+
 /**
  * Best-effort Landlock FS policy: full access under @p workspace, read/exec
  * for common system paths needed by /bin/sh and interpreters. Without this,
  * unshare(CLONE_NEWNS) alone still exposes the host filesystem (symlinks,
- * python -c, etc. can read /etc). Degrades silently if Landlock is unavailable.
+ * python -c, etc. can read /etc). Degrades with a stderr warning if Landlock
+ * is unavailable.
  */
 static void landlock_restrict_to_workspace(const char *workspace)
 {
-    __u64 handled =
-        LANDLOCK_ACCESS_FS_EXECUTE |
-        LANDLOCK_ACCESS_FS_WRITE_FILE |
-        LANDLOCK_ACCESS_FS_READ_FILE |
-        LANDLOCK_ACCESS_FS_READ_DIR |
-        LANDLOCK_ACCESS_FS_REMOVE_DIR |
-        LANDLOCK_ACCESS_FS_REMOVE_FILE |
-        LANDLOCK_ACCESS_FS_MAKE_CHAR |
-        LANDLOCK_ACCESS_FS_MAKE_DIR |
-        LANDLOCK_ACCESS_FS_MAKE_REG |
-        LANDLOCK_ACCESS_FS_MAKE_SOCK |
-        LANDLOCK_ACCESS_FS_MAKE_FIFO |
-        LANDLOCK_ACCESS_FS_MAKE_BLOCK |
-        LANDLOCK_ACCESS_FS_MAKE_SYM |
-        LANDLOCK_ACCESS_FS_REFER |
-        LANDLOCK_ACCESS_FS_TRUNCATE;
-    __u64 workspace_access =
-        LANDLOCK_ACCESS_FS_EXECUTE |
-        LANDLOCK_ACCESS_FS_WRITE_FILE |
-        LANDLOCK_ACCESS_FS_READ_FILE |
-        LANDLOCK_ACCESS_FS_READ_DIR |
-        LANDLOCK_ACCESS_FS_REMOVE_DIR |
-        LANDLOCK_ACCESS_FS_REMOVE_FILE |
-        LANDLOCK_ACCESS_FS_MAKE_DIR |
-        LANDLOCK_ACCESS_FS_MAKE_REG |
-        LANDLOCK_ACCESS_FS_MAKE_SYM |
-        LANDLOCK_ACCESS_FS_MAKE_FIFO |
-        LANDLOCK_ACCESS_FS_TRUNCATE;
-    __u64 ro_exec =
-        LANDLOCK_ACCESS_FS_EXECUTE |
-        LANDLOCK_ACCESS_FS_READ_FILE |
-        LANDLOCK_ACCESS_FS_READ_DIR;
+    __u64 handled;
+    __u64 workspace_access;
+    __u64 ro_exec;
     /* System prefixes required to run /bin/sh and typical interpreters. */
     static const char *const RO_PATHS[] = {
         "/bin", "/usr", "/lib", "/lib64", "/lib32",
@@ -195,10 +211,38 @@ static void landlock_restrict_to_workspace(const char *workspace)
     int ws_fd;
     size_t i;
     if (!workspace || !workspace[0]) return;
+    if (landlock_handled_fs(&handled) != 0) {
+        fprintf(stderr,
+                "sandbox: Landlock unavailable; host filesystem still visible\n");
+        return;
+    }
+    workspace_access = (LANDLOCK_ACCESS_FS_EXECUTE |
+                        LANDLOCK_ACCESS_FS_WRITE_FILE |
+                        LANDLOCK_ACCESS_FS_READ_FILE |
+                        LANDLOCK_ACCESS_FS_READ_DIR |
+                        LANDLOCK_ACCESS_FS_REMOVE_DIR |
+                        LANDLOCK_ACCESS_FS_REMOVE_FILE |
+                        LANDLOCK_ACCESS_FS_MAKE_DIR |
+                        LANDLOCK_ACCESS_FS_MAKE_REG |
+                        LANDLOCK_ACCESS_FS_MAKE_SYM |
+                        LANDLOCK_ACCESS_FS_MAKE_FIFO) & handled;
+#ifdef LANDLOCK_ACCESS_FS_TRUNCATE
+    workspace_access |= (LANDLOCK_ACCESS_FS_TRUNCATE & handled);
+#endif
+    ro_exec = (LANDLOCK_ACCESS_FS_EXECUTE |
+               LANDLOCK_ACCESS_FS_READ_FILE |
+               LANDLOCK_ACCESS_FS_READ_DIR) & handled;
     memset(&attr, 0, sizeof(attr));
     attr.handled_access_fs = handled;
-    ruleset_fd = (int)syscall(__NR_landlock_create_ruleset, &attr, sizeof(attr), 0);
-    if (ruleset_fd < 0) return;
+    /* Pass only the ABI-1 field size so older kernels do not return E2BIG. */
+    ruleset_fd = (int)syscall(__NR_landlock_create_ruleset, &attr,
+                              sizeof(attr.handled_access_fs), 0);
+    if (ruleset_fd < 0) {
+        fprintf(stderr,
+                "sandbox: Landlock ruleset create failed (errno=%d); host filesystem still visible\n",
+                errno);
+        return;
+    }
     ws_fd = open(workspace, O_PATH | O_DIRECTORY | O_CLOEXEC);
     if (ws_fd >= 0) {
         struct landlock_path_beneath_attr pb;
