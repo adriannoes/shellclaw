@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* ------------------------------------------------------------------ */
 /* Built-in blocklist patterns                                          */
@@ -75,6 +76,46 @@ static int has_path_chars(const char *tok)
 {
     if (!tok) return 0;
     return tok[0] == '/' || tok[0] == '~' || tok[0] == '.';
+}
+
+/** Return 1 if @p tok looks like a shell option flag (-x / --long), not a path. */
+static int is_option_token(const char *tok)
+{
+    if (!tok || tok[0] != '-') return 0;
+    /* Negative numbers and lone "-" are not options we skip for path checks. */
+    if (tok[1] == '\0') return 0;
+    if (tok[1] >= '0' && tok[1] <= '9') return 0;
+    return 1;
+}
+
+/**
+ * Resolve a bare relative filename against the workspace and reject symlink
+ * (or hard-link) escapes. Tokens that do not exist yet are left alone.
+ * @return 1 if blocked, 0 if allowed / not applicable.
+ */
+static int block_if_relative_token_escapes(const char *tok, const char *workspace_root,
+                                           char *reason_buf, size_t reason_cap)
+{
+    char joined[PATH_MAX];
+    int n;
+    if (!tok || !tok[0] || !workspace_root || !workspace_root[0]) return 0;
+    if (has_path_chars(tok) || is_option_token(tok)) return 0;
+    /* Skip tokens that already contain a slash mid-string without leading path char
+     * (e.g. "src/foo") — those are relative multi-component paths; join + resolve. */
+    n = snprintf(joined, sizeof(joined), "%s/%s", workspace_root, tok);
+    if (n < 0 || (size_t)n >= sizeof(joined)) {
+        set_reason(reason_buf, reason_cap, "command blocked: path too long: ", tok);
+        return 1;
+    }
+    /* Only enforce when the name already exists (symlink / file / dir). */
+    if (access(joined, F_OK) != 0) return 0;
+    if (!allowlist_path_is_under_workspace(joined, workspace_root)) {
+        set_reason(reason_buf, reason_cap,
+                   "command blocked: path escapes workspace: ", joined);
+        fprintf(stderr, "allowlist: blocked path outside workspace: %s\n", joined);
+        return 1;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -184,6 +225,9 @@ int allowlist_check_shell_command(const char *cmd, const allowlist_config_t *cfg
                 free(cmd_copy);
                 return 1;
             }
+        } else if (block_if_relative_token_escapes(tok, workspace_root, reason_buf, reason_cap)) {
+            free(cmd_copy);
+            return 1;
         }
         tok = strtok_r(NULL, " \t\n;|&><", &saveptr);
     }

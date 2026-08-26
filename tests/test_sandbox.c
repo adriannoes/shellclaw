@@ -116,6 +116,71 @@ static int test_shadow_not_accessible(void)
 	ASSERT(strlen(out) > 0);
 	return 0;
 }
+
+/**
+ * With a workspace configured, Landlock must deny host reads even via a
+ * relative symlink (allowlist may miss bare names; sandbox is the FS gate).
+ */
+static int test_workspace_landlock_blocks_symlink_escape(void)
+{
+	char workspace[] = "/tmp/sc_sb_ws_XXXXXX";
+	char leak_path[256];
+	char out[4096];
+	sandbox_config_t cfg;
+	char *ws;
+	int rc;
+	ws = mkdtemp(workspace);
+	if (!ws) {
+		fprintf(stderr, "test_workspace_landlock_blocks_symlink_escape: mkdtemp failed, skipping\n");
+		return 0;
+	}
+	snprintf(leak_path, sizeof(leak_path), "%s/leak", ws);
+	if (symlink("/etc/passwd", leak_path) != 0) {
+		rmdir(ws);
+		fprintf(stderr, "test_workspace_landlock_blocks_symlink_escape: symlink failed, skipping\n");
+		return 0;
+	}
+	memset(&cfg, 0, sizeof cfg);
+	cfg.workspace_path = ws;
+	rc = sandbox_exec("cat leak 2>&1; echo EXIT:$?", out, sizeof(out), 5000, &cfg);
+	ASSERT(rc == 0);
+	/* Must not dump passwd contents (root:x: or similar). */
+	ASSERT(strstr(out, "root:x:") == NULL);
+	ASSERT(strstr(out, "Permission denied") != NULL ||
+	       strstr(out, "No such file") != NULL ||
+	       strstr(out, "EXIT:1") != NULL ||
+	       strstr(out, "EXIT:2") != NULL);
+	unlink(leak_path);
+	rmdir(ws);
+	return 0;
+}
+
+static int test_workspace_landlock_blocks_abs_etc(void)
+{
+	char workspace[] = "/tmp/sc_sb_ws2_XXXXXX";
+	char out[4096];
+	char outp[256];
+	sandbox_config_t cfg;
+	char *ws;
+	int rc;
+	ws = mkdtemp(workspace);
+	if (!ws) {
+		fprintf(stderr, "test_workspace_landlock_blocks_abs_etc: mkdtemp failed, skipping\n");
+		return 0;
+	}
+	memset(&cfg, 0, sizeof cfg);
+	cfg.workspace_path = ws;
+	rc = sandbox_exec(
+		"python3 -c 'open(\"out\",\"w\").write(open(chr(47)+\"etc\"+chr(47)+\"passwd\").read())' 2>&1; "
+		"echo EXIT:$?",
+		out, sizeof(out), 8000, &cfg);
+	ASSERT(rc == 0);
+	ASSERT(strstr(out, "root:x:") == NULL);
+	snprintf(outp, sizeof(outp), "%s/out", ws);
+	unlink(outp);
+	rmdir(ws);
+	return 0;
+}
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -182,6 +247,8 @@ int main(void)
 	RUN(test_timeout_kills_process());
 #ifdef __linux__
 	RUN(test_shadow_not_accessible());
+	RUN(test_workspace_landlock_blocks_symlink_escape());
+	RUN(test_workspace_landlock_blocks_abs_etc());
 #else
 	fprintf(stderr, "test_sandbox: Linux-only namespace tests skipped on this platform\n");
 #endif

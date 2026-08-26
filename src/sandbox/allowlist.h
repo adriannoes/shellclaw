@@ -12,8 +12,9 @@
  *     when they escape the declared workspace root.
  *
  * Both checks are intentionally conservative and may produce false positives.
- * They are a best-effort defence-in-depth layer; real isolation is provided by
- * sandbox_exec() via kernel namespaces.
+ * They are a best-effort defence-in-depth layer; filesystem isolation for the
+ * shell tool is enforced by sandbox_exec() (Landlock on Linux when a workspace
+ * path is configured, plus namespaces/cgroups).
  */
 #ifndef SHELLCLAW_ALLOWLIST_H
 #define SHELLCLAW_ALLOWLIST_H

@@ -184,6 +184,43 @@ static int test_symlink_escape(void)
 #endif
 }
 
+/**
+ * Relative symlink indirection: has_path_chars misses bare names, so
+ * "cat leak" must still be blocked when leak -> /etc/passwd under workspace.
+ */
+static int test_relative_symlink_indirection(void)
+{
+#ifdef __linux__
+	char workspace[] = "/tmp/sc_al_rel_XXXXXX";
+	char leak_path[256];
+	char *ws;
+	allowlist_config_t cfg;
+	char reason[256];
+	ws = mkdtemp(workspace);
+	if (!ws) {
+		fprintf(stderr, "test_relative_symlink_indirection: mkdtemp failed, skipping\n");
+		return 0;
+	}
+	snprintf(leak_path, sizeof(leak_path), "%s/leak", ws);
+	if (symlink("/etc/passwd", leak_path) != 0) {
+		rmdir(ws);
+		fprintf(stderr, "test_relative_symlink_indirection: symlink failed, skipping\n");
+		return 0;
+	}
+	cfg.workspace_path = ws;
+	cfg.workspace_only = 1;
+	reason[0] = '\0';
+	ASSERT(allowlist_check_shell_command("cat leak", &cfg, reason, sizeof(reason)) == 1);
+	ASSERT(strstr(reason, "escapes") != NULL || strstr(reason, "workspace") != NULL);
+	unlink(leak_path);
+	rmdir(ws);
+	return 0;
+#else
+	fprintf(stderr, "test_relative_symlink_indirection: skipped (Linux-specific)\n");
+	return 0;
+#endif
+}
+
 /* ------------------------------------------------------------------ */
 /* main                                                                 */
 /* ------------------------------------------------------------------ */
@@ -206,6 +243,7 @@ int main(void)
 	RUN(test_workspace_only_blocks_outside_path());
 	RUN(test_workspace_only_allows_inside_path());
 	RUN(test_symlink_escape());
+	RUN(test_relative_symlink_indirection());
 	printf("test_allowlist: all tests passed\n");
 	return 0;
 }
