@@ -42,8 +42,9 @@ typedef struct sandbox_config {
 /**
  * Execute @p cmd inside an isolated child process and capture output.
  *
- * On Linux, clones with CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET.
- * Applies cgroups v2 limits when available; degrades gracefully if not.
+ * On Linux, enters a user namespace when needed, then unshares
+ * CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET. Isolation failure is fail-closed
+ * (returns -1). Applies cgroups v2 limits when available; degrades if not.
  * Kills the child with SIGKILL if @p timeout_ms elapses before exit.
  *
  * On non-Linux platforms the function executes the command via fork()+exec()

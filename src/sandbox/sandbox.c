@@ -2,11 +2,11 @@
  * @file sandbox.c
  * @brief Process sandbox: Linux namespace isolation, cgroups v2, timeout/kill.
  *
- * Linux path: fork() + unshare(CLONE_NEWNS | CLONE_NEWNET | CLONE_NEWPID) in the
- * child, giving the shell and its children mount, network, and PID namespace
- * isolation respectively.  cgroups v2 memory.max and cpu.max limits are applied
- * via the host cgroup hierarchy when available; the function degrades gracefully
- * if the kernel does not expose writable cgroup controllers.
+ * Linux path: fork() then, in the child, unshare mount/network/PID namespaces.
+ * Unprivileged processes cannot unshare those namespaces until they enter a
+ * user namespace and map uid/gid; that step is required so sandbox.enabled
+ * does not silently keep the host network. Isolation failure is fail-closed
+ * (child _exit(SANDBOX_EXIT_NO_NS)). cgroups v2 limits degrade if unavailable.
  *
  * Non-Linux path: plain fork() + execl(); a warning is emitted to stderr.
  */
@@ -37,6 +37,9 @@
 #define DEFAULT_CGROUP_BASE    "/sys/fs/cgroup"
 #define CGROUP_NAME_PREFIX     "shellclaw_sb_"
 #define PIPE_POLL_SLICE_MS     500
+/* Child exit when mount/net/pid namespaces cannot be applied. Distinct from
+ * 124 (chdir), 125 (dup2), and 127 (exec). */
+#define SANDBOX_EXIT_NO_NS     123
 
 /* ------------------------------------------------------------------ */
 /* cgroups v2 helpers (Linux only)                                      */
@@ -138,6 +141,51 @@ static size_t drain_pipe(int fd, char *buf, size_t cap, int timeout_ms)
 /* Child setup before exec                                              */
 /* ------------------------------------------------------------------ */
 
+#ifdef __linux__
+
+static int write_proc_str(const char *path, const char *s)
+{
+    int fd;
+    ssize_t n;
+    size_t len;
+
+    fd = open(path, O_WRONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    len = strlen(s);
+    n = write(fd, s, len);
+    close(fd);
+    return (n == (ssize_t)len) ? 0 : -1;
+}
+
+static int enter_user_namespace(void)
+{
+    char map[64];
+    uid_t uid = getuid();
+    gid_t gid = getgid();
+
+    if (unshare(CLONE_NEWUSER) != 0) return -1;
+    if (write_proc_str("/proc/self/setgroups", "deny\n") != 0) return -1;
+    snprintf(map, sizeof map, "0 %u 1\n", (unsigned)uid);
+    if (write_proc_str("/proc/self/uid_map", map) != 0) return -1;
+    snprintf(map, sizeof map, "0 %u 1\n", (unsigned)gid);
+    if (write_proc_str("/proc/self/gid_map", map) != 0) return -1;
+    return 0;
+}
+
+static int unshare_isolation_namespaces(void)
+{
+    return unshare(CLONE_NEWNS | CLONE_NEWNET | CLONE_NEWPID);
+}
+
+static void isolate_or_exit(void)
+{
+    if (unshare_isolation_namespaces() == 0) return;
+    if (enter_user_namespace() != 0) _exit(SANDBOX_EXIT_NO_NS);
+    if (unshare_isolation_namespaces() != 0) _exit(SANDBOX_EXIT_NO_NS);
+}
+
+#endif /* __linux__ */
+
 static void setup_child_process(int pipe_wr, const char *workspace)
 {
     close(STDIN_FILENO);
@@ -146,8 +194,7 @@ static void setup_child_process(int pipe_wr, const char *workspace)
     close(pipe_wr);
 #ifdef __linux__
     setsid();
-    /* Namespace isolation: mount + network + PID (children of this process). */
-    unshare(CLONE_NEWNS | CLONE_NEWNET | CLONE_NEWPID);
+    isolate_or_exit();
     prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
 #endif
     if (workspace && workspace[0])
@@ -192,6 +239,7 @@ int sandbox_exec(const char *cmd, char *out, size_t out_cap,
     pid_t pid;
     size_t total;
     int timed_out = 0;
+    int child_st = 0;
     const char *workspace = cfg ? cfg->workspace_path : NULL;
     int used_cgroup = 0;
 #ifdef __linux__
@@ -247,15 +295,24 @@ int sandbox_exec(const char *cmd, char *out, size_t out_cap,
 #endif
     total = drain_pipe(pipefd[0], out, out_cap, timeout_ms);
     close(pipefd[0]);
-    timed_out = reap_child(pid, NULL);
+    timed_out = reap_child(pid, &child_st);
     if (timed_out && total < out_cap - 40)
         snprintf(out + total, out_cap - total, "\n[Sandbox: command timed out after %d ms]",
                  timeout_ms);
 #ifdef __linux__
-    if (used_cgroup)
-        cgroup_remove(cgroup_base, cgroup_name);
+    {
+        int isolation_failed = !timed_out && WIFEXITED(child_st)
+            && WEXITSTATUS(child_st) == SANDBOX_EXIT_NO_NS;
+        if (isolation_failed)
+            snprintf(out, out_cap, "sandbox: namespace isolation failed");
+        if (used_cgroup)
+            cgroup_remove(cgroup_base, cgroup_name);
+        if (isolation_failed)
+            return -1;
+    }
 #else
     (void)used_cgroup;
+    (void)child_st;
 #endif
     return 0;
 }
