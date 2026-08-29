@@ -18,6 +18,11 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 
 #define ASSERT(c) do { \
 	if (!(c)) { \
@@ -116,6 +121,69 @@ static int test_shadow_not_accessible(void)
 	ASSERT(strlen(out) > 0);
 	return 0;
 }
+
+static int listen_loopback_ephemeral(int *port_out)
+{
+	int fd;
+	int one = 1;
+	struct sockaddr_in addr;
+	socklen_t addr_len;
+
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0) return -1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one) != 0) {
+		close(fd);
+		return -1;
+	}
+	memset(&addr, 0, sizeof addr);
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	addr.sin_port = 0;
+	if (bind(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
+		close(fd);
+		return -1;
+	}
+	if (listen(fd, 1) != 0) {
+		close(fd);
+		return -1;
+	}
+	addr_len = sizeof addr;
+	if (getsockname(fd, (struct sockaddr *)&addr, &addr_len) != 0) {
+		close(fd);
+		return -1;
+	}
+	*port_out = (int)ntohs(addr.sin_port);
+	return fd;
+}
+
+static int test_network_namespace_blocks_host_loopback(void)
+{
+	int port = 0;
+	int srv;
+	int rc;
+	char cmd[256];
+	char out[4096];
+
+	/* Pre-fix, ignored unshare(2) left the child on the host netns so this
+	 * connect succeeded. After user-ns + fail-closed, it must not. */
+	if (access("/bin/bash", X_OK) != 0) {
+		fprintf(stderr, "test_sandbox: skip netns loopback test (no bash)\n");
+		return 0;
+	}
+	srv = listen_loopback_ephemeral(&port);
+	ASSERT(srv >= 0);
+	ASSERT(port > 0);
+	snprintf(cmd, sizeof cmd,
+	         "bash -c 'echo >/dev/tcp/127.0.0.1/%d' >/dev/null 2>&1 "
+	         "&& echo CONNECTED || echo ISOLATED",
+	         port);
+	rc = sandbox_exec(cmd, out, sizeof out, 5000, NULL);
+	close(srv);
+	ASSERT(rc == 0);
+	ASSERT(strstr(out, "CONNECTED") == NULL);
+	ASSERT(strstr(out, "ISOLATED") != NULL);
+	return 0;
+}
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -182,6 +250,7 @@ int main(void)
 	RUN(test_timeout_kills_process());
 #ifdef __linux__
 	RUN(test_shadow_not_accessible());
+	RUN(test_network_namespace_blocks_host_loopback());
 #else
 	fprintf(stderr, "test_sandbox: Linux-only namespace tests skipped on this platform\n");
 #endif
