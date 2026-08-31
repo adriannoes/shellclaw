@@ -333,6 +333,64 @@ int skill_get_content(const config_t *cfg, const char *name, char *out_buf, size
 	return 0;
 }
 
+static void discard_skill_tmp(int fd, char *tmp_path)
+{
+	if (fd >= 0)
+		(void)close(fd);
+	if (tmp_path) {
+		unlink(tmp_path);
+		free(tmp_path);
+	}
+}
+
+/*
+ * Replace skill markdown via temp+rename so fopen("w") cannot wipe an existing
+ * skill before the new content is fully on disk (ENOSPC / EFBIG / crash).
+ */
+static int write_skill_atomic(const char *path, const char *content)
+{
+	size_t content_len;
+	size_t off;
+	size_t path_len;
+	char *tmp_path;
+	int fd;
+
+	if (!path || !content) return -1;
+	content_len = strlen(content);
+	path_len = strlen(path);
+	tmp_path = malloc(path_len + 8);
+	if (!tmp_path) return -1;
+	snprintf(tmp_path, path_len + 8, "%s.tmp", path);
+	fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0) {
+		free(tmp_path);
+		return -1;
+	}
+	off = 0;
+	while (off < content_len) {
+		ssize_t n = write(fd, content + off, content_len - off);
+		if (n <= 0) {
+			discard_skill_tmp(fd, tmp_path);
+			return -1;
+		}
+		off += (size_t)n;
+	}
+	if (fsync(fd) != 0) {
+		discard_skill_tmp(fd, tmp_path);
+		return -1;
+	}
+	if (close(fd) != 0) {
+		discard_skill_tmp(-1, tmp_path);
+		return -1;
+	}
+	if (rename(tmp_path, path) != 0) {
+		discard_skill_tmp(-1, tmp_path);
+		return -1;
+	}
+	free(tmp_path);
+	return 0;
+}
+
 int skill_create(const config_t *cfg, const char *name, const char *content)
 {
 	if (!cfg || !name || !content) return -1;
@@ -343,12 +401,7 @@ int skill_create(const config_t *cfg, const char *name, const char *content)
 		fclose(f);
 		return -1;
 	}
-	f = fopen(path, "w");
-	if (!f) return -1;
-	size_t len = strlen(content);
-	size_t written = fwrite(content, 1, len, f);
-	fclose(f);
-	return (written == len) ? 0 : -1;
+	return write_skill_atomic(path, content);
 }
 
 int skill_update(const config_t *cfg, const char *name, const char *content)
@@ -356,12 +409,7 @@ int skill_update(const config_t *cfg, const char *name, const char *content)
 	if (!cfg || !name || !content) return -1;
 	char path[MAX_PATH_LEN];
 	if (build_skill_path(cfg, name, path, sizeof(path)) != 0) return -1;
-	FILE *f = fopen(path, "w");
-	if (!f) return -1;
-	size_t len = strlen(content);
-	size_t written = fwrite(content, 1, len, f);
-	fclose(f);
-	return (written == len) ? 0 : -1;
+	return write_skill_atomic(path, content);
 }
 
 int skill_delete(const config_t *cfg, const char *name)
