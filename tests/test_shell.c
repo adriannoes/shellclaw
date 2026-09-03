@@ -60,6 +60,16 @@ static void test_shell_invalid_json(void)
 	MU_ASSERT(strstr(buf, "error") != NULL, "error in output");
 }
 
+static void test_shell_blocked_auth_tokens(void)
+{
+	const tool_t *t = tool_shell_get();
+	char buf[256];
+	buf[0] = '\0';
+	tool_shell_set_config(NULL);
+	(void)t->execute("{\"command\":\"cat ~/.shellclaw/auth_tokens.json\"}", buf, sizeof(buf));
+	MU_ASSERT(strstr(buf, "blocked") != NULL, "cat auth_tokens.json blocked");
+}
+
 static void test_shell_missing_command(void)
 {
 	const tool_t *t = tool_shell_get();
@@ -72,6 +82,7 @@ int main(void)
 {
 	MU_RUN(test_shell_blocked_rm_rf);
 	MU_RUN(test_shell_blocked_mkfs);
+	MU_RUN(test_shell_blocked_auth_tokens);
 	MU_RUN(test_shell_ls_succeeds);
 	MU_RUN(test_shell_invalid_json);
 	MU_RUN(test_shell_missing_command);

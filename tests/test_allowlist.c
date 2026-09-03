@@ -89,6 +89,77 @@ static int test_null_command_blocked(void)
 	return 0;
 }
 
+static int test_block_auth_tokens_json(void)
+{
+	char reason[256];
+	ASSERT(allowlist_check_shell_command("cat ~/.shellclaw/auth_tokens.json",
+	                                    NULL, reason, sizeof(reason)) == 1);
+	ASSERT(allowlist_path_is_runtime_state_file("auth_tokens.json") == 1);
+	return 0;
+}
+
+static int test_block_state_dir_config_and_memory(void)
+{
+	char dir[] = "/tmp/sc_al_state_XXXXXX";
+	char state[256];
+	char cfg_path[256];
+	char db_path[256];
+	char *tmp;
+	FILE *f;
+	allowlist_config_t acfg;
+	char cmd[512];
+
+	tmp = mkdtemp(dir);
+	if (!tmp) {
+		fprintf(stderr, "test_block_state_dir_config_and_memory: mkdtemp failed\n");
+		return 1;
+	}
+	snprintf(state, sizeof(state), "%s/.shellclaw", tmp);
+	if (mkdir(state, 0755) != 0) {
+		rmdir(tmp);
+		return 1;
+	}
+	snprintf(cfg_path, sizeof(cfg_path), "%s/config.toml", state);
+	snprintf(db_path, sizeof(db_path), "%s/memory.db", state);
+	f = fopen(cfg_path, "w");
+	if (!f) {
+		rmdir(state);
+		rmdir(tmp);
+		return 1;
+	}
+	fputs("x=1\n", f);
+	fclose(f);
+	f = fopen(db_path, "w");
+	if (!f) {
+		unlink(cfg_path);
+		rmdir(state);
+		rmdir(tmp);
+		return 1;
+	}
+	fputs("db", f);
+	fclose(f);
+	ASSERT(allowlist_path_is_runtime_state_file(cfg_path) == 1);
+	ASSERT(allowlist_path_is_runtime_state_file(db_path) == 1);
+	acfg.workspace_path = state;
+	acfg.workspace_only = 1;
+	snprintf(cmd, sizeof(cmd), "cat %s", cfg_path);
+	ASSERT(allowlist_check_shell_command(cmd, &acfg, NULL, 0) == 1);
+	snprintf(cmd, sizeof(cmd), "cat %s", db_path);
+	ASSERT(allowlist_check_shell_command(cmd, &acfg, NULL, 0) == 1);
+	unlink(cfg_path);
+	unlink(db_path);
+	rmdir(state);
+	rmdir(tmp);
+	return 0;
+}
+
+static int test_allow_project_config_toml(void)
+{
+	ASSERT(allowlist_path_is_runtime_state_file("/tmp/project/config.toml") == 0);
+	ASSERT(allowlist_path_is_runtime_state_file("/tmp/project/memory.db") == 0);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Workspace path containment                                           */
 /* ------------------------------------------------------------------ */
@@ -200,6 +271,9 @@ int main(void)
 	RUN(test_allow_safe_command());
 	RUN(test_allow_echo());
 	RUN(test_null_command_blocked());
+	RUN(test_block_auth_tokens_json());
+	RUN(test_block_state_dir_config_and_memory());
+	RUN(test_allow_project_config_toml());
 	RUN(test_path_inside_workspace());
 	RUN(test_path_outside_workspace());
 	RUN(test_path_prefix_no_slash());

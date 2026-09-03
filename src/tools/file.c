@@ -8,6 +8,7 @@
 #include "tools/tool.h"
 #include "tools/file.h"
 #include "core/config.h"
+#include "sandbox/allowlist.h"
 #include "cJSON.h"
 #include <dirent.h>
 #include <libgen.h>
@@ -31,11 +32,41 @@ void tool_file_set_config(const config_t *cfg)
 	g_file_cfg = cfg;
 }
 
+static int path_matches_memory_db(const char *candidate)
+{
+	const char *db;
+	char db_resolved[PATH_MAX];
+	char cand_resolved[PATH_MAX];
+
+	if (!g_file_cfg || !candidate || !candidate[0]) return 0;
+	db = config_memory_db_path(g_file_cfg);
+	if (!db || !db[0]) return 0;
+	if (strcmp(candidate, db) == 0) return 1;
+	if (realpath(db, db_resolved) == NULL) return 0;
+	if (strcmp(candidate, db_resolved) == 0) return 1;
+	if (realpath(candidate, cand_resolved) != NULL &&
+	    strcmp(cand_resolved, db_resolved) == 0)
+		return 1;
+	return 0;
+}
+
+static int path_is_reserved_runtime_state(const char *path, const char *resolved)
+{
+	if (path && allowlist_path_is_runtime_state_file(path)) return 1;
+	if (resolved && resolved[0] && allowlist_path_is_runtime_state_file(resolved))
+		return 1;
+	if (path_matches_memory_db(path) || path_matches_memory_db(resolved))
+		return 1;
+	return 0;
+}
+
 static int path_within_workspace(const char *path, char *resolved, size_t resolved_size)
 {
 	if (!path || path[0] == '\0') return 0;
 	if (!g_file_cfg || !config_workspace_only(g_file_cfg)) {
-		snprintf(resolved, resolved_size, "%s", path);
+		if (realpath(path, resolved) == NULL)
+			snprintf(resolved, resolved_size, "%s", path);
+		if (path_is_reserved_runtime_state(path, resolved)) return 0;
 		return 1;
 	}
 	const char *workspace = config_workspace_path(g_file_cfg);
@@ -48,6 +79,7 @@ static int path_within_workspace(const char *path, char *resolved, size_t resolv
 		size_t ws_len = strlen(ws_resolved);
 		if (strncmp(resolved, ws_resolved, ws_len) != 0) return 0;
 		if (resolved[ws_len] != '\0' && resolved[ws_len] != '/') return 0;
+		if (path_is_reserved_runtime_state(path, resolved)) return 0;
 		return 1;
 	}
 	char path_copy[PATH_MAX];
@@ -59,6 +91,7 @@ static int path_within_workspace(const char *path, char *resolved, size_t resolv
 			size_t ws_len = strlen(ws_resolved);
 			if (strncmp(resolved, ws_resolved, ws_len) != 0) return 0;
 			if (resolved[ws_len] != '\0' && resolved[ws_len] != '/') return 0;
+			if (path_is_reserved_runtime_state(path, resolved)) return 0;
 			return 1;
 		}
 		if (strcmp(dir, ".") == 0 || strcmp(dir, "/") == 0) break;

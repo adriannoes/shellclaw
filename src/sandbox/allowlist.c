@@ -53,6 +53,9 @@ static const char *const BLOCK_SUBSTRINGS[] = {
     "~/.ssh/id_",
     "id_rsa",
     "id_ed25519",
+    "auth_tokens.json",
+    "shellclaw.pid",
+    "shellclaw.log",
     NULL
 };
 
@@ -113,6 +116,40 @@ int allowlist_path_is_under_workspace(const char *path, const char *workspace_ro
     return 0;
 }
 
+int allowlist_path_is_runtime_state_file(const char *path)
+{
+    char resolved[PATH_MAX];
+    const char *use = path;
+    const char *base;
+    const char *slash;
+    char parent[PATH_MAX];
+    size_t parent_len;
+
+    if (!path || !path[0])
+        return 0;
+    if (realpath(path, resolved) != NULL)
+        use = resolved;
+    base = strrchr(use, '/');
+    base = base ? base + 1 : use;
+    if (strcmp(base, "auth_tokens.json") == 0 ||
+        strcmp(base, "shellclaw.pid") == 0 ||
+        strcmp(base, "shellclaw.log") == 0)
+        return 1;
+    if (strcmp(base, "config.toml") != 0 && strcmp(base, "memory.db") != 0)
+        return 0;
+    slash = strrchr(use, '/');
+    if (!slash || slash == use)
+        return 0;
+    parent_len = (size_t)(slash - use);
+    if (parent_len >= sizeof(parent))
+        return 0;
+    memcpy(parent, use, parent_len);
+    parent[parent_len] = '\0';
+    slash = strrchr(parent, '/');
+    slash = slash ? slash + 1 : parent;
+    return strcmp(slash, ".shellclaw") == 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Public: combined check                                               */
 /* ------------------------------------------------------------------ */
@@ -166,21 +203,28 @@ int allowlist_check_shell_command(const char *cmd, const allowlist_config_t *cfg
     if (!cmd_copy) return 0; /* fail-open on OOM */
     tok = strtok_r(cmd_copy, " \t\n;|&><", &saveptr);
     while (tok) {
+        char expanded[PATH_MAX];
+        const char *check = tok;
+        if (tok[0] == '~') {
+            const char *home = getenv("HOME");
+            if (home)
+                snprintf(expanded, sizeof(expanded), "%s%s", home, tok + 1);
+            else
+                snprintf(expanded, sizeof(expanded), "%s", tok);
+            check = expanded;
+        }
+        if (allowlist_path_is_runtime_state_file(check)) {
+            set_reason(reason_buf, reason_cap,
+                       "command blocked: runtime state file: ", check);
+            fprintf(stderr, "allowlist: blocked runtime state file: %s\n", check);
+            free(cmd_copy);
+            return 1;
+        }
         if (has_path_chars(tok)) {
-            /* Expand a leading tilde naively */
-            char expanded[PATH_MAX];
-            if (tok[0] == '~') {
-                const char *home = getenv("HOME");
-                if (home)
-                    snprintf(expanded, sizeof(expanded), "%s%s", home, tok + 1);
-                else
-                    snprintf(expanded, sizeof(expanded), "%s", tok);
-                tok = expanded;
-            }
-            if (!allowlist_path_is_under_workspace(tok, workspace_root)) {
+            if (!allowlist_path_is_under_workspace(check, workspace_root)) {
                 set_reason(reason_buf, reason_cap,
-                           "command blocked: path escapes workspace: ", tok);
-                fprintf(stderr, "allowlist: blocked path outside workspace: %s\n", tok);
+                           "command blocked: path escapes workspace: ", check);
+                fprintf(stderr, "allowlist: blocked path outside workspace: %s\n", check);
                 free(cmd_copy);
                 return 1;
             }

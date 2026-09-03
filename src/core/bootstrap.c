@@ -15,8 +15,12 @@
 #include "gateway/http.h"
 #include "gateway/ws.h"
 #endif
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 
 #define SKILLS_BUF_SIZE (256 * 1024)
 #define SYSTEM_PROMPT_BUF_SIZE (256 * 1024)
@@ -211,8 +215,32 @@ static void channels_cleanup(void)
 	g_cfg = NULL;
 }
 
+static void ensure_workspace_directory(const char *workspace)
+{
+	char parent[PATH_MAX];
+	const char *slash;
+	size_t parent_len;
+
+	if (!workspace || !workspace[0]) return;
+	slash = strrchr(workspace, '/');
+	if (slash && slash != workspace) {
+		parent_len = (size_t)(slash - workspace);
+		if (parent_len < sizeof(parent)) {
+			memcpy(parent, workspace, parent_len);
+			parent[parent_len] = '\0';
+			if (mkdir(parent, 0700) != 0 && errno != EEXIST)
+				fprintf(stderr, "shellclaw: mkdir %s: %s\n",
+				        parent, strerror(errno));
+		}
+	}
+	if (mkdir(workspace, 0700) != 0 && errno != EEXIST)
+		fprintf(stderr, "shellclaw: mkdir workspace %s: %s\n",
+		        workspace, strerror(errno));
+}
+
 int tools_init(const config_t *cfg)
 {
+	ensure_workspace_directory(config_workspace_path(cfg));
 	tool_set_config(cfg);
 	g_tool_count = tool_get_all(g_tools, MAX_TOOLS);
 	return 0;

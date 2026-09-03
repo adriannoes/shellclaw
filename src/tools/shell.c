@@ -41,6 +41,7 @@ static const char *const FALLBACK_BLOCKLIST[] = {
 	"rm -rf /", "rm -rf / ", "rm -rf /$", "rm -rf /*",
 	"mkfs", "dd if=", "dd of=", "shutdown", "reboot",
 	":(){ :|:& };:", "fork()", "> /dev/sd",
+	"auth_tokens.json", "shellclaw.pid", "shellclaw.log",
 	NULL
 };
 
