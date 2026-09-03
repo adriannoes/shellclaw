@@ -196,6 +196,102 @@ static void test_symlink_escape_rejected(void)
 	rmdir(tmpdir);
 }
 
+static int write_text_file(const char *path, const char *content)
+{
+	FILE *f = fopen(path, "w");
+	if (!f) return -1;
+	if (fputs(content, f) == EOF) {
+		fclose(f);
+		return -1;
+	}
+	fclose(f);
+	return 0;
+}
+
+static void test_runtime_state_files_rejected_inside_workspace(void)
+{
+	char tmpdir[PATH_MAX];
+	char state_dir[PATH_MAX];
+	char token_path[PATH_MAX];
+	char config_toml[PATH_MAX];
+	char memory_db[PATH_MAX];
+	char ok_path[PATH_MAX];
+	char config_path[PATH_MAX];
+	char args[PATH_MAX + 80];
+	char buf[256];
+	config_t *cfg;
+	const tool_t *t;
+	int r;
+
+	snprintf(tmpdir, sizeof(tmpdir), "/tmp/sc_test_state_%d", (int)getpid());
+	if (mkdir(tmpdir, 0755) != 0 && errno != EEXIST) return;
+	snprintf(state_dir, sizeof(state_dir), "%s/.shellclaw", tmpdir);
+	if (mkdir(state_dir, 0755) != 0 && errno != EEXIST) {
+		rmdir(tmpdir);
+		return;
+	}
+	snprintf(token_path, sizeof(token_path), "%s/auth_tokens.json", state_dir);
+	snprintf(config_toml, sizeof(config_toml), "%s/config.toml", state_dir);
+	snprintf(memory_db, sizeof(memory_db), "%s/memory.db", state_dir);
+	snprintf(ok_path, sizeof(ok_path), "%s/notes.txt", state_dir);
+	MU_ASSERT(write_text_file(token_path, "[{\"token\":\"secret-pair\"}]") == 0,
+		"write auth_tokens.json");
+	MU_ASSERT(write_text_file(config_toml, "model=\"x\"\n") == 0, "write config.toml");
+	MU_ASSERT(write_text_file(memory_db, "sqlite") == 0, "write memory.db");
+	MU_ASSERT(write_text_file(ok_path, "ok") == 0, "write notes.txt");
+
+	{
+		char cwd[PATH_MAX];
+		FILE *f;
+		MU_ASSERT(getcwd(cwd, sizeof(cwd)) != NULL, "getcwd");
+		snprintf(config_path, sizeof(config_path), "%s/build/test_file_state.toml", cwd);
+		f = fopen(config_path, "w");
+		MU_ASSERT(f != NULL, "create config");
+		fprintf(f,
+			"[agent]\nmodel=\"x\"\n[memory]\ndb_path=\"%s\"\n"
+			"[sandbox]\nworkspace_only=true\nworkspace_path=\"%s\"\n",
+			memory_db, state_dir);
+		fclose(f);
+	}
+	cfg = NULL;
+	config_load(config_path, &cfg, NULL, 0);
+	MU_ASSERT(cfg != NULL, "load config with state-dir workspace");
+	tool_file_set_config(cfg);
+	t = tool_file_get();
+
+	snprintf(args, sizeof(args), "{\"operation\":\"read_file\",\"path\":\"%s\"}", token_path);
+	r = t->execute(args, buf, sizeof(buf));
+	MU_ASSERT(r == -1, "read auth_tokens.json rejected");
+	MU_ASSERT(strstr(buf, "secret-pair") == NULL, "token secret not returned");
+
+	snprintf(args, sizeof(args),
+		"{\"operation\":\"write_file\",\"path\":\"%s\",\"content\":\"[]\"}", token_path);
+	r = t->execute(args, buf, sizeof(buf));
+	MU_ASSERT(r == -1, "write auth_tokens.json rejected");
+
+	snprintf(args, sizeof(args), "{\"operation\":\"read_file\",\"path\":\"%s\"}", config_toml);
+	r = t->execute(args, buf, sizeof(buf));
+	MU_ASSERT(r == -1, "read state config.toml rejected");
+
+	snprintf(args, sizeof(args), "{\"operation\":\"read_file\",\"path\":\"%s\"}", memory_db);
+	r = t->execute(args, buf, sizeof(buf));
+	MU_ASSERT(r == -1, "read memory.db rejected");
+
+	snprintf(args, sizeof(args), "{\"operation\":\"read_file\",\"path\":\"%s\"}", ok_path);
+	r = t->execute(args, buf, sizeof(buf));
+	MU_ASSERT(r == 0, "read notes.txt in workspace still allowed");
+	MU_ASSERT(strcmp(buf, "ok") == 0, "notes.txt content matches");
+
+	config_free(cfg);
+	unlink(config_path);
+	unlink(token_path);
+	unlink(config_toml);
+	unlink(memory_db);
+	unlink(ok_path);
+	rmdir(state_dir);
+	rmdir(tmpdir);
+}
+
 int main(void)
 {
 	MU_RUN(test_file_read_write_list);
@@ -203,6 +299,7 @@ int main(void)
 	MU_RUN(test_file_outside_workspace_rejected);
 	MU_RUN(test_path_traversal_rejected);
 	MU_RUN(test_symlink_escape_rejected);
+	MU_RUN(test_runtime_state_files_rejected_inside_workspace);
 	printf("%d tests run, %d failed\n", tests_run, tests_failed);
 	return tests_failed ? 1 : 0;
 }

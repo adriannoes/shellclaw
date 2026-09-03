@@ -106,6 +106,14 @@ static int test_defaults(void)
 	ASSERT(ret == 0);
 	ASSERT(config_agent_max_tool_iterations(cfg) == 20);
 	ASSERT(config_agent_max_context_messages(cfg) == 40);
+	{
+		const char *ws = config_workspace_path(cfg);
+		size_t n;
+		ASSERT(ws != NULL);
+		n = strlen(ws);
+		ASSERT(n >= 10);
+		ASSERT(strcmp(ws + n - 10, "/workspace") == 0);
+	}
 	config_free(cfg);
 	remove(path);
 	return 0;
